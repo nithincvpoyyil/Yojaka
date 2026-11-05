@@ -17,6 +17,12 @@ pub enum YojakaError {
     IndexVersion(String),
     #[error("config error in {path}: {message}")]
     Config { path: PathBuf, message: String },
+    #[error("{path} is a protected location ({reason}); Yojaka will not operate on it")]
+    Protected { path: PathBuf, reason: String },
+    #[error("{0} has not been scanned yet")]
+    NoIndex(PathBuf),
+    #[error("internal error: {0}")]
+    Internal(String),
     #[error("operation cancelled")]
     Cancelled,
     /// e.g. `("dupes", "Iteration 4")`
@@ -49,6 +55,17 @@ pub enum IssueKind {
     NotFound,
     Unreadable,
     BadMetadata,
+    Protected,
     Changed,
     Other,
+}
+
+impl IssueKind {
+    pub fn from_io(kind: std::io::ErrorKind) -> Self {
+        match kind {
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            _ => Self::Unreadable,
+        }
+    }
 }

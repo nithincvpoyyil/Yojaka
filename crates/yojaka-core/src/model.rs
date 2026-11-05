@@ -50,6 +50,36 @@ impl Format {
         }
     }
 
+    /// The kebab-case name stored in the index (same as the serde name).
+    pub fn as_str(self) -> &'static str {
+        use Format::*;
+        match self {
+            Jpeg => "jpeg",
+            Png => "png",
+            Gif => "gif",
+            Heic => "heic",
+            Webp => "webp",
+            Tiff => "tiff",
+            Bmp => "bmp",
+            Avif => "avif",
+            RawDng => "raw-dng",
+            RawCr2 => "raw-cr2",
+            RawCr3 => "raw-cr3",
+            RawNef => "raw-nef",
+            RawArw => "raw-arw",
+            RawRaf => "raw-raf",
+            RawOrf => "raw-orf",
+            Mov => "mov",
+            Mp4 => "mp4",
+            M4v => "m4v",
+            ThreeGp => "three-gp",
+            Avi => "avi",
+            Mkv => "mkv",
+            Webm => "webm",
+            Mts => "mts",
+        }
+    }
+
     /// Case-insensitive lookup by file extension (no leading dot).
     pub fn from_extension(ext: &str) -> Option<Self> {
         use Format::*;
@@ -108,6 +138,16 @@ mod tests {
     fn kinds() {
         assert_eq!(Format::RawCr3.kind(), MediaKind::Image);
         assert_eq!(Format::Mts.kind(), MediaKind::Video);
+    }
+
+    #[test]
+    fn as_str_matches_serde_names() {
+        for f in [Format::Jpeg, Format::RawCr3, Format::ThreeGp, Format::Mts] {
+            assert_eq!(
+                serde_json::to_string(&f).unwrap(),
+                format!("\"{}\"", f.as_str())
+            );
+        }
     }
 
     #[test]

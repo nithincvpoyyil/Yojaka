@@ -62,3 +62,83 @@ fn bad_usage_exits_2() {
     let tmp = tempfile::tempdir().unwrap();
     yojaka(tmp.path()).arg("--nope").assert().code(2);
 }
+
+fn fixture(home: &std::path::Path) -> std::path::PathBuf {
+    let out = home.join("fx");
+    let spec = fixturegen::Spec {
+        files: 60,
+        noise: 10,
+        ..Default::default()
+    };
+    fixturegen::generate(&spec, &out).unwrap();
+    out.join("tree")
+}
+
+#[test]
+fn scan_then_stats_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path())
+        .args(["scan"])
+        .arg(&tree)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("media files indexed"));
+
+    let out = yojaka(tmp.path())
+        .args(["stats", "--json"])
+        .arg(&tree)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(v["photos"]["count"].as_u64().unwrap() >= 60);
+    assert_eq!(v["videos"]["count"], 0);
+    assert_eq!(v["last_scan"]["status"], "complete");
+
+    // Second scan is incremental.
+    yojaka(tmp.path())
+        .arg("scan")
+        .arg(&tree)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("0 new or changed"));
+}
+
+#[test]
+fn stats_without_scan_hints_to_scan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path())
+        .arg("stats")
+        .arg(&tree)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("yojaka scan"));
+}
+
+#[test]
+fn scanning_a_protected_folder_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    yojaka(tmp.path())
+        .args(["scan", "/System"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("protected"));
+}
+
+#[test]
+fn scan_force_rebuilds_the_index() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    yojaka(tmp.path())
+        .args(["scan", "--force"])
+        .arg(&tree)
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("flushed and rebuilt")
+                .and(predicate::str::contains("0 unchanged")),
+        );
+}

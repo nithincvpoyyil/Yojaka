@@ -7,8 +7,8 @@ Index, de-duplicate and organize photos & videos
 Usage: yojaka [OPTIONS] [PATH] [COMMAND]
 
 Commands:
-  scan      Scan a folder and build the index (Iteration 1)
-  stats     Show library statistics (Iteration 1/2)
+  scan      Scan a folder and build or update its index
+  stats     Show library statistics from the index
   info      Show metadata for one file (Iteration 2)
   places    List places found in the library (Iteration 2)
   export    Export the index (Iteration 2)

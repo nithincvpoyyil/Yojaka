@@ -16,13 +16,16 @@ rusqlite.workspace = true
 directories.workspace = true
 uuid.workspace = true
 time.workspace = true
+blake3.workspace = true
+libc.workspace = true
+rayon.workspace = true
+jwalk.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 insta.workspace = true
 proptest.workspace = true
 criterion.workspace = true
-blake3.workspace = true
 fixturegen = { path = "../../tools/fixturegen" }
 
 [[bench]]

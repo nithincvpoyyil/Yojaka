@@ -13,6 +13,8 @@ kinds = [
 skip_dirs = [
     ".git",
     "node_modules",
+    ".Trash",
+    "Library",
 ]
 skip_hidden = true
 exiftool_fallback = false

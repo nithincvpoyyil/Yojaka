@@ -46,7 +46,11 @@ fn hint_for(e: &anyhow::Error) -> Option<&'static str> {
         Config { .. } => {
             Some("fix or delete the config file; defaults are used when it is missing")
         }
-        IndexVersion(_) => Some("update Yojaka, or remove the index file and scan again"),
+        Protected { .. } => Some("pick a folder that contains your photos, such as ~/Pictures"),
+        NoIndex(_) => Some("run `yojaka scan <path>` first"),
+        IndexVersion(_) | Index(_) => {
+            Some("rebuild the index with `yojaka scan --force <path>` (your files are not touched)")
+        }
         _ => None,
     }
 }
@@ -78,6 +82,25 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
             Ok(Exit::Ok)
         }
         Some(Cmd::Doctor { json }) => Ok(cmd::doctor::run(&engine, *json)),
+        Some(Cmd::Scan {
+            path,
+            kind,
+            sniff_all,
+            force,
+        }) => Ok(cmd::scan::run(
+            &engine,
+            path.as_deref(),
+            *kind,
+            *sniff_all,
+            cli.local_index,
+            *force,
+        )?),
+        Some(Cmd::Stats { path, json }) => Ok(cmd::stats::run(
+            &engine,
+            path.as_deref(),
+            *json,
+            cli.local_index,
+        )?),
         Some(other) => Ok(cmd::stub::not_yet(other)),
     }
 }

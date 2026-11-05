@@ -4,7 +4,7 @@ expression: "draw(&app(), 160, 48)"
 ---
 "Yojaka · /photos · [READ-ONLY]                                                                                                                                  "
 "┌Dashboard─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐"
-"│No scan yet — press s to scan (Iteration 1)                                                                                                                   │"
+"│No scan view yet. Run `yojaka scan <path>` and `yojaka stats <path>` (TUI scanning arrives in Iteration 3)                                                    │"
 "│                                                                                                                                                              │"
 "│                                                                                                                                                              │"
 "│                                                                                                                                                              │"

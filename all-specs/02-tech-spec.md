@@ -117,7 +117,7 @@ yojaka/
 |---------|----------------|
 | iCloud dataless files | `lstat` → check `st_flags & SF_DATALESS` (0x40000000). If set, record as `cloud_only` and **do not open the file**. |
 | Bundles | Skip directories whose names end in `.photoslibrary`, `.aplibrary`, `.app`, `.bundle`, or `.fcpbundle`. The list is configurable. |
-| Hard links | Record `(dev, ino)`. When grouping duplicates, collapse entries with the same inode. |
+| Hard links | Record `(device_id, inode)`. When grouping duplicates, collapse entries with the same inode. |
 | Volumes | Record `st_dev` so the planner can detect cross-volume moves (FR-55). |
 | Free space | `statvfs` on the destination before executing (FR-56). |
 | Full Disk Access | When TCC denies access (`EPERM` on protected folders), show a one-time hint explaining how to grant Full Disk Access. Do not show it repeatedly. |
@@ -133,40 +133,40 @@ Location: `~/Library/Application Support/yojaka/indexes/<blake3(root_canonical_p
 ```sql
 CREATE TABLE scan (
   id INTEGER PRIMARY KEY,
-  root BLOB NOT NULL,
+  root_path BLOB NOT NULL,
   started_at INTEGER NOT NULL,
   finished_at INTEGER,
   status TEXT NOT NULL,              -- running|complete|partial|failed
   files_seen INTEGER,
-  errors INTEGER
+  error_count INTEGER
 );
 
 CREATE TABLE file (
   id INTEGER PRIMARY KEY,
-  path BLOB NOT NULL UNIQUE,         -- absolute, raw bytes
-  parent BLOB NOT NULL,              -- for tree views
-  name BLOB NOT NULL,
-  ext TEXT,
-  size INTEGER NOT NULL,
-  mtime_ns INTEGER NOT NULL,
-  ctime_ns INTEGER,
-  btime_ns INTEGER,                  -- birth time (macOS)
-  dev INTEGER NOT NULL,
-  ino INTEGER NOT NULL,
-  kind TEXT NOT NULL,                -- image|video
-  format TEXT,                       -- jpeg|png|gif|heic|webp|tiff|bmp|avif|raw-*|mov|mp4|m4v|3gp|avi|mkv|webm|mts|unknown
-  cloud_only INTEGER NOT NULL DEFAULT 0,
-  last_seen_scan INTEGER NOT NULL REFERENCES scan(id),
-  meta_status TEXT NOT NULL DEFAULT 'pending',  -- pending|ok|error|skipped
+  full_path BLOB NOT NULL UNIQUE,    -- absolute, raw bytes
+  parent_folder BLOB NOT NULL,       -- for tree views
+  file_name BLOB NOT NULL,
+  extension TEXT,
+  size_bytes INTEGER NOT NULL,
+  modified_at_ns INTEGER NOT NULL,
+  status_changed_at_ns INTEGER,
+  created_at_ns INTEGER,             -- birth time (macOS)
+  device_id INTEGER NOT NULL,
+  inode INTEGER NOT NULL,
+  media_kind TEXT NOT NULL,          -- image|video
+  format TEXT,                       -- jpeg|png|gif|heic|webp|tiff|bmp|avif|raw-*|mov|mp4|m4v|three-gp|avi|mkv|webm|mts
+  is_cloud_only INTEGER NOT NULL DEFAULT 0,
+  last_seen_scan_id INTEGER NOT NULL REFERENCES scan(id),
+  metadata_status TEXT NOT NULL DEFAULT 'pending',  -- pending|ok|error|skipped
   partial_hash BLOB,                 -- blake3 of first+last 16 KiB (+ size)
   full_hash BLOB,                    -- blake3 of whole file
-  phash INTEGER                      -- later: 64-bit perceptual hash
+  perceptual_hash INTEGER            -- later: 64-bit perceptual hash
 );
-CREATE INDEX file_size ON file(size);
+CREATE INDEX file_size ON file(size_bytes);
 CREATE INDEX file_full_hash ON file(full_hash);
-CREATE INDEX file_parent ON file(parent);
-CREATE INDEX file_devino ON file(dev, ino);
-CREATE INDEX file_kind ON file(kind);
+CREATE INDEX file_parent ON file(parent_folder);
+CREATE INDEX file_devino ON file(device_id, inode);
+CREATE INDEX file_kind ON file(media_kind);
 
 CREATE TABLE meta (
   file_id INTEGER PRIMARY KEY REFERENCES file(id) ON DELETE CASCADE,
@@ -210,16 +210,16 @@ CREATE INDEX meta_place ON meta(place_country_code, place_state, place_city);
 
 CREATE TABLE scan_error (
   scan_id INTEGER,
-  path BLOB,
-  kind TEXT,
-  message TEXT
+  file_path BLOB,
+  error_kind TEXT,
+  error_message TEXT
 );
 ```
 
 **Incremental rescan (FR-13):**
-- If the path exists and `(size, mtime_ns, ino)` is unchanged, only update `last_seen_scan`.
+- If the path exists and `(size_bytes, modified_at_ns, inode)` is unchanged, only update `last_seen_scan_id`.
 - Otherwise, re-read metadata and clear the stored hashes.
-- After the scan finishes, rows with `last_seen_scan < current` are deleted from the index. Only the index rows are removed; files on disk are never touched.
+- After the scan finishes, rows with `last_seen_scan_id < current` are deleted from the index. Only the index rows are removed; files on disk are never touched.
 
 ## 6. Pipelines
 
@@ -284,7 +284,7 @@ Everything after this treats a pair as one **item**:
 
 ### 6.3 Duplicate detection (FR-30)
 Staged, so the minimum number of bytes is read:
-1. **Size groups:** a SQL query over all non-cloud files groups them by `size`; only sizes with count > 1 go on. Hard links (same `dev, ino`) are collapsed first.
+1. **Size groups:** a SQL query over all non-cloud files groups them by `size_bytes`; only sizes with count > 1 go on. Hard links (same `device_id, inode`) are collapsed first.
 2. **Partial hash:** BLAKE3 of `size || first 16 KiB || last 16 KiB`, computed in parallel. Only partial hashes that match go on.
 3. **Full hash:** BLAKE3 of the whole file, streamed or memory-mapped (`update_mmap_rayon` for files larger than 64 MB). Equal full hash means the files are **exact** duplicates.
 4. **Likely tier:**
@@ -412,7 +412,7 @@ pub struct Fingerprint { size: u64, mtime_ns: i64, hash: Option<[u8; 32]> }
 ```
 yojaka [PATH]                         # open TUI (read-only)
 yojaka [PATH] --write                 # open TUI with write mode available
-yojaka scan [PATH] [--kind image|video|all] [--sniff-all] [--threads N] [--local-index]
+yojaka scan [PATH] [--kind image|video|all] [--sniff-all] [--force] [--threads N] [--local-index]
 yojaka stats [PATH] [--json]
 yojaka dupes [PATH] [--tier exact|likely|name|all] [--keep RULE,...] [--plan-out FILE] [--json]
 yojaka organize [PATH] --dest DIR --template "{year}/{month:02}" [--copy|--move] [--infer-location] [--plan-out FILE]

@@ -65,7 +65,12 @@ impl Default for ScanConfig {
         Self {
             sniff_all: false,
             kinds: vec!["image".into(), "video".into()],
-            skip_dirs: vec![".git".into(), "node_modules".into()],
+            skip_dirs: vec![
+                ".git".into(),
+                "node_modules".into(),
+                ".Trash".into(),
+                "Library".into(),
+            ],
             skip_hidden: true,
             exiftool_fallback: false,
         }

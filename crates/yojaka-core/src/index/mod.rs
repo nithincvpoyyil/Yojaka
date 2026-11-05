@@ -43,6 +43,10 @@ impl Index {
             .query_row("PRAGMA user_version", [], |r| r.get(0))?)
     }
 
+    pub(crate) fn into_connection(self) -> Connection {
+        self.conn
+    }
+
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
@@ -53,9 +57,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_database_is_at_version_1() {
+    fn fresh_database_is_at_version_2() {
         let idx = Index::open_in_memory().unwrap();
-        assert_eq!(idx.schema_version().unwrap(), 1);
+        assert_eq!(idx.schema_version().unwrap(), 2);
         let v: String = idx
             .connection()
             .query_row(
@@ -73,7 +77,7 @@ mod tests {
         let p = tmp.path().join("i.db");
         drop(Index::open(&p).unwrap());
         let idx = Index::open(&p).unwrap();
-        assert_eq!(idx.schema_version().unwrap(), 1);
+        assert_eq!(idx.schema_version().unwrap(), 2);
     }
 
     #[test]

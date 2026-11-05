@@ -58,7 +58,7 @@ pub enum TierArg {
 
 #[derive(Debug, Subcommand)]
 pub enum Cmd {
-    /// Scan a folder and build the index (Iteration 1)
+    /// Scan a folder and build or update its index
     Scan {
         path: Option<PathBuf>,
         #[arg(long, value_enum, default_value = "all")]
@@ -66,8 +66,11 @@ pub enum Cmd {
         /// Sniff file contents even for unknown extensions
         #[arg(long)]
         sniff_all: bool,
+        /// Delete this folder's index and rebuild it from scratch
+        #[arg(long)]
+        force: bool,
     },
-    /// Show library statistics (Iteration 1/2)
+    /// Show library statistics from the index
     Stats {
         path: Option<PathBuf>,
         #[arg(long)]
@@ -159,8 +162,7 @@ impl Cmd {
     /// (command name, iteration that implements it) for stubbed commands.
     pub fn stub_info(&self) -> Option<(&'static str, u8)> {
         Some(match self {
-            Cmd::Scan { .. } => ("scan", 1),
-            Cmd::Stats { .. } => ("stats", 1),
+            Cmd::Scan { .. } | Cmd::Stats { .. } => return None,
             Cmd::Info { .. } => ("info", 2),
             Cmd::Places { .. } => ("places", 2),
             Cmd::Export { .. } => ("export", 2),
