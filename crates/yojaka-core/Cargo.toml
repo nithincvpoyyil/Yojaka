@@ -1,0 +1,33 @@
+[package]
+name = "yojaka-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tracing.workspace = true
+crossbeam-channel.workspace = true
+rusqlite.workspace = true
+directories.workspace = true
+uuid.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+insta.workspace = true
+proptest.workspace = true
+criterion.workspace = true
+blake3.workspace = true
+fixturegen = { path = "../../tools/fixturegen" }
+
+[[bench]]
+name = "baseline"
+harness = false
+
+[lints]
+workspace = true

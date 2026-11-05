@@ -1,0 +1,107 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/yojaka-core",
+  "crates/yojaka-tui",
+  "crates/yojaka-cli",
+  "crates/yojaka-llm",
+  "tools/fixturegen",
+  "tools/geodata",
+]
+default-members = ["crates/yojaka-cli"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = ""
+publish = false
+
+[workspace.dependencies]
+# internal
+yojaka-core = { path = "crates/yojaka-core" }
+yojaka-tui  = { path = "crates/yojaka-tui" }
+yojaka-llm  = { path = "crates/yojaka-llm" }
+
+# UI / CLI
+ratatui   = "0.30"
+clap      = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+indicatif = "0.18"
+
+# concurrency / fs
+rayon             = "1.12"
+crossbeam-channel = "0.5"
+jwalk             = "0.9"
+memmap2           = "0.9"
+libc              = "0.2"
+trash             = "5.2"
+
+# detection / metadata / hashing (wired in I1–I4)
+infer        = "0.22"
+imagesize    = "0.15"
+kamadak-exif = "0.6"
+nom-exif     = "3.8"
+mp4parse     = "0.17"
+blake3       = { version = "1.8", features = ["rayon", "mmap"] }
+unicode-normalization = "0.1"
+
+# storage / serde
+rusqlite   = { version = "0.41", features = ["bundled"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml       = "1.1"
+uuid       = { version = "1.29", features = ["v7", "serde"] }
+time       = { version = "0.3", features = ["serde", "formatting", "parsing", "local-offset", "macros"] }
+directories = "6"
+
+# geo (I2)
+kiddo = "6.3"
+zstd  = "0.14"
+
+# errors / logging
+thiserror          = "2"
+anyhow             = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender   = "0.2"
+
+# fixturegen
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
+rand  = "0.10"
+
+# dev
+insta      = { version = "1.49", features = ["yaml"] }
+proptest   = "1.12"
+tempfile   = "3.27"
+assert_cmd = "2.2"
+predicates = "3.1"
+criterion  = { version = "0.8", features = ["html_reports"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+unwrap_used = "warn"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

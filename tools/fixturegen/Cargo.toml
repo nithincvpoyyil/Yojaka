@@ -1,0 +1,30 @@
+[package]
+name = "fixturegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "fixturegen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fixturegen"
+path = "src/main.rs"
+
+[dependencies]
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+clap.workspace = true
+directories.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+kamadak-exif.workspace = true
+
+[lints]
+workspace = true

@@ -23,3 +23,9 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 ## Commands (once I0 is done)
 - `cargo fmt && cargo clippy --all-targets -- -D warnings && cargo nextest run`
 - `cargo run -p yojaka-cli -- scan <path>`
+
+## Iteration 0 reference
+- Skeleton plan: `all-specs/04-boilerplate-impl-plan.md`
+- Full check: `cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo nextest run --workspace && cargo deny check`
+- Test data: `cargo run -p fixturegen -- out/ --files 1000` (writes `out/tree` and `out/manifest.json`)
+- Integration tests use `crates/yojaka-core/tests/common` (`TestEnv`)

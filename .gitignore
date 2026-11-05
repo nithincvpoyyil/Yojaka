@@ -1,0 +1,8 @@
+/target
+/out/            # fixturegen output
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+/.yojaka/
+*.snap.new       # insta pending snapshots

@@ -1,0 +1,124 @@
+//! Core domain types (shapes). Filled in by later iterations.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FileId(pub i64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaKind {
+    Image,
+    Video,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Format {
+    Jpeg,
+    Png,
+    Gif,
+    Heic,
+    Webp,
+    Tiff,
+    Bmp,
+    Avif,
+    RawDng,
+    RawCr2,
+    RawCr3,
+    RawNef,
+    RawArw,
+    RawRaf,
+    RawOrf,
+    Mov,
+    Mp4,
+    M4v,
+    ThreeGp,
+    Avi,
+    Mkv,
+    Webm,
+    Mts,
+}
+
+impl Format {
+    pub fn kind(self) -> MediaKind {
+        use Format::*;
+        match self {
+            Jpeg | Png | Gif | Heic | Webp | Tiff | Bmp | Avif | RawDng | RawCr2 | RawCr3
+            | RawNef | RawArw | RawRaf | RawOrf => MediaKind::Image,
+            Mov | Mp4 | M4v | ThreeGp | Avi | Mkv | Webm | Mts => MediaKind::Video,
+        }
+    }
+
+    /// Case-insensitive lookup by file extension (no leading dot).
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        use Format::*;
+        Some(match ext.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" | "jpe" => Jpeg,
+            "png" => Png,
+            "gif" => Gif,
+            "heic" | "heif" => Heic,
+            "webp" => Webp,
+            "tif" | "tiff" => Tiff,
+            "bmp" => Bmp,
+            "avif" => Avif,
+            "dng" => RawDng,
+            "cr2" => RawCr2,
+            "cr3" => RawCr3,
+            "nef" => RawNef,
+            "arw" => RawArw,
+            "raf" => RawRaf,
+            "orf" => RawOrf,
+            "mov" => Mov,
+            "mp4" => Mp4,
+            "m4v" => M4v,
+            "3gp" => ThreeGp,
+            "avi" => Avi,
+            "mkv" => Mkv,
+            "webm" => Webm,
+            "mts" | "m2ts" => Mts,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fingerprint {
+    pub size: u64,
+    pub mtime_ns: i64,
+    pub hash: Option<[u8; 32]>,
+}
+
+pub use crate::geo::Place;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extensions_map_case_insensitively() {
+        assert_eq!(Format::from_extension("JPG"), Some(Format::Jpeg));
+        assert_eq!(Format::from_extension("heif"), Some(Format::Heic));
+        assert_eq!(Format::from_extension("MoV"), Some(Format::Mov));
+        assert_eq!(Format::from_extension("txt"), None);
+        assert_eq!(Format::from_extension(""), None);
+    }
+
+    #[test]
+    fn kinds() {
+        assert_eq!(Format::RawCr3.kind(), MediaKind::Image);
+        assert_eq!(Format::Mts.kind(), MediaKind::Video);
+    }
+
+    #[test]
+    fn format_serializes_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&Format::ThreeGp).unwrap(),
+            "\"three-gp\""
+        );
+        assert_eq!(
+            serde_json::to_string(&MediaKind::Image).unwrap(),
+            "\"image\""
+        );
+    }
+}

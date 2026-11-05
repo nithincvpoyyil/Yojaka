@@ -1,0 +1,40 @@
+---
+source: crates/yojaka-core/src/config.rs
+expression: "toml::to_string_pretty(&Config::default()).unwrap()"
+---
+threads = 0
+
+[scan]
+sniff_all = false
+kinds = [
+    "image",
+    "video",
+]
+skip_dirs = [
+    ".git",
+    "node_modules",
+]
+skip_hidden = true
+exiftool_fallback = false
+
+[dupes]
+keep_rules = [
+    "oldest",
+    "shortest-path",
+]
+
+[organize]
+template = "{year}/{month:02}/{name}"
+large_plan_threshold = 1000
+
+[location]
+near_km = 25.0
+far_km = 100.0
+infer = false
+infer_window_minutes = 120
+no_location_dir = "No Location"
+
+[llm]
+provider = "none"
+model = ""
+allow_cloud = false

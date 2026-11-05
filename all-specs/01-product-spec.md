@@ -15,7 +15,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 | G2 | **Memory-efficient** | Peak RSS < 250 MB for a 1M-file tree; memory does not grow with library size (streaming + on-disk index) |
 | G3 | **Safe**: nothing changes without a dry-run and explicit confirmation | Read-only by default; every change is planned, previewed, journaled and undoable |
 | G4 | **Clear feedback**: the user always sees what is happening | Live progress, cancel at any time, before/after views |
-| G5 | **Lean**: one small native binary, no runtime dependencies | Single static binary; 
+| G5 | **Lean**: one small native binary, no runtime dependencies | Single static binary; release binary < 100 MB (measured in `docs/perf.md`) |
 | G6 | **Ready for growth**: GUI and LLM features can be added later without a rewrite | The core logic lives in a library crate with no UI code |
 
 ## 2. Non-goals (for now)
