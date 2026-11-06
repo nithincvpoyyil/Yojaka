@@ -6,3 +6,7 @@
 .DS_Store
 /.yojaka/
 *.snap.new       # insta pending snapshots
+/tests/data/*
+/tests/images/*
+/tests/*
+
