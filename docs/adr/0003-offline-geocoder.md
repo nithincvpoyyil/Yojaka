@@ -6,7 +6,7 @@ Status: accepted (Iteration 2)
 FR-44 needs country, state, district and nearest town from GPS, fully offline (coordinates never leave the machine).
 
 ## Decision
-- Data: GeoNames `cities1000` (populated places with population ≥ 1,000: 171,800 places), `admin1CodesASCII`, `admin2Codes`, `countryInfo`. License CC-BY 4.0: attribution is required in `--about` and the README (**still to add**).
+- Data: GeoNames `cities1000` (populated places with population ≥ 1,000: 171,800 places), `admin1CodesASCII`, `admin2Codes`, `countryInfo`. License CC-BY 4.0: attribution is required in `--about` and the README (done: `yojaka --about`, README).
 - `tools/geodata` converts the dumps into one zstd-compressed little-endian blob (layout documented in its source), written to `crates/yojaka-core/data/geo.bin.zst` (2.9 MB, committed). Only admin names that some place references are kept.
 - The core embeds it with `include_bytes!`, decompresses it on first use (`OnceLock`) and builds a static 3-D k-d tree over unit-sphere coordinates. Using 3-D vectors makes the poles and the antimeridian ordinary cases. The nearest place is reported with its great-circle distance.
 - Own k-d tree (about 60 lines, checked against brute force in a test) instead of `kiddo`, to avoid an API dependency for a static nearest-neighbour query.

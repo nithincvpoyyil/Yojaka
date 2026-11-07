@@ -142,3 +142,20 @@ fn scan_force_rebuilds_the_index() {
                 .and(predicate::str::contains("0 unchanged")),
         );
 }
+
+#[test]
+fn about_credits_geonames_with_the_licence_and_creates_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("fresh-home");
+    yojaka(&home).arg("--about").assert().success().stdout(
+        predicate::str::contains("GeoNames")
+            .and(predicate::str::contains("https://www.geonames.org"))
+            .and(predicate::str::contains("Creative Commons Attribution 4.0"))
+            .and(predicate::str::contains(
+                "creativecommons.org/licenses/by/4.0",
+            ))
+            .and(predicate::str::contains("MIT License"))
+            .and(predicate::str::contains("converted")),
+    );
+    assert!(!home.exists(), "--about must not create the data folder");
+}

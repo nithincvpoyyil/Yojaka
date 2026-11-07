@@ -26,4 +26,9 @@ Specs live in `all-specs/`; the iteration plan is `all-specs/03-iteration-plan.m
 MIT, see `LICENSE`.
 
 ## Attribution
-Place names (from Iteration 2) will use GeoNames data, licensed CC-BY 4.0: <https://www.geonames.org>.
+Place names come from [GeoNames](https://www.geonames.org), licensed under
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/). The data (populated
+places with 1,000 or more people, plus country and region names) was converted into a compact
+binary format (`crates/yojaka-core/data/geo.bin.zst`, built by `tools/geodata`) so places can be
+looked up offline; the names are used as provided. GeoNames does not endorse Yojaka.
+`yojaka --about` prints the same credit.

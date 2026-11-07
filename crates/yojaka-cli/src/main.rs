@@ -56,6 +56,11 @@ fn hint_for(e: &anyhow::Error) -> Option<&'static str> {
 }
 
 fn run(cli: Cli) -> anyhow::Result<Exit> {
+    if cli.about {
+        // Nothing is created or read for this: it works anywhere.
+        println!("{}", cli::ABOUT.trim_end());
+        return Ok(Exit::Ok);
+    }
     let paths = AppPaths::from_env_or(cli.home.as_deref())?;
     paths.ensure()?;
     let _log_guard = logging::init(&paths.logs);

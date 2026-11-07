@@ -27,6 +27,7 @@ Arguments:
 Options:
       --write              Allow write operations (still requires dry-run + confirm)
       --refresh            Scan on open if the last scan is over an hour old (never clears anything)
+      --about              Show the license and the credits for the data Yojaka uses, then exit
       --force              Ask first, then forget what is saved about the folder and scan it from
                            scratch (slower)
       --threads <THREADS>  Worker threads (default: auto)

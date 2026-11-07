@@ -8,7 +8,8 @@ use ratatui::{Terminal, backend::TestBackend};
 use yojaka_core::browse::{FileDetail, FileRow, FolderTree};
 use yojaka_core::model::MediaKind;
 use yojaka_core::stats::{
-    CameraStat, FormatStat, KindStats, LastScan, LocationStats, Stats, VideoStats, YearStat,
+    CameraStat, CityStat, CountryStat, FormatStat, KindStats, LastScan, LocationStats, Stats,
+    VideoStats, YearStat,
 };
 use yojaka_core::{CoreEvent, TaskKind};
 
@@ -30,6 +31,15 @@ fn app_at(w: u16, h: u16) -> App {
     a.size = (w, h);
     let _ = a.init();
     a
+}
+
+fn city(city: &str, country: &str, count: u64) -> CityStat {
+    CityStat {
+        city: city.into(),
+        state: None,
+        country: country.into(),
+        count,
+    }
 }
 
 fn stats() -> Stats {
@@ -101,6 +111,30 @@ fn stats() -> Stats {
         largest_files: vec![],
         location: LocationStats {
             with_place: 9_800,
+            without_place: 3_071,
+            countries: vec![
+                CountryStat {
+                    country_code: "IN".into(),
+                    country: "India".into(),
+                    count: 6_100,
+                },
+                CountryStat {
+                    country_code: "FR".into(),
+                    country: "France".into(),
+                    count: 2_400,
+                },
+                CountryStat {
+                    country_code: "JP".into(),
+                    country: "Japan".into(),
+                    count: 1_300,
+                },
+            ],
+            cities: vec![
+                city("Chennai", "India", 4_200),
+                city("Paris", "France", 2_400),
+                city("Kochi", "India", 1_900),
+                city("Kyoto", "Japan", 1_300),
+            ],
             ..Default::default()
         },
         metadata_pending: 0,
@@ -852,4 +886,24 @@ impl App {
         let (w, h) = self.size;
         draw(self, w, h).lines().last().unwrap().contains(text)
     }
+}
+
+#[test]
+fn the_dashboard_lists_top_places_with_a_summary() {
+    let mut a = app_at(80, 24);
+    a.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(stats())))));
+    let out = draw(&a, 80, 24);
+    assert!(out.contains("Top places"), "{out}");
+    assert!(out.contains("Chennai, India"), "{out}");
+    assert!(out.contains("3 countries"), "{out}");
+    // the summary line is cut to the panel width; a wide terminal shows all of it
+    let wide = {
+        let mut w = app_at(160, 48);
+        w.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(stats())))));
+        draw(&w, 160, 48)
+    };
+    assert!(wide.contains("3 countries · 3,071 without place"), "{wide}");
+    // before any statistics arrive it says so instead of showing nothing
+    let b = app_at(80, 24);
+    assert!(draw(&b, 80, 24).contains("Top places"));
 }

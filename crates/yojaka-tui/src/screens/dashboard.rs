@@ -287,23 +287,81 @@ fn render_panels(st: Option<&Stats>, f: &mut Frame, area: Rect) {
     }
     panel(f, b, title, st.is_some(), year_lines);
 
+    // Right column: cameras above, places below.
+    let [cam_area, place_area] =
+        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(c);
+    let cam_rows = cam_area.height.saturating_sub(2) as usize;
     let cams: Vec<Line> = st
         .map(|s| {
             s.cameras
                 .iter()
-                .take(rows)
-                .map(|cam| {
-                    let n = fmt::thousands(cam.count);
-                    let w = (c.width.saturating_sub(2) as usize).saturating_sub(n.len() + 1);
-                    Line::from(vec![
-                        Span::raw(format!("{:<w$} ", fmt::truncate(&cam.camera, w))),
-                        Span::styled(n, theme::accent()),
-                    ])
-                })
+                .take(cam_rows)
+                .map(|cam| count_line(&cam.camera, cam.count, cam_area.width))
                 .collect()
         })
         .unwrap_or_default();
-    panel(f, c, "Top cameras", st.is_some(), cams);
+    panel(f, cam_area, "Top cameras", st.is_some(), cams);
+
+    let place_rows = place_area.height.saturating_sub(2) as usize;
+    let places = st.map(|s| place_lines(&s.location, place_area.width, place_rows));
+    panel(
+        f,
+        place_area,
+        "Top places",
+        st.is_some(),
+        places.unwrap_or_default(),
+    );
+}
+
+/// `name        1,234`: the name is cut to fit, the count is right-aligned in the accent color.
+fn count_line(name: &str, count: u64, width: u16) -> Line<'static> {
+    let n = fmt::thousands(count);
+    let w = usize::from(width.saturating_sub(2)).saturating_sub(n.len() + 1);
+    Line::from(vec![
+        Span::raw(format!("{:<w$} ", fmt::truncate(name, w))),
+        Span::styled(n, theme::accent()),
+    ])
+}
+
+/// The most photographed cities as `City, Country  count`. When there is room, a last line
+/// sums up the countries and the files without a place.
+fn place_lines(
+    loc: &yojaka_core::stats::LocationStats,
+    width: u16,
+    rows: usize,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line> = loc
+        .cities
+        .iter()
+        .map(|c| count_line(&format!("{}, {}", c.city, c.country), c.count, width))
+        .collect();
+    let summary = {
+        let mut parts = vec![];
+        if !loc.countries.is_empty() {
+            let n = loc.countries.len();
+            parts.push(format!("{n} countr{}", if n == 1 { "y" } else { "ies" }));
+        }
+        if loc.without_place > 0 {
+            parts.push(format!(
+                "{} without place",
+                fmt::thousands(loc.without_place)
+            ));
+        }
+        parts.join(" · ")
+    };
+    let keep = if summary.is_empty() {
+        rows
+    } else {
+        rows.saturating_sub(1)
+    };
+    lines.truncate(keep);
+    if !summary.is_empty() && rows > 0 {
+        lines.push(Line::styled(
+            fmt::truncate(&summary, usize::from(width.saturating_sub(2))),
+            theme::dim(),
+        ));
+    }
+    lines
 }
 
 fn panel(f: &mut Frame, area: Rect, title: &str, have_stats: bool, mut lines: Vec<Line<'static>>) {

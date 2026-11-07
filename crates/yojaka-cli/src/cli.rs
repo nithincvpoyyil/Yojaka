@@ -15,6 +15,23 @@ pub const LONG_VERSION: &str = concat!(
     env!("YOJAKA_TARGET")
 );
 
+/// Printed by `yojaka --about`. The GeoNames text is a licence requirement (CC BY 4.0): keep the
+/// credit, the licence link and the note that the data was changed.
+pub const ABOUT: &str = concat!(
+    "Yojaka ",
+    env!("CARGO_PKG_VERSION"),
+    "\nIndex, de-duplicate and organize photos & videos.\n",
+    "Released under the MIT License.\n",
+    "\n",
+    "Third-party data\n",
+    "  Place names come from GeoNames (https://www.geonames.org), licensed under\n",
+    "  Creative Commons Attribution 4.0 (https://creativecommons.org/licenses/by/4.0/).\n",
+    "  The data (populated places with 1,000 or more people, plus country and\n",
+    "  region names) was converted into a compact format so places can be looked up\n",
+    "  offline; the names are used as provided. GeoNames does not endorse Yojaka.\n",
+    "  Coordinates never leave your machine.\n"
+);
+
 #[derive(Debug, Parser)]
 #[command(name = "yojaka", version = LONG_VERSION, about = "Index, de-duplicate and organize photos & videos")]
 pub struct Cli {
@@ -26,6 +43,9 @@ pub struct Cli {
     /// Scan on open if the last scan is over an hour old (never clears anything)
     #[arg(long)]
     pub refresh: bool,
+    /// Show the license and the credits for the data Yojaka uses, then exit
+    #[arg(long)]
+    pub about: bool,
     /// Ask first, then forget what is saved about the folder and scan it from scratch (slower)
     #[arg(long)]
     pub force: bool,
