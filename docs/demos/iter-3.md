@@ -31,6 +31,6 @@ Big-index check (1M rows, frame time under 16 ms):
 
 ```sh
 YOJAKA_PERF_ROOT=$PWD/out/million cargo nextest run -p yojaka-core --run-ignored only -E 'binary(browse_perf)' --no-capture
-cargo run --release -p yojaka-cli -- --local-index out/million   # press 2, D, then G / s / S
+cargo run --release -p yojaka-cli -- out/million   # press 2, D, then G / s / S
 rm -rf out/million
 ```

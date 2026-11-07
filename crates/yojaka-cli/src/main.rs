@@ -48,9 +48,9 @@ fn hint_for(e: &anyhow::Error) -> Option<&'static str> {
         }
         Protected { .. } => Some("pick a folder that contains your photos, such as ~/Pictures"),
         NoIndex(_) => Some("run `yojaka scan <path>` first"),
-        IndexVersion(_) | Index(_) => {
-            Some("rebuild the index with `yojaka scan --force <path>` (your files are not touched)")
-        }
+        IndexVersion(_) | Index(_) => Some(
+            "scan it from scratch with `yojaka scan --force <path>` (your files are not touched)",
+        ),
         _ => None,
     }
 }
@@ -84,6 +84,8 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
                 yojaka_tui::TuiOptions {
                     mode,
                     local_index: cli.local_index,
+                    refresh: cli.refresh,
+                    force: cli.force,
                 },
             )?;
             Ok(Exit::Ok)

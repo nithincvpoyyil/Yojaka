@@ -83,6 +83,8 @@ pub enum Response {
 pub enum Bg {
     Worker(Response),
     ScanFinished(Result<yojaka_core::scan::ScanSummary, String>),
+    /// A short message for the footer (e.g. the OS could not open a file).
+    Notice(String),
 }
 
 /// Keeps only the newest request of each kind, in their original order. `Reload` is always kept.

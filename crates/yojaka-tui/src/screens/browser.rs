@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Cell, Paragraph, Row, Table};
 use yojaka_core::browse::{FileDetail, FileRow, SortKey};
 use yojaka_core::meta::format_local;
 use yojaka_core::model::MediaKind;
@@ -25,10 +25,7 @@ pub fn render(app: &App, f: &mut Frame, area: Rect) {
 
 fn render_tree(b: &BrowserState, f: &mut Frame, area: Rect) {
     let focused = b.focus == Focus::Tree && !b.editing_filter;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::border(focused))
-        .title("Folders");
+    let block = theme::panel("Folders", focused);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let (Some(tree), w) = (&b.tree, inner.width as usize) else {
@@ -234,10 +231,7 @@ fn render_table(app: &App, f: &mut Frame, area: Rect) {
     if b.editing_filter || !b.query.text.is_empty() {
         title.push_str(&format!(" · /{}", b.query.text));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::border(focused || b.editing_filter))
-        .title(title);
+    let block = theme::panel(title, focused || b.editing_filter);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -246,7 +240,7 @@ fn render_table(app: &App, f: &mut Frame, area: Rect) {
             if app.dashboard.scan.running {
                 "Scanning… files appear here when the scan finishes."
             } else {
-                "Nothing indexed yet. Press r to scan this folder."
+                "Nothing scanned yet. Press r to scan this folder."
             }
         } else {
             "No files match the current folder and filters."
@@ -412,7 +406,7 @@ fn detail_lines(row: &FileRow, d: Option<&FileDetail>, width: usize) -> Vec<Line
 }
 
 fn render_detail(b: &BrowserState, f: &mut Frame, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title("Details");
+    let block = theme::panel("Details", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let Some(row) = b.current_row() else {

@@ -25,12 +25,31 @@ impl Screen {
     pub fn title(self) -> &'static str {
         match self {
             Screen::Dashboard => "Dashboard",
-            Screen::Browser => "Browser",
+            Screen::Browser => "File browser",
             Screen::Duplicates => "Duplicates",
             Screen::Organize => "Organize",
             Screen::History => "History",
         }
     }
+    pub const ALL: [Screen; 5] = [
+        Screen::Dashboard,
+        Screen::Browser,
+        Screen::Duplicates,
+        Screen::Organize,
+        Screen::History,
+    ];
+
+    /// The neighbouring tab; wraps around at the ends.
+    pub fn step(self, forward: bool) -> Screen {
+        let n = Self::ALL.len();
+        let i = Self::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        Self::ALL[if forward {
+            (i + 1) % n
+        } else {
+            (i + n - 1) % n
+        }]
+    }
+
     /// Iteration in which the screen gets real content.
     pub fn arrives_in(self) -> u8 {
         match self {
@@ -57,6 +76,11 @@ pub enum Msg {
     /// Esc: closes help, clears the filter, then stops a running scan.
     Back,
     Goto(Screen),
+    /// `<` / `>` (and ←/→ where they have no other job): the tab on the left / right.
+    PrevScreen,
+    NextScreen,
+    /// `T`, or Esc when there is nothing else to close: ←/→ then pick a tab.
+    TabMode,
     Resize(u16, u16),
     Core(CoreEvent),
     Bg(Bg),
@@ -81,6 +105,10 @@ pub enum Msg {
     FilterAccept,
     FilterCancel,
     Rescan,
+    /// `R`: asks before flushing the index and scanning the folder from scratch.
+    FullRescan,
+    ConfirmYes,
+    ConfirmNo,
     CancelScan,
     ToggleDebug,
     /// Debug builds only (Ctrl-\): proves the terminal is restored after a panic.
@@ -91,8 +119,13 @@ pub enum Msg {
 /// Work for the runtime. `update` never does I/O itself.
 #[derive(Debug)]
 pub enum Cmd {
-    StartScan,
+    /// `force`: delete the index first, then scan from scratch.
+    StartScan {
+        force: bool,
+    },
     CancelScan,
+    /// Hand the file to the OS to open with its default app. Never modifies it.
+    OpenFile(PathBuf),
     Worker(Request),
 }
 
@@ -159,6 +192,15 @@ pub struct DebugInfo {
 pub struct App {
     pub screen: Screen,
     pub show_help: bool,
+    /// The "flush index and rescan?" prompt is open.
+    pub confirm_flush: bool,
+    /// The tab strip has the keyboard: ←/→ switch screens, Enter / Esc / ↓ go back in.
+    pub tab_mode: bool,
+    /// A short message in the footer, and the tick at which it goes away.
+    pub notice: Option<(String, u64)>,
+    /// `--refresh`: scan on open when the last scan is more than an hour old.
+    pub refresh_when_stale: bool,
+    auto_scan_tried: bool,
     pub mode: Mode,
     pub root: PathBuf,
     pub should_quit: bool,
@@ -170,17 +212,24 @@ pub struct App {
     /// Set by `update` when the screen needs a redraw.
     pub dirty: bool,
     pub ticks: u64,
-    auto_scan_tried: bool,
 }
 
 /// Number of ticks (¼ s) between statistics refreshes while a scan runs.
 const LIVE_STATS_TICKS: u64 = 12;
+
+/// How long a footer message stays (¼ s ticks).
+const NOTICE_TICKS: u64 = 12;
 
 impl App {
     pub fn new(root: PathBuf, mode: Mode) -> Self {
         Self {
             screen: Screen::Dashboard,
             show_help: false,
+            confirm_flush: false,
+            tab_mode: false,
+            notice: None,
+            refresh_when_stale: false,
+            auto_scan_tried: false,
             mode,
             root,
             should_quit: false,
@@ -191,7 +240,6 @@ impl App {
             debug_info: DebugInfo::default(),
             dirty: true,
             ticks: 0,
-            auto_scan_tried: false,
         }
     }
 
@@ -230,11 +278,11 @@ impl App {
         }
         match &self.dashboard.stats {
             Some(st) => format!(
-                "{} files indexed",
+                "{} files",
                 fmt::thousands(st.photos.count + st.videos.count)
             ),
-            None if self.dashboard.no_index => "not indexed yet".to_string(),
-            None => "loading index…".to_string(),
+            None if self.dashboard.no_index => "not scanned yet".to_string(),
+            None => "loading…".to_string(),
         }
     }
 
@@ -260,7 +308,65 @@ impl App {
         cmds
     }
 
+    /// Once, when the first answer about the folder arrives: a never-scanned folder is scanned
+    /// without asking; with `--refresh` a scan older than an hour is updated (nothing is
+    /// cleared). Waits while the `--force` question is open.
+    fn open_decision(&mut self) -> Vec<Cmd> {
+        if self.auto_scan_tried || self.confirm_flush {
+            return vec![];
+        }
+        let known = self.dashboard.no_index || self.dashboard.stats.is_some();
+        if !known {
+            return vec![];
+        }
+        self.auto_scan_tried = true;
+        if self.dashboard.scan.running {
+            return vec![];
+        }
+        let stale = self.refresh_when_stale
+            && self
+                .dashboard
+                .stats
+                .as_ref()
+                .and_then(|st| st.last_scan.as_ref())
+                .is_some_and(|l| is_stale(l.finished_at.unwrap_or(l.started_at), unix_now()));
+        if self.dashboard.no_index || stale {
+            self.start_scan()
+        } else {
+            vec![]
+        }
+    }
+
+    /// Enter on a file: the OS opens it with whatever app it prefers.
+    fn open_selected(&mut self) -> Vec<Cmd> {
+        let Some(row) = self.browser.current_row() else {
+            self.dirty = false;
+            return vec![];
+        };
+        if row.cloud_only {
+            // Opening would make macOS download it; Yojaka never touches iCloud-only files.
+            let msg = format!("{} is only in iCloud, not opened", row.name);
+            self.say(msg);
+            return vec![];
+        }
+        let path = row.path.clone();
+        self.say(format!("Opening {}", row.name));
+        vec![Cmd::OpenFile(path)]
+    }
+
+    fn say(&mut self, msg: String) {
+        self.notice = Some((msg, self.ticks + NOTICE_TICKS));
+    }
+
+    fn arrows_move_tree(&self) -> bool {
+        self.screen == Screen::Browser && self.browser.focus == Focus::Tree
+    }
+
     fn start_scan(&mut self) -> Vec<Cmd> {
+        self.begin_scan(false)
+    }
+
+    fn begin_scan(&mut self, force: bool) -> Vec<Cmd> {
         if self.dashboard.scan.running {
             return vec![];
         }
@@ -274,7 +380,18 @@ impl App {
             ..Default::default()
         };
         self.dirty = true;
-        vec![Cmd::StartScan]
+        let mut cmds = vec![];
+        if force {
+            // Nothing from the old index may stay on screen.
+            self.dashboard.stats = None;
+            self.dashboard.stats_pending = false;
+            self.dashboard.no_index = true;
+            self.dashboard.error = None;
+            self.dashboard.scan.partial = false;
+            self.browser.reset();
+        }
+        cmds.push(Cmd::StartScan { force });
+        cmds
     }
 
     fn cancel_scan(&mut self) -> Vec<Cmd> {
@@ -291,6 +408,33 @@ impl App {
     pub fn update(&mut self, msg: Msg) -> Vec<Cmd> {
         // Everything except background chatter redraws; the few exceptions say so below.
         self.dirty = true;
+        if self.tab_mode {
+            match msg {
+                Msg::Left | Msg::PrevScreen => {
+                    return self.update(Msg::Goto(self.screen.step(false)));
+                }
+                Msg::Right | Msg::NextScreen => {
+                    return self.update(Msg::Goto(self.screen.step(true)));
+                }
+                Msg::Enter | Msg::Back | Msg::Down | Msg::Up | Msg::Tab | Msg::TabMode => {
+                    self.tab_mode = false;
+                    return vec![];
+                }
+                // keys that move inside a screen do nothing while the tabs are selected
+                Msg::PageUp
+                | Msg::PageDown
+                | Msg::Top
+                | Msg::Bottom
+                | Msg::CycleKind
+                | Msg::CycleSort
+                | Msg::ReverseSort
+                | Msg::StartFilter => {
+                    self.dirty = false;
+                    return vec![];
+                }
+                _ => {}
+            }
+        }
         match msg {
             Msg::Quit => {
                 self.should_quit = true;
@@ -309,17 +453,37 @@ impl App {
                 vec![]
             }
             Msg::Back => {
-                if self.show_help {
+                if self.confirm_flush {
+                    self.confirm_flush = false;
+                    vec![]
+                } else if self.show_help {
                     self.show_help = false;
                     vec![]
                 } else if self.screen == Screen::Browser && !self.browser.query.text.is_empty() {
                     self.browser.set_text(String::new())
                 } else if self.dashboard.scan.running {
                     self.cancel_scan()
+                } else if self.screen == Screen::Browser {
+                    // nothing left to close: hand the arrow keys to the tabs
+                    self.tab_mode = true;
+                    vec![]
                 } else {
                     self.dirty = false;
                     vec![]
                 }
+            }
+            Msg::TabMode => {
+                self.tab_mode = true;
+                vec![]
+            }
+            Msg::PrevScreen => self.update(Msg::Goto(self.screen.step(false))),
+            Msg::NextScreen => self.update(Msg::Goto(self.screen.step(true))),
+            // ←/→ change the tab, except on the folder tree where they collapse / expand.
+            Msg::Left if !self.arrows_move_tree() => {
+                self.update(Msg::Goto(self.screen.step(false)))
+            }
+            Msg::Right if !self.arrows_move_tree() => {
+                self.update(Msg::Goto(self.screen.step(true)))
             }
             Msg::Goto(s) => {
                 self.dirty = self.screen != s || self.show_help;
@@ -338,6 +502,27 @@ impl App {
             Msg::Bg(bg) => self.on_bg(bg),
             Msg::Tick => self.on_tick(),
             Msg::Rescan => self.start_scan(),
+            Msg::FullRescan => {
+                if !self.dashboard.scan.running {
+                    self.confirm_flush = true;
+                    self.show_help = false;
+                } else {
+                    self.dirty = false;
+                }
+                vec![]
+            }
+            Msg::ConfirmYes => {
+                if std::mem::take(&mut self.confirm_flush) {
+                    self.begin_scan(true)
+                } else {
+                    vec![]
+                }
+            }
+            Msg::ConfirmNo => {
+                self.confirm_flush = false;
+                // Declined at start-up (`--force`): carry on as if the flag was not given.
+                self.open_decision()
+            }
             Msg::CancelScan => self.cancel_scan(),
             Msg::ToggleDebug => {
                 self.debug = !self.debug;
@@ -364,21 +549,8 @@ impl App {
             Msg::PageDown => self.browser.page(true),
             Msg::Top => self.browser.jump(false),
             Msg::Bottom => self.browser.jump(true),
-            Msg::Left => {
-                if self.browser.focus == Focus::Tree {
-                    self.browser.tree_collapse_or_parent()
-                } else {
-                    self.browser.focus = Focus::Tree;
-                    vec![]
-                }
-            }
-            Msg::Right => {
-                if self.browser.focus == Focus::Tree {
-                    self.browser.tree_expand_or_child()
-                } else {
-                    vec![]
-                }
-            }
+            Msg::Left => self.browser.tree_collapse_or_parent(),
+            Msg::Right => self.browser.tree_expand_or_child(),
             Msg::Tab => {
                 self.browser.focus = match self.browser.focus {
                     Focus::Tree => Focus::Table,
@@ -386,10 +558,11 @@ impl App {
                 };
                 vec![]
             }
-            Msg::Enter => {
+            Msg::Enter if self.browser.focus == Focus::Tree => {
                 self.browser.focus = Focus::Table;
                 vec![]
             }
+            Msg::Enter => self.open_selected(),
             Msg::CycleKind | Msg::CycleSort | Msg::ReverseSort | Msg::StartFilter
                 if self.screen != Screen::Browser =>
             {
@@ -442,8 +615,15 @@ impl App {
 
     fn on_tick(&mut self) -> Vec<Cmd> {
         self.ticks += 1;
+        let expired = self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, until)| self.ticks >= *until);
+        if expired {
+            self.notice = None;
+        }
         if !self.dashboard.scan.running {
-            self.dirty = false;
+            self.dirty = expired;
             return vec![];
         }
         // The spinner and the elapsed rate move even when no event arrives.
@@ -508,6 +688,10 @@ impl App {
                     }
                 }
             }
+            Bg::Notice(m) => {
+                self.say(m);
+                vec![]
+            }
             Bg::Worker(r) => self.on_response(r),
         }
     }
@@ -519,19 +703,14 @@ impl App {
                 self.dashboard.no_index = false;
                 self.dashboard.error = None;
                 self.dashboard.stats = Some(st);
-                vec![]
+                self.open_decision()
             }
             Response::NoIndex => {
                 self.dashboard.stats_pending = false;
                 self.dashboard.no_index = true;
                 self.browser.total = Some(0);
                 self.browser.window = None;
-                // First visit to a folder: build the index without asking.
-                if !self.auto_scan_tried && !self.dashboard.scan.running {
-                    self.auto_scan_tried = true;
-                    return self.start_scan();
-                }
-                vec![]
+                self.open_decision()
             }
             Response::Error(e) => {
                 self.dashboard.stats_pending = false;
@@ -579,13 +758,26 @@ impl App {
     }
 }
 
+/// A scan older than this counts as stale for `--refresh`.
+const STALE_SECS: i64 = 3600;
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+fn is_stale(scanned_at: i64, now: i64) -> bool {
+    now - scanned_at > STALE_SECS
+}
+
 fn outcome_line(s: &ScanSummary) -> String {
     let how = match s.status {
         ScanStatus::Complete => "complete",
         ScanStatus::Partial => "stopped early, partial results kept",
     };
     format!(
-        "Last scan {how}: {} files indexed, {} new or changed, {:.1}s",
+        "Last scan {how}: {} files, {} new or changed, {:.1}s",
         fmt::thousands(s.files_indexed),
         fmt::thousands(s.new_or_changed),
         s.elapsed_ms as f64 / 1000.0
@@ -646,10 +838,17 @@ mod tests {
     fn a_missing_index_starts_one_scan_automatically() {
         let mut a = app();
         let cmds = a.update(Msg::Bg(Bg::Worker(Response::NoIndex)));
-        assert!(matches!(cmds.as_slice(), [Cmd::StartScan]));
+        assert!(matches!(cmds.as_slice(), [Cmd::StartScan { force: false }]));
         assert!(a.dashboard.scan.running);
         // a second "no index" answer (the browser asks too) must not start another
         assert!(a.update(Msg::Bg(Bg::Worker(Response::NoIndex))).is_empty());
+    }
+
+    #[test]
+    fn staleness_is_more_than_an_hour() {
+        assert!(!is_stale(1_000, 1_000 + 3600));
+        assert!(is_stale(1_000, 1_000 + 3601));
+        assert!(!is_stale(5_000, 1_000)); // clock went backwards
     }
 
     #[test]
@@ -664,7 +863,10 @@ mod tests {
     #[test]
     fn rescan_cancel_and_finish() {
         let mut a = app();
-        assert!(matches!(a.update(Msg::Rescan).as_slice(), [Cmd::StartScan]));
+        assert!(matches!(
+            a.update(Msg::Rescan).as_slice(),
+            [Cmd::StartScan { force: false }]
+        ));
         // already running: ignored
         assert!(a.update(Msg::Rescan).is_empty());
         assert!(matches!(

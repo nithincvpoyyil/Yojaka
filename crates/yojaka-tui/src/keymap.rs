@@ -9,13 +9,28 @@ pub const HELP: &[(&str, &str)] = &[
     ("", "Everywhere"),
     ("q  Ctrl-C", "quit (Ctrl-C stops a running scan first)"),
     ("?  Esc", "open / close this help"),
-    ("1-5", "Dashboard, Browser, Duplicates, Organize, History"),
-    ("r  c", "rescan this folder / cancel the running scan"),
+    (
+        "1-5  < >",
+        "Dashboard, File browser, Duplicates, Organize, History",
+    ),
+    (
+        "Shift ← →",
+        "previous / next screen (also ← → outside the Browser)",
+    ),
+    ("r  c", "scan again for changes / cancel the running scan"),
+    (
+        "R",
+        "forget what is saved and scan from scratch (asks first)",
+    ),
     ("D", "debug overlay: frame time, fetch time"),
-    ("", "Browser"),
+    ("", "File browser"),
     ("Tab", "switch between folders and files"),
+    (
+        "Enter",
+        "files: open the file with the system's default app",
+    ),
     ("j k  ↓ ↑", "move"),
-    ("h l  ← →", "folders: collapse / expand"),
+    ("h l  ← →", "folders pane: collapse / expand"),
     ("PgUp PgDn  g G", "page, first / last row"),
     ("/", "filter by name, camera or place (Esc clears)"),
     ("t", "show all / photos / videos"),
@@ -26,7 +41,7 @@ fn is_plain(mods: KeyModifiers) -> bool {
     !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
 
-pub fn translate(key: KeyEvent, editing_filter: bool) -> Option<Msg> {
+pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Option<Msg> {
     if key.kind == KeyEventKind::Release {
         return None;
     }
@@ -36,6 +51,13 @@ pub fn translate(key: KeyEvent, editing_filter: bool) -> Option<Msg> {
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Some(Msg::Interrupt);
+    }
+    if confirming {
+        return match key.code {
+            KeyCode::Char('y' | 'Y') | KeyCode::Enter => Some(Msg::ConfirmYes),
+            KeyCode::Char('n' | 'N') | KeyCode::Esc => Some(Msg::ConfirmNo),
+            _ => None,
+        };
     }
     if editing_filter {
         return match key.code {
@@ -49,7 +71,17 @@ pub fn translate(key: KeyEvent, editing_filter: bool) -> Option<Msg> {
     if !is_plain(key.modifiers) {
         return None;
     }
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        match key.code {
+            KeyCode::Left => return Some(Msg::PrevScreen),
+            KeyCode::Right => return Some(Msg::NextScreen),
+            _ => {}
+        }
+    }
     Some(match key.code {
+        KeyCode::Char('T') => Msg::TabMode,
+        KeyCode::Char('<') => Msg::PrevScreen,
+        KeyCode::Char('>') => Msg::NextScreen,
         KeyCode::Char('q') => Msg::Quit,
         KeyCode::Char('?') => Msg::ToggleHelp,
         KeyCode::Esc => Msg::Back,
@@ -73,6 +105,7 @@ pub fn translate(key: KeyEvent, editing_filter: bool) -> Option<Msg> {
         KeyCode::Char('S') => Msg::ReverseSort,
         KeyCode::Char('/') => Msg::StartFilter,
         KeyCode::Char('r') => Msg::Rescan,
+        KeyCode::Char('R') => Msg::FullRescan,
         KeyCode::Char('c') => Msg::CancelScan,
         KeyCode::Char('D') => Msg::ToggleDebug,
         _ => return None,
@@ -105,8 +138,9 @@ mod tests {
             ('h', KeyCode::Left),
             ('l', KeyCode::Right),
         ] {
-            let a = translate(plain(vim), false).map(|m| format!("{m:?}"));
-            let b = translate(key(arrow, KeyModifiers::NONE), false).map(|m| format!("{m:?}"));
+            let a = translate(plain(vim), false, false).map(|m| format!("{m:?}"));
+            let b =
+                translate(key(arrow, KeyModifiers::NONE), false, false).map(|m| format!("{m:?}"));
             assert_eq!(a, b);
             assert!(a.is_some());
         }
@@ -114,14 +148,20 @@ mod tests {
 
     #[test]
     fn typing_a_filter_turns_command_keys_into_text() {
-        assert!(matches!(translate(plain('q'), true), Some(Msg::Char('q'))));
-        assert!(matches!(translate(plain('q'), false), Some(Msg::Quit)));
         assert!(matches!(
-            translate(key(KeyCode::Esc, KeyModifiers::NONE), true),
+            translate(plain('q'), true, false),
+            Some(Msg::Char('q'))
+        ));
+        assert!(matches!(
+            translate(plain('q'), false, false),
+            Some(Msg::Quit)
+        ));
+        assert!(matches!(
+            translate(key(KeyCode::Esc, KeyModifiers::NONE), true, false),
             Some(Msg::FilterCancel)
         ));
         assert!(matches!(
-            translate(key(KeyCode::Enter, KeyModifiers::NONE), true),
+            translate(key(KeyCode::Enter, KeyModifiers::NONE), true, false),
             Some(Msg::FilterAccept)
         ));
     }
@@ -129,30 +169,61 @@ mod tests {
     #[test]
     fn ctrl_c_always_interrupts_even_while_typing() {
         let k = key(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert!(matches!(translate(k, true), Some(Msg::Interrupt)));
-        assert!(matches!(translate(k, false), Some(Msg::Interrupt)));
+        assert!(matches!(translate(k, true, false), Some(Msg::Interrupt)));
+        assert!(matches!(translate(k, false, false), Some(Msg::Interrupt)));
     }
 
     #[test]
     fn other_ctrl_combinations_are_ignored() {
-        assert!(translate(key(KeyCode::Char('q'), KeyModifiers::CONTROL), false).is_none());
+        assert!(translate(key(KeyCode::Char('q'), KeyModifiers::CONTROL), false, false).is_none());
     }
 
     #[test]
     fn key_releases_are_ignored() {
         let mut k = plain('q');
         k.kind = KeyEventKind::Release;
-        assert!(translate(k, false).is_none());
+        assert!(translate(k, false, false).is_none());
     }
 
     #[test]
     fn capital_letters_are_distinct() {
-        assert!(matches!(translate(plain('s'), false), Some(Msg::CycleSort)));
         assert!(matches!(
-            translate(plain('S'), false),
+            translate(plain('s'), false, false),
+            Some(Msg::CycleSort)
+        ));
+        assert!(matches!(
+            translate(plain('S'), false, false),
             Some(Msg::ReverseSort)
         ));
-        assert!(matches!(translate(plain('G'), false), Some(Msg::Bottom)));
+        assert!(matches!(
+            translate(plain('G'), false, false),
+            Some(Msg::Bottom)
+        ));
+    }
+
+    #[test]
+    fn angle_brackets_and_shift_arrows_switch_screens() {
+        assert!(matches!(
+            translate(plain('<'), false, false),
+            Some(Msg::PrevScreen)
+        ));
+        assert!(matches!(
+            translate(plain('>'), false, false),
+            Some(Msg::NextScreen)
+        ));
+        assert!(matches!(
+            translate(key(KeyCode::Right, KeyModifiers::SHIFT), false, false),
+            Some(Msg::NextScreen)
+        ));
+        assert!(matches!(
+            translate(key(KeyCode::Left, KeyModifiers::SHIFT), false, false),
+            Some(Msg::PrevScreen)
+        ));
+        // typing a filter keeps '<' as text
+        assert!(matches!(
+            translate(plain('<'), true, false),
+            Some(Msg::Char('<'))
+        ));
     }
 
     #[test]

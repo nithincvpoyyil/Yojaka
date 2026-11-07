@@ -25,12 +25,18 @@ pub struct TuiOptions {
     pub mode: Mode,
     /// Keep the index inside the opened folder (`--local-index`).
     pub local_index: bool,
+    /// `--refresh`: scan on open when the last scan is over an hour old. Never clears anything.
+    pub refresh: bool,
+    /// `--force`: ask on start-up whether to wipe the folder's saved data and scan again.
+    pub force: bool,
 }
 
 /// Open the TUI on `root` and block until the user quits.
 pub fn run(engine: Engine, root: PathBuf, opts: TuiOptions) -> std::io::Result<()> {
     tracing::info!(root = %root.display(), "tui starting");
     let mut app = app::App::new(root, opts.mode);
+    app.refresh_when_stale = opts.refresh;
+    app.confirm_flush = opts.force;
     let mut guard = terminal::TerminalGuard::enter()?;
     let result = event_loop::run(&mut guard, &mut app, Arc::new(engine), opts.local_index);
     drop(guard);

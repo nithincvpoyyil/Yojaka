@@ -115,6 +115,13 @@ impl Engine {
         self.run_metadata(&index, sink, cancel)
     }
 
+    /// Deletes the index of `root` so the next scan starts from nothing. Only Yojaka's own
+    /// index files are removed, never anything in `root`. Refuses protected locations.
+    pub fn flush(&self, root: &std::path::Path, local: bool) -> Result<()> {
+        let root = Self::protected().check_root(root)?;
+        Self::flush_index(&self.index_path(&root, local))
+    }
+
     /// Deletes Yojaka's own index files at `index` (never user files). Missing files are fine.
     fn flush_index(index: &std::path::Path) -> Result<()> {
         for suffix in ["", "-wal", "-shm"] {
@@ -127,7 +134,7 @@ impl Engine {
                 Err(e) => return Err(YojakaError::io(file, e)),
             }
         }
-        tracing::info!(index = %index.display(), "index flushed (--force)");
+        tracing::info!(index = %index.display(), "index flushed");
         Ok(())
     }
 

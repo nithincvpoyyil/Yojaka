@@ -231,3 +231,30 @@ fn browser_refuses_unscanned_roots() {
     let err = e.browser(env.tree.as_ref().unwrap(), false).unwrap_err();
     assert!(matches!(err, yojaka_core::YojakaError::NoIndex(_)), "{err}");
 }
+
+#[test]
+fn flush_removes_the_index_but_not_the_photos() {
+    let (env, e, _b) = setup();
+    let root = env.tree.clone().unwrap();
+    let before = std::fs::read_dir(&root).unwrap().count();
+    e.flush(&root, false).unwrap();
+    assert!(matches!(
+        e.browser(&root, false).unwrap_err(),
+        yojaka_core::YojakaError::NoIndex(_)
+    ));
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), before);
+    // flushing twice is fine, and a scan afterwards starts from nothing
+    e.flush(&root, false).unwrap();
+    let o = ScanOptions {
+        root: root.clone(),
+        ..Default::default()
+    };
+    e.scan(&o, &EventSink::null(), &CancelToken::new()).unwrap();
+    assert!(
+        e.browser(&root, false)
+            .unwrap()
+            .count(&BrowseQuery::default())
+            .unwrap()
+            > 0
+    );
+}

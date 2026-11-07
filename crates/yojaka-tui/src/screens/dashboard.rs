@@ -4,14 +4,14 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use yojaka_core::TaskKind;
 use yojaka_core::stats::Stats;
 
 use crate::app::{App, ScanView};
 use crate::{fmt, theme};
 
-const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+pub(crate) const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 pub fn render(app: &App, f: &mut Frame, area: Rect) {
     let [scan, totals, panels] = Layout::vertical([
@@ -37,7 +37,7 @@ fn phase_name(s: &ScanView) -> &'static str {
 fn render_scan(app: &App, f: &mut Frame, area: Rect) {
     let d = &app.dashboard;
     let s = &d.scan;
-    let block = Block::default().borders(Borders::ALL).title("Scan");
+    let block = theme::panel("Scan", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.height < 2 {
@@ -92,7 +92,7 @@ fn render_scan(app: &App, f: &mut Frame, area: Rect) {
             "Up to date".to_string()
         }
     } else if d.no_index {
-        "No index yet".to_string()
+        "Not scanned yet".to_string()
     } else {
         "Loading…".to_string()
     };
@@ -147,7 +147,7 @@ fn render_scan(app: &App, f: &mut Frame, area: Rect) {
 }
 
 /// A progress bar `width` cells wide, filled to `ratio`.
-fn ratio_bar(width: u16, ratio: f64, fill: Style) -> Line<'static> {
+pub(crate) fn ratio_bar(width: u16, ratio: f64, fill: Style) -> Line<'static> {
     let width = width as usize;
     let done = fmt::bar((ratio.clamp(0.0, 1.0) * 1000.0) as u64, 1000, width);
     let pad = width.saturating_sub(done.chars().count());
@@ -158,7 +158,7 @@ fn ratio_bar(width: u16, ratio: f64, fill: Style) -> Line<'static> {
 }
 
 /// A bright block sliding along a dim track, for work whose size is not known yet.
-fn indeterminate(width: u16, tick: u64) -> Line<'static> {
+pub(crate) fn indeterminate(width: u16, tick: u64) -> Line<'static> {
     let width = width as usize;
     if width < 6 {
         return Line::default();
@@ -176,13 +176,13 @@ fn indeterminate(width: u16, tick: u64) -> Line<'static> {
 }
 
 fn render_totals(app: &App, f: &mut Frame, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title("Library");
+    let block = theme::panel("Library", false);
     let st = app.dashboard.stats.as_deref();
     let lines = match st {
         None => vec![
             Line::styled("No numbers yet.", theme::dim()),
             Line::styled(
-                "They appear as soon as the first files are indexed.",
+                "They appear as soon as the first files are scanned.",
                 theme::dim(),
             ),
         ],
@@ -317,9 +317,7 @@ fn panel(f: &mut Frame, area: Rect, title: &str, have_stats: bool, mut lines: Ve
             theme::dim(),
         ));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title.to_string());
+    let block = theme::panel(title.to_string(), false);
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 

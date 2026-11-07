@@ -23,11 +23,17 @@ pub struct Cli {
     /// Allow write operations (still requires dry-run + confirm)
     #[arg(long, global = true)]
     pub write: bool,
+    /// Scan on open if the last scan is over an hour old (never clears anything)
+    #[arg(long)]
+    pub refresh: bool,
+    /// Ask first, then forget what is saved about the folder and scan it from scratch (slower)
+    #[arg(long)]
+    pub force: bool,
     /// Worker threads (default: auto)
     #[arg(long, global = true)]
     pub threads: Option<usize>,
-    /// Keep the index inside the scanned folder instead of the app data dir
-    #[arg(long, global = true)]
+    /// For tests and tooling: keep the saved data inside the scanned folder
+    #[arg(long, global = true, hide = true)]
     pub local_index: bool,
     #[arg(long, global = true, env = "YOJAKA_HOME", hide = true)]
     pub home: Option<PathBuf>,
@@ -58,7 +64,7 @@ pub enum TierArg {
 
 #[derive(Debug, Subcommand)]
 pub enum Cmd {
-    /// Scan a folder and build or update its index
+    /// Scan a folder; only new and changed files are read
     Scan {
         path: Option<PathBuf>,
         #[arg(long, value_enum, default_value = "all")]
@@ -66,14 +72,14 @@ pub enum Cmd {
         /// Sniff file contents even for unknown extensions
         #[arg(long)]
         sniff_all: bool,
-        /// Delete this folder's index and rebuild it from scratch
+        /// Forget what is saved about this folder and scan it from scratch
         #[arg(long)]
         force: bool,
         /// Only index files; skip reading metadata, Live Photo pairing and places
         #[arg(long)]
         no_metadata: bool,
     },
-    /// Show library statistics from the index
+    /// Show statistics for a scanned folder
     Stats {
         path: Option<PathBuf>,
         #[arg(long)]
@@ -91,7 +97,7 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Export the index as CSV or JSON (GPS is left out unless --include-gps)
+    /// Export the file list as CSV or JSON (GPS is left out unless --include-gps)
     Export {
         path: Option<PathBuf>,
         #[arg(long, value_enum, default_value = "csv")]

@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::keymap::HELP;
 use crate::theme;
@@ -25,7 +25,7 @@ pub fn render(f: &mut Frame, area: Rect) {
         width,
         height,
     };
-    f.render_widget(Clear, rect);
-    let block = Block::default().borders(Borders::ALL).title("Help");
+    theme::clear(f, rect);
+    let block = theme::panel("Help", true);
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }

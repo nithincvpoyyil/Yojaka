@@ -48,15 +48,61 @@ impl Runtime {
                         token.cancel();
                     }
                 }
-                Cmd::StartScan => self.start_scan(),
+                Cmd::StartScan { force } => self.start_scan(force),
+                Cmd::OpenFile(path) => self.open_file(path),
             }
         }
     }
 
-    fn start_scan(&mut self) {
+    /// Asks macOS to open `path` with the default app, and lets the OS decide which one.
+    /// Output is discarded: nothing may be printed while the TUI runs.
+    fn open_file(&self, path: std::path::PathBuf) {
+        use std::process::{Command, Stdio};
+        if !path.is_file() {
+            let _ = self.bg_tx.send(Bg::Notice(format!(
+                "{} is not there any more (r to rescan)",
+                path.file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+            )));
+            return;
+        }
+        // The index holds absolute paths, so the argument can never look like an option.
+        let child = Command::new("/usr/bin/open")
+            .arg(&path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        match child {
+            Ok(mut child) => {
+                let tx = self.bg_tx.clone();
+                std::thread::spawn(move || {
+                    if !child.wait().is_ok_and(|s| s.success()) {
+                        let _ = tx.send(Bg::Notice("The system could not open that file".into()));
+                    }
+                });
+            }
+            Err(e) => {
+                let _ = self.bg_tx.send(Bg::Notice(format!("Cannot open: {e}")));
+            }
+        }
+    }
+
+    fn start_scan(&mut self, force: bool) {
         self.reap_scan();
         if self.scan.is_some() {
             return;
+        }
+        if force {
+            // Only Yojaka's own index files go; the workers drop their open handles too.
+            if let Err(e) = self.engine.flush(&self.root, self.local_index) {
+                let _ = self.bg_tx.send(Bg::ScanFinished(Err(format!(
+                    "cannot reset this folder: {e}"
+                ))));
+                return;
+            }
+            let _ = self.slow.send(Request::Reload);
+            let _ = self.fast.send(Request::Reload);
         }
         let cancel = CancelToken::new();
         let opts = ScanOptions {
@@ -169,7 +215,7 @@ pub fn run(
                 Ok(Event::Key(k)) => {
                     let editing =
                         app.screen == crate::app::Screen::Browser && app.browser.editing_filter;
-                    msgs.extend(keymap::translate(k, editing));
+                    msgs.extend(keymap::translate(k, editing, app.confirm_flush));
                 }
                 Ok(Event::Resize(w, h)) => msgs.push(Msg::Resize(w, h)),
                 Ok(_) => {}

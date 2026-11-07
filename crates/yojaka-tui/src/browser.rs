@@ -84,6 +84,22 @@ impl Default for BrowserState {
 }
 
 impl BrowserState {
+    /// Forgets everything read from the index (before it is flushed). Keeps the query.
+    pub fn reset(&mut self) {
+        self.generation += 1;
+        self.tree = None;
+        self.expanded = HashSet::from([0]);
+        self.selected = 0;
+        self.tree_top = 0;
+        self.total = Some(0);
+        self.cursor = 0;
+        self.top = 0;
+        self.window = None;
+        self.inflight = false;
+        self.detail = None;
+        self.detail_for = None;
+    }
+
     /// Nodes shown in the tree pane, in order, with their depth.
     pub fn visible_nodes(&self) -> Vec<(usize, u16)> {
         let mut out = vec![];

@@ -436,7 +436,7 @@ fn keys(a: &mut App, msgs: Vec<Msg>) -> Vec<Cmd> {
 #[test]
 fn first_visit_scans_then_loads_everything() {
     let mut a = app_at(80, 24);
-    // nothing indexed: the browser and the stats both report it
+    // nothing saved: the browser and the stats both report it
     let cmds = keys(
         &mut a,
         vec![
@@ -445,10 +445,65 @@ fn first_visit_scans_then_loads_everything() {
         ],
     );
     assert_eq!(
-        cmds.iter().filter(|c| matches!(c, Cmd::StartScan)).count(),
+        cmds.iter()
+            .filter(|c| matches!(c, Cmd::StartScan { .. }))
+            .count(),
         1
     );
     assert!(a.status_line().contains("scanning"));
+}
+
+fn stats_scanned_at(finished: i64) -> Stats {
+    let mut s = stats();
+    s.last_scan = Some(yojaka_core::stats::LastScan {
+        id: 1,
+        status: "complete".into(),
+        started_at: finished - 5,
+        finished_at: Some(finished),
+        files_seen: 10,
+        errors: 0,
+    });
+    s
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+#[test]
+fn an_existing_index_is_not_rescanned_on_open_by_default() {
+    let mut a = app_at(80, 24);
+    let old = stats_scanned_at(now() - 5 * 3600);
+    let cmds = a.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(old)))));
+    assert!(cmds.is_empty() && !a.dashboard.scan.running);
+}
+
+#[test]
+fn refresh_scans_on_open_only_when_the_last_scan_is_over_an_hour_old() {
+    // old: scans, without clearing anything
+    let mut a = app_at(80, 24);
+    a.refresh_when_stale = true;
+    let old = stats_scanned_at(now() - 2 * 3600);
+    let cmds = a.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(old)))));
+    assert!(matches!(cmds.as_slice(), [Cmd::StartScan { force: false }]));
+    assert!(a.dashboard.stats.is_some(), "old data stays on screen");
+    // recent: does nothing
+    let mut b = app_at(80, 24);
+    b.refresh_when_stale = true;
+    let fresh = stats_scanned_at(now() - 600);
+    assert!(
+        b.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(fresh)))))
+            .is_empty()
+    );
+    // later statistics refreshes (live during a scan) never start another scan
+    let old = stats_scanned_at(now() - 9 * 3600);
+    assert!(
+        b.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(old)))))
+            .is_empty()
+    );
 }
 
 #[test]
@@ -519,7 +574,7 @@ fn resizing_recomputes_how_many_rows_fit() {
     let small = a.browser.table_rows;
     a.update(Msg::Resize(160, 48));
     assert!(a.browser.table_rows > small);
-    assert_eq!(a.browser.tree_rows, 44);
+    assert_eq!(a.browser.tree_rows, 41);
 }
 
 #[test]
@@ -531,4 +586,270 @@ fn the_ui_state_survives_a_scan_finishing() {
     assert!(cmds.is_empty());
     assert_eq!(a.browser.query.text, "img");
     assert_eq!(a.dashboard.error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn tab_bar_names_every_screen_and_marks_the_current_one() {
+    let mut a = app_at(80, 24);
+    a.update(Msg::Goto(Screen::Organize));
+    let out = draw(&a, 80, 24);
+    let rows: Vec<&str> = out.lines().skip(1).take(3).collect();
+    for name in ["Dashboard", "File browser", "Duplicates", "History"] {
+        assert!(rows[1].contains(name), "{}", rows[1]);
+    }
+    assert!(rows[1].contains("│ 4 Organize │"), "{}", rows[1]);
+    // the current tab is open at the bottom, the others stand on the line
+    assert!(
+        rows[2].contains('┘') && rows[2].contains('└'),
+        "{}",
+        rows[2]
+    );
+    // narrow: numbers only, plus the name of the current screen
+    let narrow = view::tab_bar(Screen::Duplicates, 50, false);
+    assert!(narrow[1].to_string().contains("│ 3 Duplicates │"));
+    assert!(!narrow[1].to_string().contains("Dashboard"));
+    for line in &narrow {
+        assert!(line.width() <= 50, "{line}");
+    }
+}
+
+#[test]
+fn full_rescan_asks_first_and_only_flushes_on_yes() {
+    let mut a = app_at(80, 24);
+    a.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(stats())))));
+    // asking does nothing yet
+    assert!(a.update(Msg::FullRescan).is_empty());
+    assert!(a.confirm_flush);
+    insta::assert_snapshot!("full_rescan_prompt_80x24", draw(&a, 80, 24));
+    // no / Esc: back to normal, nothing started
+    assert!(a.update(Msg::ConfirmNo).is_empty());
+    assert!(!a.confirm_flush && !a.dashboard.scan.running);
+    a.update(Msg::FullRescan);
+    a.update(Msg::Back);
+    assert!(!a.confirm_flush && !a.dashboard.scan.running);
+    // yes: scan with force, and nothing from the old index stays on screen
+    a.update(Msg::FullRescan);
+    let cmds = a.update(Msg::ConfirmYes);
+    assert!(matches!(cmds.as_slice(), [Cmd::StartScan { force: true }]));
+    assert!(a.dashboard.scan.running && !a.confirm_flush);
+    assert!(a.dashboard.stats.is_none());
+    assert_eq!(a.browser.total, Some(0));
+    // a plain rescan never forces
+    let mut b = app_at(80, 24);
+    assert!(matches!(
+        b.update(Msg::Rescan).as_slice(),
+        [Cmd::StartScan { force: false }]
+    ));
+    // R is ignored while a scan runs
+    assert!(b.update(Msg::FullRescan).is_empty());
+    assert!(!b.confirm_flush);
+}
+
+#[test]
+fn the_prompt_only_listens_to_yes_and_no() {
+    use crate::keymap::translate;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let k = |c| KeyEvent::new(c, KeyModifiers::NONE);
+    assert!(matches!(
+        translate(k(KeyCode::Char('R')), false, false),
+        Some(Msg::FullRescan)
+    ));
+    assert!(matches!(
+        translate(k(KeyCode::Char('y')), false, true),
+        Some(Msg::ConfirmYes)
+    ));
+    assert!(matches!(
+        translate(k(KeyCode::Esc), false, true),
+        Some(Msg::ConfirmNo)
+    ));
+    // 'q' must not quit and '2' must not switch screens while the prompt is open
+    assert!(translate(k(KeyCode::Char('q')), false, true).is_none());
+    assert!(translate(k(KeyCode::Char('2')), false, true).is_none());
+}
+
+#[test]
+fn angle_keys_and_arrows_walk_through_the_tabs() {
+    let mut a = app_at(80, 24);
+    a.update(Msg::NextScreen);
+    assert_eq!(a.screen, Screen::Browser);
+    a.update(Msg::PrevScreen);
+    a.update(Msg::PrevScreen);
+    assert_eq!(a.screen, Screen::History, "wraps around");
+    // plain arrows switch tabs outside the Browser
+    a.update(Msg::Right);
+    assert_eq!(a.screen, Screen::Dashboard);
+    a.update(Msg::Left);
+    assert_eq!(a.screen, Screen::History);
+    // the Browser's file table switches tabs too
+    a.update(Msg::Goto(Screen::Browser));
+    a.update(Msg::Right);
+    assert_eq!(a.screen, Screen::Duplicates);
+    a.update(Msg::Left);
+    assert_eq!(a.screen, Screen::Browser);
+    // but with the folder tree focused ←/→ collapse and expand
+    a.update(Msg::Tab);
+    assert_eq!(a.browser.focus, Focus::Tree);
+    a.update(Msg::Left);
+    a.update(Msg::Right);
+    assert_eq!(a.screen, Screen::Browser);
+    // < and > always switch
+    a.update(Msg::NextScreen);
+    assert_eq!(a.screen, Screen::Duplicates);
+    // typing never leaves the screen: `>` inside the filter is text (see keymap tests)
+}
+
+#[test]
+fn every_screen_shows_a_loader_in_the_header_while_scanning() {
+    for screen in Screen::ALL {
+        let mut a = app_at(80, 24);
+        a.update(Msg::Goto(screen));
+        a.update(Msg::Rescan);
+        a.update(Msg::Core(CoreEvent::Progress {
+            task: TaskKind::Scan,
+            done: 1200,
+            total: None,
+            bytes: 0,
+            current: None,
+        }));
+        let out = draw(&a, 80, 24);
+        let head = out.lines().next().unwrap();
+        assert!(head.contains("scanning 1,200 files"), "{screen:?}: {head}");
+        assert!(
+            head.contains('░') || head.contains('█'),
+            "{screen:?}: {head}"
+        );
+        assert!(
+            screens_spinner().iter().any(|c| head.contains(*c)),
+            "{screen:?}: {head}"
+        );
+    }
+}
+
+fn screens_spinner() -> [char; 10] {
+    crate::screens::dashboard::SPINNER
+}
+
+#[test]
+fn escape_in_the_file_browser_hands_the_arrows_to_the_tabs() {
+    let mut a = app_at(80, 24);
+    a.update(Msg::Goto(Screen::Browser));
+    a.update(Msg::Tab); // folder tree: arrows would collapse / expand
+    assert_eq!(a.browser.focus, Focus::Tree);
+    a.update(Msg::Back);
+    assert!(a.tab_mode);
+    insta::assert_snapshot!("tab_mode_80x24", draw(&a, 80, 24));
+    a.update(Msg::Right);
+    assert_eq!(a.screen, Screen::Duplicates);
+    assert!(a.tab_mode, "stays in tab mode so you can keep going");
+    a.update(Msg::Left);
+    a.update(Msg::Left);
+    assert_eq!(a.screen, Screen::Dashboard);
+    // Enter / Esc go back into the screen
+    a.update(Msg::Enter);
+    assert!(!a.tab_mode);
+    // `T` does the same, also while a scan runs (Esc would stop the scan)
+    a.update(Msg::Goto(Screen::Browser));
+    a.update(Msg::Rescan);
+    a.update(Msg::TabMode);
+    assert!(a.tab_mode);
+    a.update(Msg::Back);
+    assert!(!a.tab_mode);
+    assert!(!a.dashboard.scan.cancelling, "Esc only left tab mode");
+    // keys inside the screen are ignored meanwhile
+    a.update(Msg::TabMode);
+    let before = a.browser.query.clone();
+    a.update(Msg::CycleKind);
+    assert_eq!(a.browser.query, before);
+}
+
+#[test]
+fn force_asks_at_start_up_and_waits_for_the_answer() {
+    // `--force`: the prompt is open from the first frame and nothing scans underneath it
+    let mut a = app_at(80, 24);
+    a.confirm_flush = true;
+    insta::assert_snapshot!("force_prompt_at_start_80x24", draw(&a, 80, 24));
+    assert!(a.update(Msg::Bg(Bg::Worker(Response::NoIndex))).is_empty());
+    assert!(!a.dashboard.scan.running);
+    // N: carries on as without the flag, so a never-scanned folder is scanned now
+    let cmds = a.update(Msg::ConfirmNo);
+    assert!(matches!(cmds.as_slice(), [Cmd::StartScan { force: false }]));
+}
+
+#[test]
+fn force_yes_wipes_and_scans_once() {
+    let mut a = app_at(80, 24);
+    a.confirm_flush = true;
+    // an existing, recent scan: N does nothing, Y wipes
+    a.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(
+        stats_scanned_at(now() - 60),
+    )))));
+    assert!(!a.dashboard.scan.running);
+    let cmds = a.update(Msg::ConfirmYes);
+    assert!(matches!(cmds.as_slice(), [Cmd::StartScan { force: true }]));
+    // later answers never start a second scan
+    assert!(a.update(Msg::Bg(Bg::Worker(Response::NoIndex))).is_empty());
+    let mut b = app_at(80, 24);
+    b.confirm_flush = true;
+    b.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(
+        stats_scanned_at(now() - 60),
+    )))));
+    assert!(b.update(Msg::ConfirmNo).is_empty());
+    assert!(!b.dashboard.scan.running);
+}
+
+#[test]
+fn enter_on_a_file_asks_the_os_to_open_it() {
+    let mut a = loaded_browser(80, 24);
+    a.browser.focus = Focus::Table;
+    let first = a.browser.current_row().unwrap().clone();
+    let cmds = a.update(Msg::Enter);
+    match cmds.as_slice() {
+        [Cmd::OpenFile(p)] => assert_eq!(*p, first.path),
+        other => panic!("{other:?}"),
+    }
+    assert!(a.draw_footer_has("Opening"));
+}
+
+#[test]
+fn enter_in_the_folder_tree_only_moves_to_the_files() {
+    let mut a = loaded_browser(80, 24);
+    a.browser.focus = Focus::Tree;
+    assert!(a.update(Msg::Enter).is_empty());
+    assert_eq!(a.browser.focus, Focus::Table);
+}
+
+#[test]
+fn icloud_only_files_are_never_opened() {
+    let mut a = loaded_browser(80, 24);
+    a.browser.focus = Focus::Table;
+    if let Some(w) = a.browser.window.as_mut() {
+        w.rows[0].cloud_only = true;
+    }
+    assert!(a.update(Msg::Enter).is_empty());
+    assert!(a.draw_footer_has("only in iCloud"));
+}
+
+#[test]
+fn the_footer_message_goes_away_by_itself() {
+    let mut a = loaded_browser(80, 24);
+    a.browser.focus = Focus::Table;
+    a.update(Msg::Enter);
+    assert!(a.notice.is_some());
+    for _ in 0..12 {
+        a.update(Msg::Tick);
+    }
+    assert!(a.notice.is_none());
+    assert!(a.dirty, "the footer is redrawn without the message");
+    // and the OS failing to open a file shows up too
+    a.update(Msg::Bg(Bg::Notice(
+        "The system could not open that file".into(),
+    )));
+    assert!(a.draw_footer_has("could not open"));
+}
+
+impl App {
+    fn draw_footer_has(&self, text: &str) -> bool {
+        let (w, h) = self.size;
+        draw(self, w, h).lines().last().unwrap().contains(text)
+    }
 }

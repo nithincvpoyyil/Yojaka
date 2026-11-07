@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::{App, Mode, Screen};
 use crate::{fmt, screens, theme};
@@ -39,8 +39,9 @@ pub fn browser_rows(w: u16, h: u16) -> (u16, u16) {
 }
 
 fn body_area(full: Rect) -> Rect {
-    let [_, body, _] = Layout::vertical([
+    let [_, _, body, _] = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Length(TAB_ROWS),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
@@ -49,8 +50,10 @@ fn body_area(full: Rect) -> Rect {
 }
 
 pub fn render(app: &App, f: &mut Frame) {
-    let [header, body, footer] = Layout::vertical([
+    f.render_widget(Block::default().style(theme::base()), f.area());
+    let [header, tabs, body, footer] = Layout::vertical([
         Constraint::Length(1),
+        Constraint::Length(TAB_ROWS),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
@@ -60,15 +63,37 @@ pub fn render(app: &App, f: &mut Frame) {
         Mode::ReadOnly => ("[READ-ONLY]", theme::badge_read_only()),
         Mode::Write => ("[WRITE]", theme::badge_write()),
     };
-    let head = Line::from(vec![
-        Span::styled(
-            format!("Yojaka · {} · ", app.root.display()),
-            theme::header(),
-        ),
-        Span::styled(label, style),
-        Span::styled(format!(" · {}", app.status_line()), theme::dim()),
-    ]);
-    f.render_widget(Paragraph::new(head), header);
+    // Right side: the loader while a scan runs (so every screen shows it), else the status.
+    let scan = &app.dashboard.scan;
+    let status = app.status_line();
+    let mut right: Vec<Span> = vec![];
+    if scan.running {
+        let spin =
+            screens::dashboard::SPINNER[app.ticks as usize % screens::dashboard::SPINNER.len()];
+        right.push(Span::styled(format!("{spin} "), theme::title()));
+        right.push(Span::styled(format!("{status} "), theme::header()));
+        let bar = match scan.ratio() {
+            Some(r) => screens::dashboard::ratio_bar(12, r, theme::bar()),
+            None => screens::dashboard::indeterminate(12, app.ticks),
+        };
+        right.extend(bar.spans);
+    } else {
+        right.push(Span::styled(status, theme::dim()));
+    }
+    let right_w: usize = right.iter().map(|s| s.content.chars().count()).sum();
+    let [left_area, right_area] = Layout::horizontal([
+        Constraint::Min(1),
+        Constraint::Length((right_w as u16 + 1).min(header.width)),
+    ])
+    .areas(header);
+    let mut left = vec![Span::styled("Yojaka · ", theme::header())];
+    left.push(Span::styled(label, style));
+    f.render_widget(Paragraph::new(Line::from(left)), left_area);
+    f.render_widget(Paragraph::new(Line::from(right)), right_area);
+    f.render_widget(
+        Paragraph::new(tab_bar(app.screen, tabs.width, app.tab_mode)),
+        tabs,
+    );
 
     match app.screen {
         Screen::Dashboard => screens::dashboard::render(app, f, body),
@@ -78,34 +103,165 @@ pub fn render(app: &App, f: &mut Frame) {
     if app.show_help {
         screens::help::render(f, body);
     }
+    if app.confirm_flush {
+        render_confirm(f, body);
+    }
     if app.debug {
         render_debug(app, f, body);
     }
 
-    f.render_widget(
-        Paragraph::new(footer_line(app)).style(theme::footer()),
-        footer,
-    );
+    f.render_widget(Paragraph::new(footer_line(app)), footer);
 }
 
-fn footer_line(app: &App) -> String {
-    if app.screen == Screen::Browser && app.browser.editing_filter {
-        return format!(
-            "Filter: {}▏   Enter keep · Esc clear",
-            app.browser.query.text
-        );
-    }
-    let scan = if app.dashboard.scan.running {
-        "Esc stop scan"
-    } else {
-        "r rescan"
-    };
-    match app.screen {
-        Screen::Browser => {
-            format!("q quit · ? help · Tab pane · / filter · t kind · s/S sort · {scan}")
+const SCREENS: [Screen; 5] = Screen::ALL;
+
+/// Height of the tab strip: top edge, labels, and the line the tabs stand on.
+const TAB_ROWS: u16 = 3;
+
+/// The screens as folder tabs; the current one is yellow and open at the bottom, so it joins
+/// the panels below. Narrow terminals keep the numbers and name only the current screen.
+pub fn tab_bar(current: Screen, width: u16, active: bool) -> Vec<Line<'static>> {
+    let width = usize::from(width);
+    let label = |i: usize, s: Screen, named: bool| {
+        if named || s == current {
+            format!(" {} {} ", i + 1, s.title())
+        } else {
+            format!(" {} ", i + 1)
         }
-        _ => format!("q quit · ? help · 1–5 screens · {scan}"),
+    };
+    let full: usize = SCREENS
+        .iter()
+        .enumerate()
+        .map(|(i, s)| label(i, *s, true).chars().count() + 2)
+        .sum::<usize>()
+        + 1;
+    let named = full <= width;
+
+    let (mut top, mut mid, mut low) = (vec![Span::raw(" ")], vec![Span::raw(" ")], vec![]);
+    low.push(Span::styled("─", theme::tab_border()));
+    let mut used = 1;
+    for (i, s) in SCREENS.iter().enumerate() {
+        let text = label(i, *s, named);
+        let w = text.chars().count();
+        used += w + 2;
+        let on = *s == current;
+        let edge = if on {
+            theme::tab_border_selected()
+        } else {
+            theme::tab_border()
+        };
+        top.push(Span::styled(format!("╭{}╮", "─".repeat(w)), edge));
+        mid.push(Span::styled("│", edge));
+        mid.push(Span::styled(
+            text,
+            if on && active {
+                theme::tab_active()
+            } else if on {
+                theme::tab_selected()
+            } else {
+                theme::tab()
+            },
+        ));
+        mid.push(Span::styled("│", edge));
+        if on {
+            low.push(Span::styled(format!("┘{}└", " ".repeat(w)), edge));
+        } else {
+            low.push(Span::styled(format!("┴{}┴", "─".repeat(w)), edge));
+        }
     }
+    low.push(Span::styled(
+        "─".repeat(width.saturating_sub(used)),
+        theme::tab_border(),
+    ));
+    vec![Line::from(top), Line::from(mid), Line::from(low)]
+}
+
+fn render_confirm(f: &mut Frame, body: Rect) {
+    let lines = vec![
+        Line::styled("Scan this folder from scratch?", theme::title()),
+        Line::raw(""),
+        Line::raw("Yojaka forgets what it saved about this folder and reads it all"),
+        Line::raw("again, so it takes longer than a normal scan. Your photos and"),
+        Line::raw("videos are not touched."),
+        Line::raw(""),
+        Line::styled(
+            "y / Enter  scan from scratch      n / Esc  cancel",
+            theme::accent(),
+        ),
+    ];
+    let height = (lines.len() as u16 + 2).min(body.height);
+    let width = 66.min(body.width);
+    let rect = Rect::new(
+        body.x + body.width.saturating_sub(width) / 2,
+        body.y + body.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
+    theme::clear(f, rect);
+    let block = theme::panel("Scan from scratch", true);
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+}
+
+/// Bottom hint line: each key in yellow, what it does in the muted color.
+fn footer_line(app: &App) -> Line<'static> {
+    if let Some((msg, _)) = &app.notice {
+        return Line::styled(msg.clone(), theme::accent());
+    }
+    if app.screen == Screen::Browser && app.browser.editing_filter {
+        return Line::from(vec![
+            Span::styled("Filter: ", theme::key_hint()),
+            Span::raw(format!("{}▏", app.browser.query.text)),
+            Span::styled("   ", theme::footer()),
+            Span::styled("Enter", theme::key_hint()),
+            Span::styled(" keep  ", theme::footer()),
+            Span::styled("Esc", theme::key_hint()),
+            Span::styled(" clear", theme::footer()),
+        ]);
+    }
+    let hints: Vec<(&str, &str)> = if app.confirm_flush {
+        vec![("y", "scan from scratch"), ("n", "cancel")]
+    } else if app.tab_mode {
+        vec![
+            ("← →", "switch tab"),
+            ("Enter", "back to the screen"),
+            ("Esc", "back"),
+        ]
+    } else {
+        let scan = if app.dashboard.scan.running {
+            ("Esc", "stop scan")
+        } else {
+            ("r", "rescan")
+        };
+        match app.screen {
+            Screen::Browser => vec![
+                ("q", "quit"),
+                ("?", "help"),
+                ("Tab", "pane"),
+                ("< >", "tabs"),
+                ("/", "find"),
+                ("t", "kind"),
+                ("s", "sort"),
+                scan,
+                ("R", "scratch"),
+            ],
+            _ => vec![
+                ("q", "quit"),
+                ("?", "help"),
+                ("1-5 < >", "screens"),
+                scan,
+                ("R", "from scratch"),
+            ],
+        }
+    };
+    let mut spans = vec![];
+    for (i, (key, what)) in hints.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(key, theme::key_hint()));
+        spans.push(Span::styled(format!(" {what}"), theme::footer()));
+    }
+    Line::from(spans)
 }
 
 /// Frame and fetch times in the top-right corner (toggle with `D`).
@@ -118,6 +274,6 @@ fn render_debug(app: &App, f: &mut Frame, body: Rect) {
     );
     let w = (text.chars().count() as u16).min(body.width);
     let rect = Rect::new(body.x + body.width - w, body.y, w, 1);
-    f.render_widget(Clear, rect);
+    theme::clear(f, rect);
     f.render_widget(Paragraph::new(text).style(theme::selected()), rect);
 }

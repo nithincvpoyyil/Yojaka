@@ -7,11 +7,11 @@ Index, de-duplicate and organize photos & videos
 Usage: yojaka [OPTIONS] [PATH] [COMMAND]
 
 Commands:
-  scan      Scan a folder and build or update its index
-  stats     Show library statistics from the index
+  scan      Scan a folder; only new and changed files are read
+  stats     Show statistics for a scanned folder
   info      Show metadata for one file, including GPS and place
   places    List the places (countries and cities) found in the library
-  export    Export the index as CSV or JSON (GPS is left out unless --include-gps)
+  export    Export the file list as CSV or JSON (GPS is left out unless --include-gps)
   dupes     Find duplicates (Iteration 4)
   organize  Organize into a folder template (Iteration 6)
   plan      Inspect plans (Iteration 5)
@@ -26,7 +26,9 @@ Arguments:
 
 Options:
       --write              Allow write operations (still requires dry-run + confirm)
+      --refresh            Scan on open if the last scan is over an hour old (never clears anything)
+      --force              Ask first, then forget what is saved about the folder and scan it from
+                           scratch (slower)
       --threads <THREADS>  Worker threads (default: auto)
-      --local-index        Keep the index inside the scanned folder instead of the app data dir
   -h, --help               Print help
   -V, --version            Print version

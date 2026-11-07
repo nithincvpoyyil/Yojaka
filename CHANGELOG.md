@@ -2,6 +2,27 @@
 
 All notable changes are recorded here, in [Keep a Changelog](https://keepachangelog.com) format.
 
+## [Unreleased]
+
+### Added
+- `R` in the TUI flushes the index of the opened folder and scans it from scratch, after a confirmation (`y` / Enter, `n` / Esc). Only Yojaka's own index files are deleted. Files whose metadata failed earlier are read again. `r` stays an incremental rescan. Core: `Engine::flush(root, local)`.
+- The TUI header has a tab bar, `< 1 Dashboard  [2 Browser]  3 Duplicates … >`, with the current screen highlighted. Narrow terminals show numbers and name only the current screen.
+
+- `yojaka --refresh [PATH]`: scans on open when the last scan is more than an hour old. It adds new and changed files and clears nothing; what is known stays on screen meanwhile. Without the flag an existing scan is shown as it is, and a never-scanned folder is scanned automatically.
+
+### Changed
+- The header no longer shows the folder path.
+- Cobalt2 colors (terminalcolors.com/themes/cobalt2/default) are the default theme: dark blue background, yellow titles and keys, blue borders, blue selection bar. All colors live in `theme.rs`. Terminals without 24-bit color (Terminal.app) get the nearest of the 256 colors.
+- While a scan runs, every screen shows a loader at the right of the header: a spinner, what it is doing, and a progress bar (a sliding block while the size is unknown, a filling bar with a percentage later).
+- `yojaka --force [PATH]`: asks on start-up (y / n) before it forgets what is saved about the folder and scans it from scratch, which is slower than a normal scan. `n` carries on as usual. `--refresh` does not delete anything; `--force` does, after the question.
+- Enter on a file in the File browser opens it with the system's default app (`/usr/bin/open`; macOS decides which). Enter in the folder pane still jumps to the files. iCloud-only files are not opened, and a missing file gets a footer message. Yojaka never changes the file.
+- Tab mode: `T` anywhere, or Esc in the File browser when there is nothing else to close, gives ←/→ to the tab strip (the current tab turns into a blue bar and the hint line says so). Enter, Esc, ↑ or ↓ go back into the screen. While a scan runs Esc still stops it, so use `T` then.
+- `<` and `>` switch to the previous / next screen (wrapping), and so do ←/→ and Shift+←/→. The exception is the Browser's folder pane, where ←/→ collapse and expand; there only `<` `>` and Shift+←/→ switch.
+- The bottom hint line shows each key in yellow and its action in a muted color.
+- The screens are folder-style tabs above the panels; the current one is yellow and open at the bottom. The header now takes four rows.
+- Simpler wording: no "index" in the TUI (it says "scan" and "saved"). `--local-index` is hidden from `--help`; it is only for tests and tooling.
+- The header uses two rows, so the browser table and tree are one row shorter.
+
 ## [0.3.0] — Iteration 3
 
 ### Added
