@@ -1,31 +1,38 @@
 //! Yojaka terminal UI. Never writes to stdout/stderr outside ratatui's own drawing.
 
 mod app;
+mod browser;
 mod event_loop;
+mod fmt;
 mod keymap;
 mod screens;
 mod terminal;
 mod theme;
 mod view;
+mod worker;
+
+#[cfg(test)]
+mod snapshots_tests;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub use app::Mode;
-use yojaka_core::{Engine, EventSink};
+use yojaka_core::Engine;
 
 #[derive(Debug, Clone)]
 pub struct TuiOptions {
     pub mode: Mode,
+    /// Keep the index inside the opened folder (`--local-index`).
+    pub local_index: bool,
 }
 
 /// Open the TUI on `root` and block until the user quits.
 pub fn run(engine: Engine, root: PathBuf, opts: TuiOptions) -> std::io::Result<()> {
     tracing::info!(root = %root.display(), "tui starting");
-    let (_sink, core_rx) = EventSink::channel(1024);
     let mut app = app::App::new(root, opts.mode);
-    let _ = &engine; // used from Iteration 1 on (scan, stats)
     let mut guard = terminal::TerminalGuard::enter()?;
-    let result = event_loop::run(&mut guard, &mut app, &core_rx);
+    let result = event_loop::run(&mut guard, &mut app, Arc::new(engine), opts.local_index);
     drop(guard);
     tracing::info!("tui stopped");
     result

@@ -42,8 +42,6 @@ trash             = "5.2"
 infer        = "0.22"
 imagesize    = "0.15"
 kamadak-exif = "0.6"
-nom-exif     = "3.8"
-mp4parse     = "0.17"
 blake3       = { version = "1.8", features = ["rayon", "mmap"] }
 unicode-normalization = "0.1"
 
@@ -57,7 +55,6 @@ time       = { version = "0.3", features = ["serde", "formatting", "parsing", "l
 directories = "6"
 
 # geo (I2)
-kiddo = "6.3"
 zstd  = "0.14"
 
 # errors / logging

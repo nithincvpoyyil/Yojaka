@@ -50,6 +50,11 @@ impl Index {
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
+
+    #[cfg(test)]
+    pub(crate) fn connection_mut_for_tests(&mut self) -> &mut Connection {
+        &mut self.conn
+    }
 }
 
 #[cfg(test)]
@@ -57,9 +62,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_database_is_at_version_2() {
+    fn fresh_database_is_at_version_3() {
         let idx = Index::open_in_memory().unwrap();
-        assert_eq!(idx.schema_version().unwrap(), 2);
+        assert_eq!(idx.schema_version().unwrap(), 3);
         let v: String = idx
             .connection()
             .query_row(
@@ -77,7 +82,7 @@ mod tests {
         let p = tmp.path().join("i.db");
         drop(Index::open(&p).unwrap());
         let idx = Index::open(&p).unwrap();
-        assert_eq!(idx.schema_version().unwrap(), 2);
+        assert_eq!(idx.schema_version().unwrap(), 3);
     }
 
     #[test]

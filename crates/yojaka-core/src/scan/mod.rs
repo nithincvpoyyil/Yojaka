@@ -51,6 +51,8 @@ pub struct ScanOptions {
     pub local_index: bool,
     /// Delete this folder's index first and rebuild it from scratch.
     pub force: bool,
+    /// Read metadata (EXIF, video moov), pair Live Photos and resolve places after the file pass.
+    pub metadata: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -76,6 +78,8 @@ pub struct ScanSummary {
     pub issues: u64,
     pub permission_denied: u64,
     pub elapsed_ms: u64,
+    /// Present when [`ScanOptions::metadata`] was set.
+    pub metadata: Option<crate::meta::MetaSummary>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -464,5 +468,6 @@ pub(crate) fn run(
         issues: wstats.issues,
         permission_denied: wstats.permission_denied,
         elapsed_ms: started.elapsed().as_millis() as u64,
+        metadata: None,
     })
 }

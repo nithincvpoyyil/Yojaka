@@ -78,7 +78,14 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
                 yojaka_tui::Mode::ReadOnly
             };
             // stdout/stderr belong to the TUI from here on.
-            yojaka_tui::run(engine, root, yojaka_tui::TuiOptions { mode })?;
+            yojaka_tui::run(
+                engine,
+                root,
+                yojaka_tui::TuiOptions {
+                    mode,
+                    local_index: cli.local_index,
+                },
+            )?;
             Ok(Exit::Ok)
         }
         Some(Cmd::Doctor { json }) => Ok(cmd::doctor::run(&engine, *json)),
@@ -87,6 +94,7 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
             kind,
             sniff_all,
             force,
+            no_metadata,
         }) => Ok(cmd::scan::run(
             &engine,
             path.as_deref(),
@@ -94,6 +102,27 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
             *sniff_all,
             cli.local_index,
             *force,
+            !*no_metadata,
+        )?),
+        Some(Cmd::Info { file, json }) => Ok(cmd::info::run(&engine, file, *json)?),
+        Some(Cmd::Places { path, json }) => Ok(cmd::places::run(
+            &engine,
+            path.as_deref(),
+            *json,
+            cli.local_index,
+        )?),
+        Some(Cmd::Export {
+            path,
+            format,
+            include_gps,
+            out,
+        }) => Ok(cmd::export::run(
+            &engine,
+            path.as_deref(),
+            *format,
+            *include_gps,
+            out.as_deref(),
+            cli.local_index,
         )?),
         Some(Cmd::Stats { path, json }) => Ok(cmd::stats::run(
             &engine,

@@ -69,6 +69,9 @@ pub enum Cmd {
         /// Delete this folder's index and rebuild it from scratch
         #[arg(long)]
         force: bool,
+        /// Only index files; skip reading metadata, Live Photo pairing and places
+        #[arg(long)]
+        no_metadata: bool,
     },
     /// Show library statistics from the index
     Stats {
@@ -76,15 +79,19 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Show metadata for one file (Iteration 2)
-    Info { file: PathBuf },
-    /// List places found in the library (Iteration 2)
+    /// Show metadata for one file, including GPS and place
+    Info {
+        file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the places (countries and cities) found in the library
     Places {
         path: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
-    /// Export the index (Iteration 2)
+    /// Export the index as CSV or JSON (GPS is left out unless --include-gps)
     Export {
         path: Option<PathBuf>,
         #[arg(long, value_enum, default_value = "csv")]
@@ -92,6 +99,9 @@ pub enum Cmd {
         /// Include GPS coordinates (left out by default)
         #[arg(long)]
         include_gps: bool,
+        /// Write to this new file instead of stdout (an existing file is never overwritten)
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Find duplicates (Iteration 4)
     Dupes {
@@ -163,9 +173,7 @@ impl Cmd {
     pub fn stub_info(&self) -> Option<(&'static str, u8)> {
         Some(match self {
             Cmd::Scan { .. } | Cmd::Stats { .. } => return None,
-            Cmd::Info { .. } => ("info", 2),
-            Cmd::Places { .. } => ("places", 2),
-            Cmd::Export { .. } => ("export", 2),
+            Cmd::Info { .. } | Cmd::Places { .. } | Cmd::Export { .. } => return None,
             Cmd::Dupes { .. } => ("dupes", 4),
             Cmd::Organize { .. } => ("organize", 6),
             Cmd::Plan { .. } => ("plan", 5),

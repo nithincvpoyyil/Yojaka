@@ -20,6 +20,9 @@ blake3.workspace = true
 libc.workspace = true
 rayon.workspace = true
 jwalk.workspace = true
+zstd.workspace = true
+kamadak-exif.workspace = true
+imagesize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

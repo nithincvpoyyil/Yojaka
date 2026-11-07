@@ -7,6 +7,7 @@ use crate::{Result, YojakaError};
 pub(crate) const MIGRATIONS: &[(u32, &str)] = &[
     (1, include_str!("migrations/0001_init.sql")),
     (2, include_str!("migrations/0002_scan_file.sql")),
+    (3, include_str!("migrations/0003_meta.sql")),
 ];
 
 pub(crate) fn run(conn: &mut Connection, migrations: &[(u32, &str)]) -> Result<()> {

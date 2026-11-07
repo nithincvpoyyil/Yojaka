@@ -1,0 +1,50 @@
+---
+source: crates/yojaka-core/tests/metadata.rs
+expression: view
+---
+by_year:
+  - "2015 12 [0, 3, 1, 1, 1, 1, 3, 0, 0, 0, 0, 2]"
+  - "2016 16 [0, 1, 1, 2, 3, 3, 2, 0, 2, 0, 2, 0]"
+  - "2017 7 [1, 1, 0, 0, 0, 0, 0, 1, 0, 2, 2, 0]"
+  - "2018 10 [3, 0, 0, 0, 0, 0, 2, 1, 2, 1, 1, 0]"
+  - "2019 15 [6, 2, 0, 0, 1, 1, 1, 3, 0, 1, 0, 0]"
+  - "2020 19 [5, 0, 1, 0, 0, 0, 4, 1, 2, 1, 2, 3]"
+  - "2021 11 [0, 0, 3, 0, 1, 2, 0, 1, 2, 1, 0, 1]"
+  - "2022 14 [0, 0, 0, 1, 3, 6, 0, 0, 0, 3, 1, 0]"
+  - "2023 16 [1, 4, 2, 2, 0, 1, 0, 2, 2, 2, 0, 0]"
+  - "2024 11 [1, 0, 0, 0, 5, 0, 1, 1, 0, 1, 2, 0]"
+cameras:
+  - Apple iPhone 15 66
+  - Google Pixel 8 35
+  - Canon EOS R6 20
+cities:
+  - "Cape Town, South Africa 17"
+  - "New York City, United States 17"
+  - "Sydney, Australia 14"
+  - "Eifuku, Japan 12"
+  - "Panjim, India 12"
+  - "Paris 04 Hôtel-de-Ville, France 8"
+countries:
+  - ZA 17
+  - US 17
+  - AU 14
+  - IN 12
+  - JP 12
+  - FR 8
+formats:
+  - jpeg 113
+  - png 25
+  - mov 20
+  - mp4 14
+  - gif 10
+live_photo_pairs: 8
+metadata_errors: 6
+photos: 148
+undated: 45
+video_codecs:
+  - hevc 20
+  - h264 10
+video_total_duration_ms: 586000
+videos: 34
+with_gps: 80
+with_place: 80

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::exif_writer::{ExifData, splice_into_jpeg};
 use crate::rng::Rng;
+use crate::video::{VideoSpec, write_video};
 use crate::{GenError, io};
 
 pub const GENERATOR_VERSION: u32 = 1;
@@ -25,6 +26,10 @@ pub struct Spec {
     pub hardlinks: usize,
     pub symlinks: usize,
     pub noise: usize,
+    /// Extra videos, as a fraction of `files` (iPhone MOV, Android MP4, `moov` last, corrupt).
+    pub videos: f64,
+    /// Live Photo pairs (JPEG + MOV sharing a content identifier), plus decoys that must not pair.
+    pub live_photos: usize,
 }
 
 impl Default for Spec {
@@ -40,6 +45,8 @@ impl Default for Spec {
             hardlinks: 5,
             symlinks: 5,
             noise: 200,
+            videos: 0.0,
+            live_photos: 0,
         }
     }
 }
@@ -69,6 +76,12 @@ pub struct Entry {
     pub symlink_to: Option<String>,
     pub corrupt: bool,
     pub should_index: bool,
+    /// Videos only.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// Both halves of a true Live Photo pair share this number.
+    #[serde(default)]
+    pub live_pair: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +89,8 @@ pub struct Expected {
     pub indexed_count: usize,
     pub exact_groups: Vec<Vec<String>>,
     pub by_format: BTreeMap<String, usize>,
+    #[serde(default)]
+    pub live_pairs: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +150,8 @@ pub fn generate(spec: &Spec, out: &Path) -> Result<Manifest, GenError> {
     let uniques = g.make_uniques()?;
     g.make_dupes(&uniques)?;
     g.make_links(&uniques, out)?;
+    g.make_videos()?;
+    g.make_live_photos()?;
     g.make_noise_and_bait()?;
     let manifest = g.finish(out)?;
     Ok(manifest)
@@ -389,6 +406,8 @@ impl Gen<'_> {
                 symlink_to: None,
                 corrupt,
                 should_index: true,
+                duration_ms: None,
+                live_pair: None,
             });
             uniques.push(self.entries.len() - 1);
         }
@@ -495,6 +514,8 @@ impl Gen<'_> {
                 symlink_to: None,
                 corrupt: false,
                 should_index: true,
+                duration_ms: None,
+                live_pair: None,
             });
         }
         Ok(())
@@ -575,7 +596,255 @@ impl Gen<'_> {
                 symlink_to: Some(target_rel),
                 corrupt: false,
                 should_index: false,
+                duration_ms: None,
+                live_pair: None,
             });
+        }
+        Ok(())
+    }
+
+    fn video_entry(&self, rel: String, spec: &VideoSpec, format: &str) -> Result<Entry, GenError> {
+        let full = self.tree.join(&rel);
+        let size = io(&full, std::fs::metadata(&full))?.len();
+        Ok(Entry {
+            path: rel,
+            kind: "video".into(),
+            format: Some(format.into()),
+            size,
+            taken_at: None,
+            camera: spec
+                .make
+                .as_ref()
+                .zip(spec.model.as_ref())
+                .map(|(a, b)| format!("{a} {b}")),
+            gps: None,
+            dup_group: None,
+            name_group: None,
+            hardlink_of: None,
+            symlink_to: None,
+            corrupt: false,
+            should_index: true,
+            duration_ms: Some(spec.duration_ms),
+            live_pair: None,
+        })
+    }
+
+    /// Extra videos: iPhone MOV, Android MP4, `moov` after `mdat`, no metadata, and corrupt.
+    fn make_videos(&mut self) -> Result<(), GenError> {
+        let n = (self.spec.files as f64 * self.spec.videos).round() as usize;
+        let mut rng = Rng::new(self.spec.seed ^ 0x51DE_0000);
+        for i in 0..n {
+            let dir = self.dirs[rng.below(self.dirs.len())].clone();
+            let place = PLACES[rng.below(PLACES.len())];
+            let (y, mo, d) = (
+                rng.range(2016, 2024) as i64,
+                rng.range(1, 12) as i64,
+                rng.range(1, 28) as i64,
+            );
+            let (h, mi, s) = (
+                rng.range(0, 23) as i64,
+                rng.range(0, 59) as i64,
+                rng.range(0, 59) as i64,
+            );
+            let wall = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}");
+            let unix = civil_to_unix(y, mo, d, h, mi, s);
+            let duration_ms = 1000 + rng.range(0, 60) as u64 * 1000;
+            let iso = format!("{:+08.4}{:+09.4}+012.000/", place.2, place.3);
+            let variant = i % 5;
+            let (rel, format, spec) = match variant {
+                0 => (
+                    join(&dir, &format!("IMG_V{i:04}.mov")),
+                    "mov",
+                    VideoSpec {
+                        duration_ms,
+                        rotation: if i % 2 == 0 { 90 } else { 0 },
+                        creationdate: Some(format!("{wall}+0530")),
+                        iso6709: Some(iso.clone()),
+                        make: Some("Apple".into()),
+                        model: Some("iPhone 15".into()),
+                        content_id: Some(format!("VID-{:08X}-{i:08X}", self.spec.seed)),
+                        mvhd_unix: Some(unix),
+                        ..VideoSpec::default()
+                    },
+                ),
+                1 => (
+                    join(&dir, &format!("VID_{i:04}.mp4")),
+                    "mp4",
+                    VideoSpec {
+                        quicktime: false,
+                        duration_ms,
+                        video_codec: *b"avc1",
+                        fps: 25,
+                        xyz: Some(format!("{:+.4}{:+.4}/", place.2, place.3)),
+                        mvhd_unix: Some(unix),
+                        ..VideoSpec::default()
+                    },
+                ),
+                2 => (
+                    join(&dir, &format!("LATE_{i:04}.mp4")),
+                    "mp4",
+                    VideoSpec {
+                        quicktime: false,
+                        moov_last: true,
+                        mdat_len: 2 << 20,
+                        duration_ms,
+                        video_codec: *b"avc1",
+                        mvhd_unix: Some(unix),
+                        ..VideoSpec::default()
+                    },
+                ),
+                3 => (
+                    join(&dir, &format!("BARE_{i:04}.mov")),
+                    "mov",
+                    VideoSpec {
+                        duration_ms,
+                        audio_codec: None,
+                        ..VideoSpec::default()
+                    },
+                ),
+                _ => {
+                    let rel = join(&dir, &format!("BROKEN_{i:04}.mp4"));
+                    // ftyp, then a moov whose size claims more than the file holds.
+                    let mut bytes = vec![
+                        0, 0, 0, 0x14, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm', 0, 0, 0, 0,
+                        b'i', b's', b'o', b'm',
+                    ];
+                    bytes.extend([0, 0, 0xFF, 0xFF, b'm', b'o', b'o', b'v', 1, 2, 3]);
+                    self.write(&rel, &bytes)?;
+                    let mut e = other_entry(rel, bytes.len() as u64);
+                    e.kind = "video".into();
+                    e.format = Some("mp4".into());
+                    e.corrupt = true;
+                    e.should_index = true;
+                    self.entries.push(e);
+                    continue;
+                }
+            };
+            let full = self.tree.join(&rel);
+            if let Some(p) = full.parent() {
+                io(p, std::fs::create_dir_all(p))?;
+            }
+            write_video(&full, &spec)?;
+            self.used.insert(rel.clone());
+            let mut e = self.video_entry(rel, &spec, format)?;
+            if spec.creationdate.is_some() {
+                e.taken_at = Some(wall.clone());
+            } else if spec.mvhd_unix.is_some() {
+                e.taken_at = Some(wall.clone()); // UTC wall clock (no timezone applied)
+            }
+            if spec.iso6709.is_some() || spec.xyz.is_some() {
+                e.gps = Some(Gps {
+                    lat: place.2,
+                    lon: place.3,
+                    expect_city: place.0.into(),
+                    expect_cc: place.1.into(),
+                });
+            }
+            self.entries.push(e);
+        }
+        Ok(())
+    }
+
+    /// Live Photo pairs and decoys (see [`Spec::live_photos`]).
+    fn make_live_photos(&mut self) -> Result<(), GenError> {
+        let mut rng = Rng::new(self.spec.seed ^ 0x11FE_0000);
+        let mut pair_no = 0u32;
+        for k in 0..self.spec.live_photos {
+            let case = k % 4;
+            let dir = self.dirs[rng.below(self.dirs.len())].clone();
+            let stem = format!("IMG_L{k:04}");
+            let place = rng.chance(0.7).then(|| PLACES[rng.below(PLACES.len())]);
+            let (y, mo, d) = (
+                rng.range(2018, 2024) as i64,
+                rng.range(1, 12) as i64,
+                rng.range(1, 28) as i64,
+            );
+            let (h, mi, s) = (
+                rng.range(0, 21) as i64,
+                rng.range(0, 58) as i64,
+                rng.range(0, 57) as i64,
+            );
+            let at = |extra: i64| {
+                let u = civil_to_unix(y, mo, d, h, mi, s) + extra;
+                let (yy, m2, d2, hh, mm, ss) = unix_to_civil(u);
+                format!("{yy:04}-{m2:02}-{d2:02}T{hh:02}:{mm:02}:{ss:02}")
+            };
+            let exif_dt = at(0).replace('T', " ").replacen('-', ":", 2);
+            let content_id = format!("LIVE-{:08X}-{k:08X}", self.spec.seed);
+            let (make, model) = ("Apple", "iPhone 15");
+            let iso = place.map(|p| format!("{:+08.4}{:+09.4}+012.000/", p.2, p.3));
+            let gps = place.map(|p| Gps {
+                lat: p.2,
+                lon: p.3,
+                expect_city: p.0.into(),
+                expect_cc: p.1.into(),
+            });
+
+            // (video wall time, shared content id?, true pair?)
+            let (vid_time, with_id, paired) = match case {
+                0 | 3 => (at(0), true, true),
+                1 => (at(1), false, true),
+                _ => (at(3600), false, false),
+            };
+            let folders = if case == 3 {
+                vec![dir.clone(), self.pick_other_dir(&dir)]
+            } else {
+                vec![dir.clone()]
+            };
+            for folder in folders {
+                let img = self.base_image(3_000_000 + k);
+                let jpeg = self.encode_jpeg(&img)?;
+                let jpeg = splice_into_jpeg(
+                    &jpeg,
+                    &ExifData {
+                        make,
+                        model,
+                        orientation: 1,
+                        date_time_original: &exif_dt,
+                        gps: place.map(|p| (p.2, p.3)),
+                    },
+                );
+                let jrel = join(&folder, &format!("{stem}.JPG"));
+                let mrel = join(&folder, &format!("{stem}.MOV"));
+                if self.used.contains(&jrel) || self.used.contains(&mrel) {
+                    continue;
+                }
+                self.write(&jrel, &jpeg)?;
+                let vspec = VideoSpec {
+                    duration_ms: 1500,
+                    creationdate: Some(format!("{vid_time}+0000")),
+                    iso6709: iso.clone(),
+                    make: Some(make.into()),
+                    model: Some(model.into()),
+                    content_id: with_id.then(|| content_id.clone()),
+                    ..VideoSpec::default()
+                };
+                let full = self.tree.join(&mrel);
+                if let Some(p) = full.parent() {
+                    io(p, std::fs::create_dir_all(p))?;
+                }
+                write_video(&full, &vspec)?;
+                self.used.insert(mrel.clone());
+
+                let pair = paired.then(|| {
+                    pair_no += 1;
+                    pair_no
+                });
+                let mut je = other_entry(jrel, jpeg.len() as u64);
+                je.kind = "image".into();
+                je.format = Some("jpeg".into());
+                je.should_index = true;
+                je.taken_at = Some(at(0));
+                je.camera = Some(format!("{make} {model}"));
+                je.gps = gps.clone();
+                je.live_pair = pair;
+                self.entries.push(je);
+                let mut me = self.video_entry(mrel, &vspec, "mov")?;
+                me.taken_at = Some(vid_time.clone());
+                me.gps = gps.clone();
+                me.live_pair = pair;
+                self.entries.push(me);
+            }
         }
         Ok(())
     }
@@ -650,6 +919,11 @@ impl Gen<'_> {
             }
         }
 
+        let live_pairs = self
+            .entries
+            .iter()
+            .filter(|e| e.kind == "video" && e.live_pair.is_some())
+            .count();
         let mut by_format: BTreeMap<String, usize> = BTreeMap::new();
         let mut indexed = 0;
         for e in self.entries.iter().filter(|e| e.should_index) {
@@ -666,6 +940,7 @@ impl Gen<'_> {
                 indexed_count: indexed,
                 exact_groups,
                 by_format,
+                live_pairs,
             },
             warnings: self.warnings,
         };
@@ -692,6 +967,8 @@ fn other_entry(path: String, size: u64) -> Entry {
         symlink_to: None,
         corrupt: false,
         should_index: false,
+        duration_ms: None,
+        live_pair: None,
     }
 }
 
@@ -709,4 +986,28 @@ fn corrupt_bytes(format: &str, rng: &mut Rng) -> Vec<u8> {
         v.push(rng.below(256) as u8);
     }
     v
+}
+
+/// Unix seconds of a UTC civil time.
+pub(crate) fn civil_to_unix(y: i64, m: i64, d: i64, h: i64, mi: i64, s: i64) -> i64 {
+    let y2 = if m <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146_097 + doe - 719_468) * 86_400 + h * 3600 + mi * 60 + s
+}
+
+pub(crate) fn unix_to_civil(u: i64) -> (i64, i64, i64, i64, i64, i64) {
+    let z = u.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    let t = u.rem_euclid(86_400);
+    (y, m, d, t / 3600, t % 3600 / 60, t % 60)
 }

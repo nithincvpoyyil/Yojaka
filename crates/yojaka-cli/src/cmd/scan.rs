@@ -4,7 +4,7 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use yojaka_core::model::MediaKind;
 use yojaka_core::scan::{ScanOptions, ScanStatus};
-use yojaka_core::{CancelToken, CoreEvent, Engine, EventSink, FileIssue};
+use yojaka_core::{CancelToken, CoreEvent, Engine, EventSink, FileIssue, TaskKind};
 
 use super::fmt::bytes;
 use crate::cli::KindArg;
@@ -17,6 +17,7 @@ pub fn run(
     sniff_all: bool,
     local_index: bool,
     force: bool,
+    metadata: bool,
 ) -> anyhow::Result<Exit> {
     let root = path.unwrap_or_else(|| Path::new("."));
     let kinds = match kind {
@@ -30,6 +31,7 @@ pub fn run(
         sniff_all,
         local_index,
         force,
+        metadata,
     };
 
     let cancel = CancelToken::new();
@@ -57,6 +59,21 @@ pub fn run(
         });
         for ev in rx.iter() {
             match ev {
+                CoreEvent::Progress {
+                    task: TaskKind::Metadata,
+                    done,
+                    total,
+                    ..
+                } => {
+                    bar.set_message(format!(
+                        "reading metadata {done}/{}",
+                        total.map_or_else(|| "?".to_string(), |t| t.to_string())
+                    ));
+                }
+                CoreEvent::TaskStarted {
+                    task: TaskKind::Geocode,
+                    label,
+                } => bar.set_message(label),
                 CoreEvent::Progress {
                     done,
                     bytes: b,
@@ -104,15 +121,37 @@ pub fn run(
     if summary.cloud_only > 0 {
         println!("  {} cloud-only files (not downloaded)", summary.cloud_only);
     }
-    if summary.issues > 0 {
-        println!("  {} issues:", summary.issues);
+    if let Some(m) = &summary.metadata {
+        println!(
+            "  metadata: {} read, {} Live Photo pairs, {} places resolved ({:.1}s)",
+            m.extracted,
+            m.live_pairs,
+            m.geocoded,
+            m.elapsed_ms as f64 / 1000.0
+        );
+        if m.errors > 0 {
+            println!(
+                "  {} files had unreadable metadata (listed below and in the log)",
+                m.errors
+            );
+        }
+        if m.unsupported > 0 {
+            println!(
+                "  {} files have no metadata reader (AVI/MTS need `exiftool`: brew install exiftool)",
+                m.unsupported
+            );
+        }
+    }
+    let issue_total = summary.issues + summary.metadata.as_ref().map_or(0, |m| m.errors);
+    if issue_total > 0 {
+        println!("  {issue_total} issues:");
         for i in &issues {
             println!("    {}: {}", i.path.display(), i.message);
         }
-        if summary.issues as usize > issues.len() {
+        if issue_total as usize > issues.len() {
             println!(
                 "    … and {} more (see the log file)",
-                summary.issues as usize - issues.len()
+                issue_total as usize - issues.len()
             );
         }
     }

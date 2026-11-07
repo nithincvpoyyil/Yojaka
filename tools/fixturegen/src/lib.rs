@@ -8,6 +8,7 @@
 mod exif_writer;
 mod rng;
 mod tree;
+pub mod video;
 
 pub use tree::{Entry, Expected, Gps, Manifest, Spec, generate};
 

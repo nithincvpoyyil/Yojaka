@@ -44,12 +44,18 @@ struct Args {
     /// Non-media files
     #[arg(long, default_value_t = 200)]
     noise: usize,
+    /// Extra synthetic videos, as a fraction of --files (e.g. 0.1)
+    #[arg(long, default_value_t = 0.0)]
+    videos: f64,
+    /// Live Photo pairs (JPEG + MOV) and decoys
+    #[arg(long, default_value_t = 0)]
+    live_photos: usize,
 }
 
 fn main() -> ExitCode {
     let a = Args::parse();
     if a.kinds != "image" {
-        eprintln!("error: only --kinds image is supported in v1 (video arrives in Iteration 2)");
+        eprintln!("error: only --kinds image is supported; use --videos / --live-photos for video");
         return ExitCode::from(2);
     }
     let spec = Spec {
@@ -63,6 +69,8 @@ fn main() -> ExitCode {
         hardlinks: a.hardlinks,
         symlinks: a.symlinks,
         noise: a.noise,
+        videos: a.videos,
+        live_photos: a.live_photos,
     };
     match generate(&spec, &a.out_dir) {
         Ok(m) => {

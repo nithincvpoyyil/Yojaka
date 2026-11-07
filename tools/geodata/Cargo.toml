@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Builds the embedded GeoNames place blob (offline reverse geocoding)"
+
+[dependencies]
+zstd.workspace = true
 
 [lints]
 workspace = true

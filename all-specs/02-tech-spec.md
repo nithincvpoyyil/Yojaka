@@ -17,10 +17,10 @@ Companion to `01-product-spec.md`. FR-xx references point to that document.
 | Format sniffing | `infer` | Magic-byte detection (FR-10) |
 | Dimensions | `imagesize` | Reads the header only, never decodes the image |
 | EXIF | `kamadak-exif` (`exif` crate) | Pure Rust; JPEG, TIFF, HEIF, PNG, WebP. RAW via its TIFF container |
-| Video metadata | `nom-exif` (MOV/MP4/3GP and MKV/WebM track info: duration, dimensions, creation date, GPS, make/model) + `mp4parse` for codec details | Pure Rust, reads only the container boxes, never decodes video. **I0 spike:** compare `nom-exif` with `kamadak-exif` + `mp4parse` and keep the smaller set that covers the most. |
-| Reverse geocoding | Built-in GeoNames data (`cities1000` + `admin1CodesASCII` + `admin2Codes` + `countryInfo`), turned into a compact k-d tree with `kiddo`, compressed with `zstd` and embedded with `include_bytes!` | Offline, about 1 µs per lookup, adds roughly 3–5 MB to the binary. Compare with the `reverse_geocoder` crate in the I0 spike. **License:** GeoNames is CC-BY 4.0, so attribution is required in `--about` and the README. |
+| Video metadata | Own ISO-BMFF box walker (MOV/MP4/M4V/3GP) and a minimal EBML walker (MKV/WebM) in `meta/` | Seeks box by box and reads only the small leaf boxes, so `mdat` and sample tables are never read (ADR-0002). `nom-exif` and `mp4parse` were dropped: neither lets us bound the bytes read. |
+| Reverse geocoding | Built-in GeoNames data (`cities1000` + `admin1CodesASCII` + `admin2Codes` + `countryInfo`) built by `tools/geodata` into a zstd blob (`crates/yojaka-core/data/geo.bin.zst`, 2.9 MB, committed), embedded with `include_bytes!`, loaded lazily into a static 3-D k-d tree over unit-sphere coordinates | Offline, about 1 µs per lookup, binary grows 3.5 MB in total with all of I2 (ADR-0003). Own k-d tree instead of `kiddo` (about 60 lines, no API risk). **License:** GeoNames is CC-BY 4.0, so attribution is required in `--about` and the README. |
 | Video fallback | `exiftool -json` in batches (installed); `ffprobe` used only if present | AVI and MTS/M2TS, plus odd containers the Rust crates miss |
-| PNG/GIF details | `png`, `gif` crates (header/chunk reading only) | Text chunks, frame count |
+| PNG/GIF details | Chunk and block walkers in `meta/image.rs` over the capped header read | APNG `acTL` and GIF frame count; no extra crates |
 | Hashing | `blake3` (with `mmap` + `rayon` features) | Fastest secure hash; uses NEON on Apple Silicon |
 | Perceptual hash (later) | `image_hasher` + `image` | Near-duplicate tier (images only) |
 | Index storage | `rusqlite` (`bundled` feature), WAL mode | Embedded, queryable, low memory, crash-safe |
@@ -394,7 +394,7 @@ pub struct Fingerprint { size: u64, mtime_ns: i64, hash: Option<[u8; 32]> }
 | Key | Screen | Content |
 |-----|--------|---------|
 | `1` | **Dashboard** | Scan progress gauge, totals (photos and videos shown separately, plus total video duration), format distribution (bar chart, most used first), year histogram (sparkline or bars), top cameras, error count |
-| `2` | **Browser** | Folder tree (left) and virtualized file table (right). Columns: name, kind, format, dimensions, duration, size, taken, camera, place (`≈` when inferred). `k` cycles the kind filter (all, photos, videos). Sort and filter (`/`). Detail pane shows full metadata. |
+| `2` | **Browser** | Folder tree (left) and virtualized file table (right). Columns: name, kind, format, dimensions, duration, size, taken, camera, place (`≈` when inferred). `t` cycles the kind filter (all, photos, videos); `k` stays "up" for the vim keys. Sort and filter (`/`). Detail pane shows full metadata. |
 | `3` | **Duplicates** | Groups list (tier, count, reclaim), with group members below. `space` toggles keep/delete, `r` applies a keep rule to all, a tier filter, and the total reclaim shown in the header. |
 | `4` | **Organize** | Destination picker, template presets (Date / Place / Place+Date / Kind+Date), template input with a live sample preview (5 example files, including a geotagged one and one without location), an infer-location toggle, coverage ("82% of files have a location"), copy/move toggle, and the proposed tree glimpse. |
 | — | **Review / Dry-run** (modal) | Summary counts, warnings, before/after trees, op list sample, and a confirmation (typed phrase for large or permanent plans) |

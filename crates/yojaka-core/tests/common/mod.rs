@@ -29,14 +29,17 @@ impl TestEnv {
 
     /// Generates a fixture tree with the fixturegen library API (not the binary).
     pub fn with_fixture(seed: u64, files: usize) -> Self {
-        let mut env = Self::new();
-        let out = env.tmp.path().join("fixture");
-        let spec = fixturegen::Spec {
+        Self::with_spec(fixturegen::Spec {
             seed,
             files,
             noise: 20,
             ..Default::default()
-        };
+        })
+    }
+
+    pub fn with_spec(spec: fixturegen::Spec) -> Self {
+        let mut env = Self::new();
+        let out = env.tmp.path().join("fixture");
         env.manifest = Some(fixturegen::generate(&spec, &out).unwrap());
         env.tree = Some(out.join("tree"));
         env
