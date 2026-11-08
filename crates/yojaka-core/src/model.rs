@@ -116,7 +116,7 @@ impl Format {
 pub struct Fingerprint {
     pub size: u64,
     pub mtime_ns: i64,
-    pub hash: Option<[u8; 32]>,
+    pub hash: Option<crate::hash::ContentHash>,
 }
 
 pub use crate::geo::Place;

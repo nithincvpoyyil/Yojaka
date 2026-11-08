@@ -16,6 +16,10 @@ impl CancelToken {
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
+    /// The raw flag, for APIs that poll an `AtomicBool` (the directory walker).
+    pub fn flag(&self) -> &AtomicBool {
+        &self.0
+    }
     /// `?`-friendly check inside loops.
     pub fn check(&self) -> crate::Result<()> {
         if self.is_cancelled() {

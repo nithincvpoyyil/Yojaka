@@ -371,8 +371,8 @@ fn help_overlay() {
 #[test]
 fn later_screens_say_when_they_arrive() {
     let mut a = app_at(80, 24);
-    a.screen = Screen::Duplicates;
-    assert!(draw(&a, 80, 24).contains("Arrives in Iteration 4"));
+    a.screen = Screen::History;
+    assert!(draw(&a, 80, 24).contains("Arrives in Iteration 5"));
     a.screen = Screen::Organize;
     assert!(draw(&a, 80, 24).contains("Arrives in Iteration 6"));
 }
@@ -906,4 +906,362 @@ fn the_dashboard_lists_top_places_with_a_summary() {
     // before any statistics arrive it says so instead of showing nothing
     let b = app_at(80, 24);
     assert!(draw(&b, 80, 24).contains("Top places"));
+}
+
+// ---- Duplicates -------------------------------------------------------------------------
+
+use yojaka_core::dupes::{DupFile, DupGroup, DupItem, DupReport, DupStats, Tier};
+use yojaka_core::hash::ContentHash;
+
+use crate::dupes::{Pane, Phase};
+use crate::worker::DupOutcome;
+
+fn dfile(id: i64, path: &str, size: u64, mtime: i64, kind: MediaKind) -> DupFile {
+    DupFile {
+        id: yojaka_core::model::FileId(id),
+        path: PathBuf::from(path),
+        size,
+        mtime_ns: mtime,
+        kind,
+        taken_at: None,
+        width: None,
+        height: None,
+        duration_ms: None,
+        bitrate: None,
+        hash: ContentHash([id as u8; 32]),
+    }
+}
+
+fn single(id: i64, path: &str, size: u64, mtime: i64) -> DupItem {
+    DupItem {
+        files: vec![dfile(id, path, size, mtime, MediaKind::Image)],
+    }
+}
+
+fn report() -> DupReport {
+    let g1 = DupGroup::new(
+        1,
+        Tier::Exact,
+        vec![
+            single(1, "/photos/2023/Goa/IMG_0001.jpg", 4_200_000, 10),
+            single(2, "/photos/2023/Goa/IMG_0001 (1).jpg", 4_200_000, 20),
+            single(3, "/photos/backup/old/IMG_0001 copy.jpg", 4_200_000, 30),
+        ],
+    );
+    let pair = |base: i64, dir: &str, mtime: i64| DupItem {
+        files: vec![
+            dfile(
+                base,
+                &format!("{dir}/IMG_7.heic"),
+                2_000_000,
+                mtime,
+                MediaKind::Image,
+            ),
+            dfile(
+                base + 1,
+                &format!("{dir}/IMG_7.mov"),
+                6_000_000,
+                mtime,
+                MediaKind::Video,
+            ),
+        ],
+    };
+    let g2 = DupGroup::new(
+        2,
+        Tier::Exact,
+        vec![pair(10, "/photos/phone", 5), pair(20, "/photos/export", 9)],
+    );
+    let g3 = DupGroup::new(
+        3,
+        Tier::Exact,
+        vec![
+            single(30, "/photos/a/clip.mp4", 90_000_000, 1),
+            single(31, "/photos/b/clip.mp4", 90_000_000, 2),
+        ],
+    );
+    DupReport {
+        groups: vec![g3, g2, g1],
+        stats: DupStats {
+            candidate_files: 412,
+            ..Default::default()
+        },
+        issues: vec![],
+    }
+}
+
+/// An app with a scanned folder and a finished duplicate search.
+fn with_dupes(w: u16, h: u16) -> App {
+    let mut a = app_at(w, h);
+    a.dashboard_stats(stats());
+    a.screen = Screen::Duplicates;
+    a.dupes.begin();
+    a.dupes.finish(report());
+    a
+}
+
+#[test]
+fn duplicates_screen_in_each_state() {
+    for (w, h) in SIZES {
+        // not searched yet
+        let mut a = app_at(w, h);
+        a.dashboard_stats(stats());
+        a.screen = Screen::Duplicates;
+        insta::assert_snapshot!(format!("duplicates_idle_{w}x{h}"), draw(&a, w, h));
+
+        // searching
+        a.dupes.begin();
+        a.dupes.progress(120, Some(412), 1_500_000_000);
+        insta::assert_snapshot!(format!("duplicates_searching_{w}x{h}"), draw(&a, w, h));
+
+        // results, rule applied
+        let a = with_dupes(w, h);
+        insta::assert_snapshot!(format!("duplicates_results_{w}x{h}"), draw(&a, w, h));
+
+        // nothing found
+        let mut a = app_at(w, h);
+        a.dashboard_stats(stats());
+        a.screen = Screen::Duplicates;
+        a.dupes.begin();
+        a.dupes.finish(DupReport {
+            stats: DupStats {
+                candidate_files: 30,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        insta::assert_snapshot!(format!("duplicates_none_{w}x{h}"), draw(&a, w, h));
+    }
+}
+
+#[test]
+fn duplicates_help_lists_its_own_keys_and_not_the_browsers() {
+    let mut a = with_dupes(80, 40);
+    a.show_help = true;
+    let out = draw(&a, 80, 40);
+    assert!(out.contains("mark / unmark"), "{out}");
+    assert!(!out.contains("filter by name"), "{out}");
+    let mut b = loaded_browser(80, 40);
+    b.show_help = true;
+    let out = draw(&b, 80, 40);
+    assert!(out.contains("filter by name"));
+    assert!(!out.contains("mark / unmark"));
+}
+
+#[test]
+fn the_search_needs_a_scanned_folder_and_no_running_scan() {
+    let mut a = app_at(80, 24);
+    a.screen = Screen::Duplicates;
+    // nothing known about the folder yet
+    assert!(keys(&mut a, vec![Msg::FindDupes]).is_empty());
+    assert!(!a.dupes.searching());
+
+    a.dashboard_stats(stats());
+    a.dashboard.scan.running = true;
+    assert!(keys(&mut a, vec![Msg::FindDupes]).is_empty());
+    assert!(a.notice.as_ref().unwrap().0.contains("scan to finish"));
+
+    a.dashboard_stop_scan();
+    let cmds = keys(&mut a, vec![Msg::FindDupes]);
+    assert!(matches!(cmds.as_slice(), [Cmd::FindDupes]));
+    assert!(a.dupes.searching());
+    // asking again while it runs does nothing
+    assert!(keys(&mut a, vec![Msg::FindDupes]).is_empty());
+    // and a rescan waits for it
+    assert!(keys(&mut a, vec![Msg::Rescan]).is_empty());
+    assert!(a.notice.as_ref().unwrap().0.contains("duplicate search"));
+}
+
+#[test]
+fn f_only_works_on_the_duplicates_screen() {
+    let mut a = app_at(80, 24);
+    a.dashboard_stats(stats());
+    a.screen = Screen::Browser;
+    assert!(keys(&mut a, vec![Msg::FindDupes]).is_empty());
+    assert!(!a.dupes.searching());
+}
+
+#[test]
+fn search_progress_does_not_touch_the_scan_gauge() {
+    let mut a = app_at(80, 24);
+    a.dashboard_stats(stats());
+    a.screen = Screen::Duplicates;
+    keys(&mut a, vec![Msg::FindDupes]);
+    keys(
+        &mut a,
+        vec![
+            Msg::Core(CoreEvent::TaskStarted {
+                task: TaskKind::Hash,
+                label: "x".into(),
+            }),
+            Msg::Core(CoreEvent::Progress {
+                task: TaskKind::Hash,
+                done: 5,
+                total: Some(10),
+                bytes: 99,
+                current: None,
+            }),
+        ],
+    );
+    assert!(!a.dashboard.scan.running);
+    assert_eq!(a.dashboard.scan.phase, None);
+    assert_eq!(a.dupes.done, 5);
+    assert_eq!(a.status_line(), "comparing files 50%");
+    // the loader shows on every screen
+    a.screen = Screen::Dashboard;
+    assert!(
+        draw(&a, 80, 24)
+            .lines()
+            .next()
+            .unwrap()
+            .contains("comparing files 50%")
+    );
+}
+
+#[test]
+fn escape_and_c_stop_the_search_and_the_result_is_kept_out() {
+    for stop in [Msg::Back, Msg::CancelScan, Msg::Interrupt] {
+        let mut a = app_at(80, 24);
+        a.dashboard_stats(stats());
+        a.screen = Screen::Duplicates;
+        keys(&mut a, vec![Msg::FindDupes]);
+        let cmds = keys(&mut a, vec![stop]);
+        assert!(matches!(cmds.as_slice(), [Cmd::CancelDupes]));
+        keys(
+            &mut a,
+            vec![Msg::Bg(Bg::DupesFinished(DupOutcome::Cancelled))],
+        );
+        assert_eq!(a.dupes.phase, Phase::Cancelled);
+        assert!(!a.should_quit);
+    }
+}
+
+#[test]
+fn a_failed_search_says_why() {
+    let mut a = app_at(80, 24);
+    a.dashboard_stats(stats());
+    a.screen = Screen::Duplicates;
+    keys(&mut a, vec![Msg::FindDupes]);
+    keys(
+        &mut a,
+        vec![Msg::Bg(Bg::DupesFinished(DupOutcome::Failed(
+            "disk on fire".into(),
+        )))],
+    );
+    assert!(draw(&a, 80, 24).contains("disk on fire"));
+}
+
+#[test]
+fn marking_session() {
+    let mut a = with_dupes(80, 24);
+    // Biggest group first; the default rule keeps the oldest copy.
+    assert_eq!(a.dupes.groups[0].id, 3);
+    assert_eq!(a.dupes.groups[0].delete, [false, true]);
+    let total = a.dupes.total_reclaim();
+    assert_eq!(total, 90_000_000 + 8_000_000 + 8_400_000);
+    assert_eq!(a.dupes.marked_files(), 1 + 2 + 2);
+
+    // Move to group 2 (Live Photos), then into its copies.
+    keys(&mut a, vec![Msg::Down]);
+    assert_eq!(a.dupes.group, 1);
+    keys(&mut a, vec![Msg::Tab]);
+    assert_eq!(a.dupes.pane, Pane::Copies);
+    // Space on the kept copy would leave none: refused.
+    assert_eq!(a.dupes.groups[1].delete, [false, true]);
+    keys(&mut a, vec![Msg::Toggle]);
+    assert_eq!(a.dupes.groups[1].delete, [false, true]);
+    assert!(a.notice.as_ref().unwrap().0.contains("always stays"));
+
+    // Unmark the other copy: keep both.
+    keys(&mut a, vec![Msg::Down, Msg::Toggle]);
+    assert_eq!(a.dupes.groups[1].delete, [false, false]);
+    // Enter on the second copy keeps only it.
+    keys(&mut a, vec![Msg::Enter]);
+    assert_eq!(a.dupes.groups[1].delete, [true, false]);
+    // x keeps everything in the group.
+    keys(&mut a, vec![Msg::KeepAllInGroup]);
+    assert_eq!(a.dupes.groups[1].delete, [false, false]);
+
+    // The cursor never leaves the lists.
+    keys(&mut a, vec![Msg::Bottom, Msg::Down, Msg::Down]);
+    assert_eq!(a.dupes.copy, 1);
+    keys(&mut a, vec![Msg::Tab, Msg::Bottom, Msg::Down]);
+    assert_eq!(a.dupes.group, 2);
+    keys(&mut a, vec![Msg::Top, Msg::Up]);
+    assert_eq!(a.dupes.group, 0);
+
+    // p cycles the rule and applies it to every group again.
+    keys(&mut a, vec![Msg::NextRule]);
+    assert_eq!(a.dupes.preset, 1);
+    assert!(a.notice.as_ref().unwrap().0.starts_with("Keep rule:"));
+    for g in &a.dupes.groups {
+        assert_eq!(g.delete_count(), g.members.len() - 1);
+    }
+}
+
+#[test]
+fn every_group_always_keeps_a_copy_whatever_is_pressed() {
+    let mut a = with_dupes(80, 24);
+    let presses = [
+        Msg::Toggle,
+        Msg::Down,
+        Msg::Toggle,
+        Msg::Tab,
+        Msg::Toggle,
+        Msg::Down,
+        Msg::Toggle,
+        Msg::Enter,
+        Msg::Tab,
+        Msg::Down,
+        Msg::Toggle,
+        Msg::NextRule,
+        Msg::Toggle,
+        Msg::KeepAllInGroup,
+    ];
+    for m in presses {
+        keys(&mut a, vec![m]);
+        for g in &a.dupes.groups {
+            assert!(g.keeper().is_some());
+        }
+    }
+}
+
+#[test]
+fn a_finished_scan_forgets_stale_results() {
+    let mut a = with_dupes(80, 24);
+    assert!(!a.dupes.groups.is_empty());
+    let sum = yojaka_core::scan::ScanSummary {
+        scan_id: 1,
+        status: yojaka_core::scan::ScanStatus::Complete,
+        files_seen: 0,
+        files_indexed: 0,
+        new_or_changed: 0,
+        unchanged: 0,
+        pruned: 0,
+        cloud_only: 0,
+        bytes: 0,
+        issues: 0,
+        permission_denied: 0,
+        elapsed_ms: 0,
+        metadata: None,
+    };
+    keys(&mut a, vec![Msg::Bg(Bg::ScanFinished(Ok(sum)))]);
+    assert!(a.dupes.groups.is_empty());
+    assert_eq!(a.dupes.phase, Phase::Idle);
+}
+
+#[test]
+fn nothing_the_duplicates_screen_does_asks_the_runtime_to_change_a_file() {
+    // The only commands it can produce are reading ones.
+    let mut a = with_dupes(80, 24);
+    let cmds = keys(
+        &mut a,
+        vec![
+            Msg::Toggle,
+            Msg::Enter,
+            Msg::NextRule,
+            Msg::KeepAllInGroup,
+            Msg::FindDupes,
+        ],
+    );
+    assert!(cmds.iter().all(|c| matches!(c, Cmd::FindDupes)), "{cmds:?}");
 }

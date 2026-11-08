@@ -2,7 +2,7 @@
 
 A terminal app for indexing, de-duplicating and organizing photo and video files on macOS (Apple Silicon only).
 
-**Status: pre-alpha (v0.0.1, Iteration 0). Read-only skeleton: nothing touches your files yet.**
+**Status: pre-alpha. Iterations 0-3 are done (scan, metadata, places, a terminal UI). Everything is read-only: nothing touches your files yet. See `docs/STATUS.md`.**
 
 ## Safety promise
 Yojaka never writes to your files outside Plan → Dry-run → Confirm → Execute (journaled). Delete means move to the Trash. Files are never overwritten. Location lookup is offline; coordinates never leave your machine.

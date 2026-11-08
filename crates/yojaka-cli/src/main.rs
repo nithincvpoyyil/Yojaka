@@ -31,6 +31,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(code) => code.into(),
         Err(e) => {
+            tracing::error!("fatal: {e:#}");
             eprintln!("error: {e}");
             if let Some(hint) = hint_for(&e) {
                 eprintln!("hint: {hint}");
@@ -63,12 +64,25 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
     }
     let paths = AppPaths::from_env_or(cli.home.as_deref())?;
     paths.ensure()?;
-    let _log_guard = logging::init(&paths.logs);
+    // Only with --debug. Printed before the TUI takes the terminal.
+    let _debug_log = if cli.debug {
+        let log = logging::init(&paths.logs);
+        match &log {
+            Some(l) => eprintln!("debug log: {}", l.path.display()),
+            None => eprintln!("warning: cannot write the debug log"),
+        }
+        log
+    } else {
+        None
+    };
     let mut config = Config::load(&paths.config_file())?;
     if let Some(t) = cli.threads {
         config.threads = t;
     }
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "yojaka starting");
+    if _debug_log.is_some() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        logging::log_header(&args, config.threads);
+    }
     let engine = Engine::new(paths, config);
 
     match &cli.cmd {
@@ -136,6 +150,23 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
             path.as_deref(),
             *json,
             cli.local_index,
+        )?),
+        Some(Cmd::Dupes {
+            path,
+            tier,
+            keep,
+            plan_out,
+            json,
+        }) => Ok(cmd::dupes::run(
+            &engine,
+            cmd::dupes::Args {
+                path: path.as_deref(),
+                tier: *tier,
+                keep,
+                plan_out: plan_out.as_deref(),
+                json: *json,
+                local_index: cli.local_index,
+            },
         )?),
         Some(other) => Ok(cmd::stub::not_yet(other)),
     }

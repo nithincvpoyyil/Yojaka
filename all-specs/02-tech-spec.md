@@ -12,7 +12,7 @@ Companion to `01-product-spec.md`. FR-xx references point to that document.
 | Target | `aarch64-apple-darwin` | M-series only (product spec §5) |
 | TUI | `ratatui` + `crossterm` backend | Per the spec; mature; testable with `TestBackend` |
 | CLI args | `clap` (derive) | Standard |
-| Directory walk | `jwalk` (parallel, rayon-backed) | Parallel `readdir`, sorted output, fast on APFS |
+| Directory walk | `dua-core` (parallel, unordered, bounded queue) | Bulk `getattrlistbulk` on APFS, flat memory, cancellable; see ADR-0005 |
 | Parallelism | `rayon` (CPU work) + `crossbeam-channel` (pipeline) | No async runtime needed for local disk work |
 | Format sniffing | `infer` | Magic-byte detection (FR-10) |
 | Dimensions | `imagesize` | Reads the header only, never decodes the image |
@@ -83,7 +83,7 @@ yojaka/
    ┌───────────────────────┼──────────────────┴───────────────────────────┐
    │  Scan pipeline (worker threads)                                      │
    │                                                                      │
-   │  jwalk ─► filter/detect ─► metadata (rayon pool) ─► batcher ─► DB writer (1 thread) │
+   │  dua-core ─► filter/detect ─► metadata (rayon pool) ─► batcher ─► DB writer (1 thread) │
    │   │            │                 │                                  │   │
    │   └─ progress ─┴─────────────────┴──────────► CoreEvent::Progress   │   │
    │                                                                      ▼   │
@@ -97,7 +97,7 @@ yojaka/
 ### 3.1 Threading model
 - **Main thread:** the TUI event loop. It polls `crossterm` input with a ~16–33 ms timeout, drains `CoreEvent`s without blocking, and redraws only when something changed.
 - **Pipeline threads:**
-  - The walker runs on `jwalk`'s own rayon pool.
+  - The walker runs on `dua-core`'s own worker threads; its result queue is bounded (ADR-0005).
   - Detection and metadata extraction run on a rayon pool sized to the **performance cores** (default `num_cpus - 2`; configurable).
 - **Single DB writer thread:** receives `Vec<FileRecord>` batches (about 2,000 rows) and writes each batch in one transaction. This avoids SQLite lock contention.
 - **Back-pressure:** every channel is bounded (for example capacity 64 batches), so memory stays flat when the disk is faster than the database or the other way round.
@@ -224,7 +224,7 @@ CREATE TABLE scan_error (
 ## 6. Pipelines
 
 ### 6.1 Scan
-1. `jwalk::WalkDir::new(root).follow_links(false).skip_hidden(cfg).process_read_dir(filter_skip_dirs)`.
+1. `dua_core::walk(root, threads, Order::Completion, Options::default().skip_metadata(), descend)`. `descend` prunes bundles, own folders, skip-list and hidden names (the last two below the root only); symlinks are never followed.
 2. For each entry: `lstat` → skip non-regular files → check dataless.
 3. Detection:
    - A known image or video extension is a fast accept, confirmed with magic bytes on the first 32 bytes (`ftyp` brand for ISO-BMFF: `qt  `, `isom`, `mp41`, `heic`, …). The brand separates HEIC (image) from MOV/MP4 (video).

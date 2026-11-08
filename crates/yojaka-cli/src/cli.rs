@@ -49,6 +49,10 @@ pub struct Cli {
     /// Ask first, then forget what is saved about the folder and scan it from scratch (slower)
     #[arg(long)]
     pub force: bool,
+    /// Write a detailed debug log (threads, steps, timings, errors) to the logs folder.
+    /// The file name is printed at start. Without this flag no log is written.
+    #[arg(long, global = true)]
+    pub debug: bool,
     /// Worker threads (default: auto)
     #[arg(long, global = true)]
     pub threads: Option<usize>,
@@ -129,13 +133,16 @@ pub enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Find duplicates (Iteration 4)
+    /// Find identical files and preview what could be removed (changes nothing)
     Dupes {
         path: Option<PathBuf>,
+        /// How sure a match must be (only `exact` is available so far)
         #[arg(long, value_enum, default_value = "exact")]
         tier: TierArg,
-        #[arg(long)]
+        /// Which copy to keep, in order of preference, e.g. `prefer-path:~/Pictures,oldest-modified,shortest-path`
+        #[arg(long, value_delimiter = ',')]
         keep: Vec<String>,
+        /// Save the proposed removals as a plan file (never overwrites; nothing is deleted)
         #[arg(long)]
         plan_out: Option<PathBuf>,
         #[arg(long)]
@@ -200,7 +207,7 @@ impl Cmd {
         Some(match self {
             Cmd::Scan { .. } | Cmd::Stats { .. } => return None,
             Cmd::Info { .. } | Cmd::Places { .. } | Cmd::Export { .. } => return None,
-            Cmd::Dupes { .. } => ("dupes", 4),
+            Cmd::Dupes { .. } => return None,
             Cmd::Organize { .. } => ("organize", 6),
             Cmd::Plan { .. } => ("plan", 5),
             Cmd::Apply { .. } => ("apply", 5),

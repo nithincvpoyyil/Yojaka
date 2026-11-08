@@ -4,13 +4,19 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Fixed
+- A scan could freeze for good when one folder held more than 50,000 entries (a camera dump, or `target/debug/deps` in a Rust project). The directory walker is now `dua-core`; memory stays flat.
+- A folder whose own name is on the skip list (`Library`, `node_modules`, `.git`, hidden names) was scanned as empty. The skip list now applies only inside the opened folder.
+
 ### Added
+- `--debug`: writes a detailed log of what Yojaka is doing to `<home>/logs/debug-<time>.log` (the path is printed at start). Each line has a time, level, thread name, module and source line. It records the start and end of each step (scan, metadata, Live Photo pairing, places, duplicates), worker and writer threads starting and stopping, UI commands, slow requests (500 ms or more), every error with the file it came from, and panics with a backtrace. `YOJAKA_LOG=trace` adds more. Without the flag no log file is written. File paths appear in the log; GPS coordinates do not.
 - `R` in the TUI flushes the index of the opened folder and scans it from scratch, after a confirmation (`y` / Enter, `n` / Esc). Only Yojaka's own index files are deleted. Files whose metadata failed earlier are read again. `r` stays an incremental rescan. Core: `Engine::flush(root, local)`.
 - The TUI header has a tab bar, `< 1 Dashboard  [2 Browser]  3 Duplicates … >`, with the current screen highlighted. Narrow terminals show numbers and name only the current screen.
 
 - `yojaka --refresh [PATH]`: scans on open when the last scan is more than an hour old. It adds new and changed files and clears nothing; what is known stays on screen meanwhile. Without the flag an existing scan is shown as it is, and a never-scanned folder is scanned automatically.
 
 ### Changed
+- Scan progress shows two steps, a percentage and time left when the size is known, 'Finishing up' between steps, and a red notice when nothing has moved for 5 s. Live statistics refresh less often when they are slow.
 - The header no longer shows the folder path.
 - Cobalt2 colors (terminalcolors.com/themes/cobalt2/default) are the default theme: dark blue background, yellow titles and keys, blue borders, blue selection bar. All colors live in `theme.rs`. Terminals without 24-bit color (Terminal.app) get the nearest of the 256 colors.
 - While a scan runs, every screen shows a loader at the right of the header: a spinner, what it is doing, and a progress bar (a sliding block while the size is unknown, a filling bar with a percentage later).

@@ -141,8 +141,20 @@ impl Default for StatsOptions {
 }
 
 /// One row per physical file: paths sharing `(dev, ino)` collapse.
-const UNIQUE: &str = "(SELECT id, media_kind, format, size_bytes, is_cloud_only, full_path, \
-metadata_status FROM file GROUP BY device_id, inode)";
+///
+/// Built once per call into a temp table. Grouping the whole `file` table is the costly part,
+/// and the dashboard asks a dozen questions about the same set.
+const UNIQUE: &str = "temp.uniq";
+
+fn materialize_unique(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS temp.uniq;
+         CREATE TEMP TABLE uniq AS SELECT id, media_kind, format, size_bytes, is_cloud_only, \
+         full_path, metadata_status FROM file GROUP BY device_id, inode;
+         CREATE INDEX temp.uniq_id ON uniq(id);",
+    )?;
+    Ok(())
+}
 
 fn path_of(raw: Vec<u8>) -> PathBuf {
     use std::os::unix::ffi::OsStringExt;
@@ -152,6 +164,11 @@ fn path_of(raw: Vec<u8>) -> PathBuf {
 /// Location coverage plus the most common countries and cities (at most `limit` of each).
 /// Cities farther than `far_km` from their nearest place are left out (precision guard).
 pub fn location(conn: &Connection, far_km: f64, limit: usize) -> Result<LocationStats> {
+    materialize_unique(conn)?;
+    location_of_unique(conn, far_km, limit)
+}
+
+fn location_of_unique(conn: &Connection, far_km: f64, limit: usize) -> Result<LocationStats> {
     let q =
         |sql: &str| -> Result<u64> { Ok(conn.query_row(sql, [], |r| r.get::<_, i64>(0))? as u64) };
     let total_unique = q(&format!("SELECT COUNT(*) FROM {UNIQUE}"))?;
@@ -203,6 +220,7 @@ pub fn location(conn: &Connection, far_km: f64, limit: usize) -> Result<Location
 }
 
 pub fn compute(conn: &Connection, root: &Path, opts: StatsOptions) -> Result<Stats> {
+    materialize_unique(conn)?;
     let kind = |k: &str| -> Result<KindStats> {
         Ok(conn.query_row(
             &format!(
@@ -399,7 +417,7 @@ pub fn compute(conn: &Connection, root: &Path, opts: StatsOptions) -> Result<Sta
         .collect::<std::result::Result<Vec<_>, _>>()?
     };
 
-    let location = location(conn, opts.far_km, TOP_N)?;
+    let location = location_of_unique(conn, opts.far_km, TOP_N)?;
 
     Ok(Stats {
         video,

@@ -53,9 +53,18 @@ impl EventSink {
         (Self(tx), rx)
     }
     pub fn progress(&self, ev: CoreEvent) {
-        let _ = self.0.try_send(ev);
+        if self.0.try_send(ev).is_err() {
+            tracing::trace!("progress event dropped (the UI is behind)");
+        }
     }
     pub fn important(&self, ev: CoreEvent) {
+        // Issues are logged where they are found, with more detail.
+        if !matches!(ev, CoreEvent::Issue(_)) {
+            tracing::debug!(event = ?ev, "event");
+        }
+        if self.0.is_full() {
+            tracing::debug!("event channel full: waiting for the UI to catch up");
+        }
         let _ = self.0.send(ev);
     }
     /// A sink whose receiver is gone. Used by `--quiet` and tests.

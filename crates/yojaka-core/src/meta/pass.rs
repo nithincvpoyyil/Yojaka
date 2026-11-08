@@ -195,10 +195,13 @@ pub fn run(
     } else {
         config.threads
     };
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .map_err(|e| YojakaError::Internal(e.to_string()))?;
+    let pool = crate::pool::build("meta-worker", threads)?;
+    tracing::info!(
+        files = total,
+        threads,
+        exiftool = have_exiftool,
+        "metadata: starting"
+    );
 
     let done = AtomicU64::new(0);
     let mut last_emit = Instant::now();
@@ -271,6 +274,18 @@ pub fn run(
         }
     }
 
+    if !cancelled && total > 0 {
+        // Every file has been read. Exiftool retries, Live Photo pairing and places follow
+        // without countable progress; the UI shows "finishing up" from here.
+        sink.important(CoreEvent::Progress {
+            task: TaskKind::Metadata,
+            done: done.load(Ordering::Relaxed),
+            total: Some(total),
+            bytes: 0,
+            current: None,
+        });
+    }
+
     if !cancelled && !retry_with_exiftool.is_empty() {
         for batch in retry_with_exiftool.chunks(100) {
             if cancel.is_cancelled() {
@@ -278,6 +293,7 @@ pub fn run(
                 break;
             }
             let paths: Vec<PathBuf> = batch.iter().map(|j| j.path.clone()).collect();
+            tracing::debug!(files = paths.len(), "metadata: exiftool retry batch");
             let results = exiftool::extract_batch(&paths);
             let tx = conn.transaction()?;
             for (job, (_, r)) in batch.iter().zip(results) {
@@ -294,9 +310,21 @@ pub fn run(
     }
 
     if !cancelled {
+        let t = Instant::now();
         let stats = livephoto::pair(&mut conn)?;
         summary.live_pairs = stats.total();
+        tracing::debug!(
+            pairs = summary.live_pairs,
+            ms = t.elapsed().as_millis() as u64,
+            "metadata: live photos paired"
+        );
+        let t = Instant::now();
         summary.geocoded = geocode(&mut conn, &EmbeddedGeocoder, sink, cancel)?;
+        tracing::debug!(
+            places = summary.geocoded,
+            ms = t.elapsed().as_millis() as u64,
+            "metadata: places resolved"
+        );
     }
     if total > 0 {
         sink.important(CoreEvent::TaskFinished {
@@ -309,6 +337,7 @@ pub fn run(
         });
     }
     summary.elapsed_ms = started.elapsed().as_millis() as u64;
+    tracing::info!(?summary, cancelled, "metadata: finished");
     Ok(summary)
 }
 
@@ -382,6 +411,8 @@ pub(crate) fn geocode(
             .collect::<std::result::Result<_, _>>()?
     };
     let mut n = 0u64;
+    let todo_len = todo.len() as u64;
+    let mut last_emit = Instant::now();
     if !todo.is_empty() {
         sink.important(CoreEvent::TaskStarted {
             task: TaskKind::Geocode,
@@ -391,9 +422,19 @@ pub(crate) fn geocode(
             "UPDATE meta SET place_country_code=?2,place_country=?3,place_state=?4,place_district=?5,\
              place_city=?6,place_dist_km=?7,loc_src='gps' WHERE file_id=?1",
         )?;
-        for (id, lat, lon) in todo {
+        for (i, (id, lat, lon)) in todo.into_iter().enumerate() {
             if cancel.is_cancelled() {
                 break;
+            }
+            if last_emit.elapsed() >= PROGRESS_EVERY {
+                last_emit = Instant::now();
+                sink.progress(CoreEvent::Progress {
+                    task: TaskKind::Geocode,
+                    done: i as u64,
+                    total: Some(todo_len),
+                    bytes: 0,
+                    current: None,
+                });
             }
             let Some(p) = GeoPoint::checked(lat, lon).and_then(|g| geocoder.lookup(g)) else {
                 continue;
@@ -408,6 +449,15 @@ pub(crate) fn geocode(
                 p.dist_km
             ])?;
             n += 1;
+        }
+        if !cancel.is_cancelled() {
+            sink.important(CoreEvent::Progress {
+                task: TaskKind::Geocode,
+                done: todo_len,
+                total: Some(todo_len),
+                bytes: 0,
+                current: None,
+            });
         }
         sink.important(CoreEvent::TaskFinished {
             task: TaskKind::Geocode,

@@ -3,15 +3,36 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
+use crate::app::Screen;
 use crate::keymap::HELP;
 use crate::theme;
 
-pub fn render(f: &mut Frame, area: Rect) {
-    let lines: Vec<Line> = HELP
-        .iter()
+/// The help lines that apply on `screen`: the global section plus the screen's own.
+pub fn lines_for(screen: Screen) -> Vec<(&'static str, &'static str)> {
+    let mut show = true;
+    HELP.iter()
+        .filter(|(k, d)| {
+            if k.is_empty() {
+                show = if d.starts_with("File browser") {
+                    screen == Screen::Browser
+                } else if d.starts_with("Duplicates") {
+                    screen == Screen::Duplicates
+                } else {
+                    true
+                };
+            }
+            show
+        })
+        .copied()
+        .collect()
+}
+
+pub fn render(f: &mut Frame, area: Rect, screen: Screen) {
+    let lines: Vec<Line> = lines_for(screen)
+        .into_iter()
         .map(|(k, d)| {
             if k.is_empty() {
-                Line::styled(*d, theme::title())
+                Line::styled(d, theme::title())
             } else {
                 Line::from(format!("  {k:<16}{d}"))
             }

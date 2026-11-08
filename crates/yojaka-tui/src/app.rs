@@ -2,15 +2,16 @@
 //! runtime to execute, `view` (see `view.rs`) only reads it.
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use yojaka_core::scan::{ScanStatus, ScanSummary};
 use yojaka_core::stats::Stats;
 use yojaka_core::{CoreEvent, TaskKind};
 
 use crate::browser::{BrowserState, Focus};
+use crate::dupes::{DupesState, Pane, Toggled};
 use crate::fmt;
-use crate::worker::{Bg, Request, Response};
+use crate::worker::{Bg, DupOutcome, Request, Response};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -96,6 +97,14 @@ pub enum Msg {
     Bottom,
     Tab,
     Enter,
+    /// Space: mark / unmark the selected copy (Duplicates).
+    Toggle,
+    /// `f`: look for duplicates.
+    FindDupes,
+    /// `p`: next keep rule, applied to every group.
+    NextRule,
+    /// `x`: keep every copy in the selected group.
+    KeepAllInGroup,
     CycleKind,
     CycleSort,
     ReverseSort,
@@ -124,6 +133,9 @@ pub enum Cmd {
         force: bool,
     },
     CancelScan,
+    /// Look for exact duplicates (reads files, changes none).
+    FindDupes,
+    CancelDupes,
     /// Hand the file to the OS to open with its default app. Never modifies it.
     OpenFile(PathBuf),
     Worker(Request),
@@ -143,6 +155,12 @@ pub struct ScanView {
     /// Items per second in the current phase.
     pub rate: Option<f64>,
     pub started: Option<Instant>,
+    /// When the whole run began (all phases).
+    pub run_started: Option<Instant>,
+    /// When the last progress event arrived; used to tell the user when nothing is moving.
+    pub last_event: Option<Instant>,
+    /// Last `(time, done)` used for the smoothed rate.
+    sample: Option<(Instant, u64)>,
     /// Per-file problems seen during this run (the full list is in the log).
     pub issues: u64,
     /// One line about the last finished run.
@@ -151,8 +169,15 @@ pub struct ScanView {
     pub partial: bool,
 }
 
+/// Nothing heard from the scan for this long: tell the user instead of showing a frozen number.
+pub const STALL_AFTER: Duration = Duration::from_secs(5);
+
 impl ScanView {
     fn begin_phase(&mut self, task: TaskKind, label: String) {
+        let now = Instant::now();
+        if self.phase.is_none() {
+            self.run_started = Some(now);
+        }
         self.phase = Some(task);
         self.label = label;
         self.done = 0;
@@ -160,13 +185,94 @@ impl ScanView {
         self.bytes = 0;
         self.current = None;
         self.rate = None;
-        self.started = Some(Instant::now());
+        self.started = Some(now);
+        self.last_event = Some(now);
+        self.sample = None;
     }
 
-    /// 0..=1 when the phase knows its size.
+    /// Smoothed items per second: recent speed, so a slow stretch shows up and a fast one too.
+    fn update_rate(&mut self, now: Instant, done: u64) {
+        match self.sample {
+            None => self.sample = Some((now, done)),
+            Some((t, d)) => {
+                let dt = now.duration_since(t).as_secs_f64();
+                if dt >= 0.5 {
+                    let inst = done.saturating_sub(d) as f64 / dt;
+                    self.rate = Some(self.rate.map_or(inst, |r| r * 0.7 + inst * 0.3));
+                    self.sample = Some((now, done));
+                }
+            }
+        }
+        if self.rate.is_none() {
+            self.rate = self.started.and_then(|t| {
+                let secs = t.elapsed().as_secs_f64();
+                (secs > 0.5).then(|| done as f64 / secs)
+            });
+        }
+    }
+
+    /// Which of the two steps is running: 1 = finding files, 2 = reading their details.
+    pub fn step(&self) -> u8 {
+        match self.phase {
+            Some(TaskKind::Scan) | None => 1,
+            _ => 2,
+        }
+    }
+
+    /// 0..=1 when the phase knows its size. While finding files the size is only an estimate
+    /// (the last scan), so the bar stops at 99% until the step really ends.
     pub fn ratio(&self) -> Option<f64> {
         let total = self.total?;
-        (total > 0).then(|| (self.done as f64 / total as f64).clamp(0.0, 1.0))
+        if total == 0 {
+            return None;
+        }
+        if self.finishing() {
+            return Some(1.0);
+        }
+        let r = (self.done as f64 / total as f64).clamp(0.0, 1.0);
+        Some(if self.phase == Some(TaskKind::Scan) {
+            r.min(0.99)
+        } else {
+            r
+        })
+    }
+
+    /// The size of the current phase is a guess (shown with a `~`).
+    pub fn total_is_estimate(&self) -> bool {
+        self.phase == Some(TaskKind::Scan)
+    }
+
+    /// Estimated time left in this phase. Needs a known size and a couple of seconds of data.
+    pub fn eta(&self) -> Option<Duration> {
+        if self.finishing() || self.stalled_for().is_some() {
+            return None;
+        }
+        let (total, rate) = (self.total?, self.rate?);
+        if rate < 0.5 || self.done == 0 || self.started?.elapsed() < Duration::from_secs(2) {
+            return None;
+        }
+        let left = total.saturating_sub(self.done) as f64 / rate;
+        Some(Duration::from_secs_f64(left.min(99.0 * 3600.0)))
+    }
+
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.run_started.map(|t| t.elapsed())
+    }
+
+    /// The countable work of this step is done. What follows (saving, pairing Live Photos,
+    /// sharing places) reports no numbers, so silence is expected.
+    pub fn finishing(&self) -> bool {
+        self.total.is_some_and(|t| t > 0 && self.done >= t)
+    }
+
+    /// How long nothing has arrived, once that is noticeable.
+    pub fn stalled_for(&self) -> Option<Duration> {
+        if self.finishing() {
+            return None;
+        }
+        self.last_event
+            .map(|t| t.elapsed())
+            .filter(|d| *d >= STALL_AFTER)
     }
 }
 
@@ -174,6 +280,12 @@ impl ScanView {
 pub struct DashboardState {
     pub stats: Option<Box<Stats>>,
     stats_pending: bool,
+    /// When the running statistics request was sent.
+    stats_asked: Option<Instant>,
+    /// How long the last statistics request took to answer.
+    stats_cost: Duration,
+    /// The tick at which the last statistics answer arrived.
+    stats_answered_tick: Option<u64>,
     /// The folder has no index yet.
     pub no_index: bool,
     /// Fatal problem with the folder or index, shown instead of numbers.
@@ -207,6 +319,7 @@ pub struct App {
     pub size: (u16, u16),
     pub dashboard: DashboardState,
     pub browser: BrowserState,
+    pub dupes: DupesState,
     pub debug: bool,
     pub debug_info: DebugInfo,
     /// Set by `update` when the screen needs a redraw.
@@ -236,6 +349,7 @@ impl App {
             size: (80, 24),
             dashboard: DashboardState::default(),
             browser: BrowserState::default(),
+            dupes: DupesState::default(),
             debug: false,
             debug_info: DebugInfo::default(),
             dirty: true,
@@ -256,6 +370,7 @@ impl App {
         let (tree_rows, table_rows) = crate::view::browser_rows(self.size.0, self.size.1);
         self.browser.tree_rows = tree_rows;
         self.browser.table_rows = table_rows;
+        self.dupes.page_rows = crate::view::dupes_rows(self.size.0, self.size.1);
     }
 
     /// One-line index/scan status for the header.
@@ -268,9 +383,26 @@ impl App {
                 _ if s.cancelling => "stopping",
                 _ => "scanning",
             };
-            return match s.ratio() {
-                Some(r) => format!("{what} {:.0}%", r * 100.0),
-                None => format!("{what} {} files", fmt::thousands(s.done)),
+            if let Some(d) = s.stalled_for() {
+                return format!("{what} · no progress for {}s", d.as_secs());
+            }
+            if s.finishing() {
+                return format!("{what} · finishing up");
+            }
+            return match (s.ratio(), s.eta()) {
+                (Some(r), Some(eta)) => format!(
+                    "{what} {:.0}% · ~{} left",
+                    r * 100.0,
+                    fmt::span(eta.as_millis() as u64)
+                ),
+                (Some(r), None) => format!("{what} {:.0}%", r * 100.0),
+                (None, _) => format!("{what} {} files", fmt::thousands(s.done)),
+            };
+        }
+        if self.dupes.searching() {
+            return match self.dupes.ratio() {
+                Some(r) => format!("comparing files {:.0}%", r * 100.0),
+                None => "looking for duplicates".to_string(),
             };
         }
         if let Some(e) = &self.dashboard.error {
@@ -291,7 +423,16 @@ impl App {
             return vec![];
         }
         self.dashboard.stats_pending = true;
+        self.dashboard.stats_asked = Some(Instant::now());
         vec![Cmd::Worker(Request::Stats)]
+    }
+
+    /// Live refreshes wait at least 4× the last query time (and never less than LIVE_STATS_TICKS).
+    fn live_stats_due(&self) -> bool {
+        let gap = ((self.dashboard.stats_cost.as_millis() as u64 * 4) / 250).max(LIVE_STATS_TICKS);
+        self.dashboard
+            .stats_answered_tick
+            .is_none_or(|t| self.ticks.saturating_sub(t) >= gap)
     }
 
     /// Everything that depends on the index, after a scan changed it.
@@ -370,6 +511,10 @@ impl App {
         if self.dashboard.scan.running {
             return vec![];
         }
+        if self.dupes.searching() {
+            self.say("Wait for the duplicate search, or press c to stop it".into());
+            return vec![];
+        }
         let s = &mut self.dashboard.scan;
         *s = ScanView {
             running: true,
@@ -389,6 +534,7 @@ impl App {
             self.dashboard.error = None;
             self.dashboard.scan.partial = false;
             self.browser.reset();
+            self.dupes.reset();
         }
         cmds.push(Cmd::StartScan { force });
         cmds
@@ -400,6 +546,61 @@ impl App {
             s.cancelling = true;
             self.dirty = true;
             return vec![Cmd::CancelScan];
+        }
+        vec![]
+    }
+
+    fn find_dupes(&mut self) -> Vec<Cmd> {
+        if self.dupes.searching() {
+            self.dirty = false;
+            return vec![];
+        }
+        if self.dashboard.scan.running {
+            self.say("Wait for the scan to finish first".into());
+            return vec![];
+        }
+        if self.dashboard.no_index || self.dashboard.stats.is_none() {
+            self.say("Scan this folder first".into());
+            return vec![];
+        }
+        self.dupes.begin();
+        vec![Cmd::FindDupes]
+    }
+
+    fn cancel_dupes(&mut self) -> Vec<Cmd> {
+        if self.dupes.searching() {
+            return vec![Cmd::CancelDupes];
+        }
+        self.dirty = false;
+        vec![]
+    }
+
+    /// Keys on the Duplicates screen that move or mark.
+    fn dupes_key(&mut self, msg: Msg) -> Vec<Cmd> {
+        match msg {
+            Msg::Up => self.dupes.move_by(-1),
+            Msg::Down => self.dupes.move_by(1),
+            Msg::PageUp => self.dupes.page(false),
+            Msg::PageDown => self.dupes.page(true),
+            Msg::Top => self.dupes.jump(false),
+            Msg::Bottom => self.dupes.jump(true),
+            Msg::Tab => self.dupes.switch_pane(),
+            Msg::Enter => match self.dupes.pane {
+                Pane::Groups => self.dupes.pane = Pane::Copies,
+                Pane::Copies => self.dupes.keep_only(),
+            },
+            Msg::Toggle => {
+                if self.dupes.toggle() == Toggled::LastCopy {
+                    self.say("One copy of each group always stays".into());
+                }
+            }
+            Msg::KeepAllInGroup => self.dupes.keep_all(),
+            Msg::NextRule => {
+                self.dupes.next_preset();
+                let msg = format!("Keep rule: {}", self.dupes.preset_label());
+                self.say(msg);
+            }
+            _ => self.dirty = false,
         }
         vec![]
     }
@@ -428,7 +629,11 @@ impl App {
                 | Msg::CycleKind
                 | Msg::CycleSort
                 | Msg::ReverseSort
-                | Msg::StartFilter => {
+                | Msg::StartFilter
+                | Msg::Toggle
+                | Msg::FindDupes
+                | Msg::NextRule
+                | Msg::KeepAllInGroup => {
                     self.dirty = false;
                     return vec![];
                 }
@@ -441,7 +646,9 @@ impl App {
                 vec![]
             }
             Msg::Interrupt => {
-                if self.dashboard.scan.running && !self.dashboard.scan.cancelling {
+                if self.dupes.searching() {
+                    self.cancel_dupes()
+                } else if self.dashboard.scan.running && !self.dashboard.scan.cancelling {
                     self.cancel_scan()
                 } else {
                     self.should_quit = true;
@@ -461,6 +668,8 @@ impl App {
                     vec![]
                 } else if self.screen == Screen::Browser && !self.browser.query.text.is_empty() {
                     self.browser.set_text(String::new())
+                } else if self.dupes.searching() {
+                    self.cancel_dupes()
                 } else if self.dashboard.scan.running {
                     self.cancel_scan()
                 } else if self.screen == Screen::Browser {
@@ -523,9 +732,30 @@ impl App {
                 // Declined at start-up (`--force`): carry on as if the flag was not given.
                 self.open_decision()
             }
+            Msg::CancelScan if self.dupes.searching() => self.cancel_dupes(),
             Msg::CancelScan => self.cancel_scan(),
             Msg::ToggleDebug => {
                 self.debug = !self.debug;
+                vec![]
+            }
+            Msg::Up
+            | Msg::Down
+            | Msg::PageUp
+            | Msg::PageDown
+            | Msg::Top
+            | Msg::Bottom
+            | Msg::Tab
+            | Msg::Enter
+            | Msg::Toggle
+            | Msg::NextRule
+            | Msg::KeepAllInGroup
+                if self.screen == Screen::Duplicates =>
+            {
+                self.dupes_key(msg)
+            }
+            Msg::FindDupes if self.screen == Screen::Duplicates => self.find_dupes(),
+            Msg::Toggle | Msg::FindDupes | Msg::NextRule | Msg::KeepAllInGroup => {
+                self.dirty = false;
                 vec![]
             }
             Msg::Up
@@ -627,13 +857,42 @@ impl App {
             return vec![];
         }
         // The spinner and the elapsed rate move even when no event arrives.
-        if self.ticks.is_multiple_of(LIVE_STATS_TICKS) {
+        if self.ticks.is_multiple_of(LIVE_STATS_TICKS) && self.live_stats_due() {
             return self.request_stats();
         }
         vec![]
     }
 
     fn on_core(&mut self, ev: CoreEvent) -> Vec<Cmd> {
+        // The duplicate search has its own progress; it must not disturb the scan gauge.
+        match &ev {
+            CoreEvent::Progress {
+                task: TaskKind::Hash,
+                done,
+                total,
+                bytes,
+                ..
+            } => {
+                self.dupes.progress(*done, *total, *bytes);
+                return vec![];
+            }
+            CoreEvent::TaskStarted {
+                task: TaskKind::Hash,
+                ..
+            } => return vec![],
+            CoreEvent::TaskFinished {
+                task: TaskKind::Hash,
+                ..
+            } => {
+                self.dirty = false;
+                return vec![];
+            }
+            CoreEvent::Issue(_) if self.dupes.searching() && !self.dashboard.scan.running => {
+                self.dupes.issues += 1;
+                return vec![];
+            }
+            _ => {}
+        }
         let s = &mut self.dashboard.scan;
         match ev {
             CoreEvent::TaskStarted { task, label } => {
@@ -655,10 +914,9 @@ impl App {
                 if current.is_some() {
                     s.current = current;
                 }
-                s.rate = s.started.and_then(|t| {
-                    let secs = t.elapsed().as_secs_f64();
-                    (secs > 0.2).then(|| done as f64 / secs)
-                });
+                let now = Instant::now();
+                s.last_event = Some(now);
+                s.update_rate(now, done);
             }
             CoreEvent::Issue(i) => {
                 s.issues += 1;
@@ -678,6 +936,7 @@ impl App {
                 s.phase = None;
                 match result {
                     Ok(sum) => {
+                        self.dupes.reset();
                         s.partial = sum.status == ScanStatus::Partial;
                         s.outcome = Some(outcome_line(&sum));
                         self.reload_index()
@@ -687,6 +946,14 @@ impl App {
                         vec![]
                     }
                 }
+            }
+            Bg::DupesFinished(outcome) => {
+                match outcome {
+                    DupOutcome::Done(report) => self.dupes.finish(*report),
+                    DupOutcome::Cancelled => self.dupes.cancelled(),
+                    DupOutcome::Failed(e) => self.dupes.failed(e),
+                }
+                vec![]
             }
             Bg::Notice(m) => {
                 self.say(m);
@@ -700,6 +967,10 @@ impl App {
         match r {
             Response::Stats(st) => {
                 self.dashboard.stats_pending = false;
+                if let Some(t) = self.dashboard.stats_asked.take() {
+                    self.dashboard.stats_cost = t.elapsed();
+                }
+                self.dashboard.stats_answered_tick = Some(self.ticks);
                 self.dashboard.no_index = false;
                 self.dashboard.error = None;
                 self.dashboard.stats = Some(st);
@@ -947,6 +1218,75 @@ mod tests {
     }
 
     #[test]
+    fn eta_needs_a_known_size_and_some_data() {
+        let mut v = ScanView::default();
+        v.begin_phase(TaskKind::Metadata, String::new());
+        v.total = Some(1000);
+        v.done = 100;
+        v.rate = Some(100.0);
+        assert!(v.eta().is_none(), "too early to guess");
+        v.started = Some(Instant::now() - Duration::from_secs(10));
+        assert_eq!(v.eta().map(|d| d.as_secs()), Some(9));
+        v.total = None;
+        assert!(v.eta().is_none(), "no size, no ETA");
+    }
+
+    #[test]
+    fn finding_files_estimate_never_shows_a_finished_bar() {
+        let mut v = ScanView::default();
+        v.begin_phase(TaskKind::Scan, String::new());
+        v.total = Some(1000);
+        v.done = 995;
+        assert_eq!(v.ratio(), Some(0.99));
+        assert_eq!(v.step(), 1);
+    }
+
+    #[test]
+    fn finishing_is_not_a_stall() {
+        let mut v = ScanView::default();
+        v.begin_phase(TaskKind::Metadata, String::new());
+        v.total = Some(10);
+        v.done = 10;
+        v.rate = Some(100.0);
+        v.last_event = Some(Instant::now() - STALL_AFTER - Duration::from_secs(1));
+        assert!(v.finishing());
+        assert!(v.stalled_for().is_none());
+        assert!(v.eta().is_none());
+        assert_eq!(v.ratio(), Some(1.0));
+    }
+
+    #[test]
+    fn a_stall_hides_the_eta() {
+        let mut v = ScanView::default();
+        v.begin_phase(TaskKind::Metadata, String::new());
+        v.total = Some(1000);
+        v.done = 100;
+        v.rate = Some(100.0);
+        v.started = Some(Instant::now() - Duration::from_secs(10));
+        v.last_event = Some(Instant::now() - Duration::from_secs(6));
+        assert!(v.stalled_for().is_some());
+        assert!(v.eta().is_none());
+    }
+
+    #[test]
+    fn unknown_size_has_no_eta() {
+        let mut v = ScanView::default();
+        v.begin_phase(TaskKind::Scan, String::new());
+        v.total = None;
+        assert!(v.ratio().is_none());
+        assert!(v.eta().is_none());
+    }
+
+    #[test]
+    fn silence_is_reported() {
+        let mut v = ScanView::default();
+        v.begin_phase(TaskKind::Scan, String::new());
+        assert!(v.stalled_for().is_none());
+        v.last_event = Some(Instant::now() - STALL_AFTER - Duration::from_secs(1));
+        assert!(v.stalled_for().is_some());
+    }
+
+    #[test]
     fn live_statistics_refresh_while_scanning_but_never_pile_up() {
         let mut a = app();
         a.update(Msg::Rescan);
@@ -960,6 +1300,30 @@ mod tests {
         }
         // answered never, so only the first request goes out
         assert_eq!(asked, 1);
+    }
+
+    #[test]
+    fn slow_statistics_are_asked_for_less_often() {
+        let mut a = app();
+        a.update(Msg::Rescan);
+        a.dashboard.stats_cost = Duration::from_secs(2); // gap = 32 ticks
+        a.dashboard.stats_answered_tick = Some(a.ticks);
+        a.dashboard.stats_pending = false;
+        let t0 = a.ticks;
+        let mut first = None;
+        for _ in 0..80 {
+            let hit = a
+                .update(Msg::Tick)
+                .iter()
+                .any(|c| matches!(c, Cmd::Worker(Request::Stats)));
+            if hit {
+                first = Some(a.ticks);
+                break;
+            }
+        }
+        let first = first.expect("a request goes out eventually");
+        assert!(first - t0 >= 32, "asked too soon: {}", first - t0);
+        assert!(first <= t0 + 44, "asked too late: {}", first - t0);
     }
 
     #[test]

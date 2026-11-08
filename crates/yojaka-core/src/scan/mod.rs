@@ -7,14 +7,14 @@
 
 mod writer;
 
+use std::ffi::OsStr;
 use std::os::macos::fs::MetadataExt;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use jwalk::{Parallelism, WalkDirGeneric};
 use rayon::prelude::*;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
@@ -30,8 +30,6 @@ use writer::{FileRecord, Item};
 
 const CHUNK: usize = 512;
 const SUB_CHUNK: usize = 64;
-/// The walker may run at most this many entries ahead of processing (bounds memory).
-const MAX_PENDING: isize = 50_000;
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 const BUNDLE_SUFFIXES: &[&str] = &[
     ".photoslibrary",
@@ -114,6 +112,10 @@ fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
+}
+
+fn is_hidden(name: &OsStr) -> bool {
+    name.as_encoded_bytes().first() == Some(&b'.')
 }
 
 fn issue(path: &Path, kind: IssueKind, message: impl Into<String>) -> Item {
@@ -245,6 +247,17 @@ pub(crate) fn run(
 ) -> Result<ScanSummary> {
     let started = Instant::now();
     let conn = Index::open(index_path)?.into_connection();
+    // The last finished scan is the best guess for how many files this one will see.
+    let expected: Option<u64> = conn
+        .query_row(
+            "SELECT files_seen FROM scan WHERE status='complete' ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten()
+        .filter(|n| *n > 0)
+        .map(|n| n as u64);
     conn.execute(
         "INSERT INTO scan(root_path,started_at,status) VALUES(?1,?2,'running')",
         params![root.as_os_str().as_bytes(), now_secs()],
@@ -260,64 +273,70 @@ pub(crate) fn run(
     } else {
         config.threads
     };
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .build()
-        .map_err(|e| YojakaError::Internal(e.to_string()))?;
+    let pool = crate::pool::build("scan-worker", threads)?;
+    tracing::info!(root = %root.display(), threads, expected = ?expected, force = opts.force, "scan: starting");
 
     let (tx, rx) = crossbeam_channel::bounded::<Vec<Item>>(8);
-    let writer = std::thread::spawn(move || writer::run(conn, rx, scan_id));
+    let writer = std::thread::Builder::new()
+        .name("scan-writer".into())
+        .spawn(move || {
+            tracing::debug!("thread scan-writer started");
+            let r = writer::run(conn, rx, scan_id);
+            match &r {
+                Ok((_, st)) => tracing::debug!(issues = st.issues, "thread scan-writer stopped"),
+                Err(e) => tracing::error!("thread scan-writer failed: {e}"),
+            }
+            r
+        })
+        .map_err(|e| YojakaError::Internal(format!("cannot start the writer thread: {e}")))?;
 
-    // Directory filter, applied inside the parallel walker.
-    let skip_names: Arc<Vec<String>> = Arc::new(config.scan.skip_dirs.clone());
-    let own: Arc<Vec<PathBuf>> = Arc::new(own_dirs.to_vec());
+    // Directory filter: the walker asks before reading each directory. A rejected directory is
+    // still yielded as an entry, but nothing below it is read.
     let protected_hits: Arc<Mutex<Vec<(PathBuf, String)>>> = Arc::default();
-    let pending = Arc::new(AtomicIsize::new(0));
-    let walker = {
-        let (skip_names, own, hits) = (skip_names.clone(), own.clone(), protected_hits.clone());
-        let pending = pending.clone();
+    let skip_hidden = config.scan.skip_hidden;
+    let descend = {
+        let skip_names = config.scan.skip_dirs.clone();
+        let own = own_dirs.to_vec();
         let protected = protected.clone();
-        let cancel = cancel.clone();
-        WalkDirGeneric::<((), ())>::new(root)
-            .follow_links(false)
-            .skip_hidden(config.scan.skip_hidden)
-            .parallelism(Parallelism::RayonNewPool(threads))
-            .process_read_dir(move |_depth, _path, _state, children| {
-                if cancel.is_cancelled() {
-                    children.clear();
-                    return;
+        let hits = protected_hits.clone();
+        move |e: &dua_core::Entry| -> bool {
+            let name = e.file_name.to_string_lossy().to_ascii_lowercase();
+            let path = e.path();
+            if BUNDLE_SUFFIXES.iter().any(|s| name.ends_with(s))
+                || own.iter().any(|o| path.starts_with(o))
+            {
+                return false;
+            }
+            if e.depth == 0 {
+                // The user picked this folder: the name rules below apply inside it only, so a
+                // folder called "Library" or "node_modules" can still be scanned on purpose.
+                return true;
+            }
+            if (skip_hidden && name.starts_with('.'))
+                || name == ".yojaka"
+                || skip_names.iter().any(|s| s.eq_ignore_ascii_case(&name))
+            {
+                return false;
+            }
+            if let Some(reason) = protected.reason(&path) {
+                if let Ok(mut h) = hits.lock() {
+                    h.push((path, reason));
                 }
-                children.retain(|child| {
-                    let Ok(e) = child else { return true };
-                    if !e.file_type().is_dir() {
-                        return true;
-                    }
-                    let name = e.file_name().to_string_lossy().to_ascii_lowercase();
-                    if name == ".yojaka"
-                        || BUNDLE_SUFFIXES.iter().any(|s| name.ends_with(s))
-                        || skip_names.iter().any(|s| s.eq_ignore_ascii_case(&name))
-                    {
-                        return false;
-                    }
-                    let path = e.path();
-                    if own.iter().any(|o| path.starts_with(o)) {
-                        return false;
-                    }
-                    if let Some(reason) = protected.reason(&path) {
-                        if let Ok(mut h) = hits.lock() {
-                            h.push((path, reason));
-                        }
-                        return false;
-                    }
-                    true
-                });
-                // Back-pressure: do not let the walker race far ahead of the consumer.
-                while pending.load(Ordering::Relaxed) > MAX_PENDING && !cancel.is_cancelled() {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                pending.fetch_add(children.len() as isize, Ordering::Relaxed);
-            })
+                return false;
+            }
+            true
+        }
     };
+    // Unordered (`Completion`) with a bounded result queue: memory stays flat and a slow consumer
+    // only makes the walker wait. Do not switch to an ordered walk combined with any kind of
+    // waiting: that is the deadlock in docs/adr/0005-directory-walker.md.
+    let mut walker = dua_core::walk(
+        root,
+        threads,
+        dua_core::Order::Completion,
+        dua_core::Options::default().skip_metadata(),
+        descend,
+    );
 
     let ctx = Ctx {
         db: index_path,
@@ -331,10 +350,10 @@ pub(crate) fn run(
     let mut chunk: Vec<PathBuf> = Vec::with_capacity(CHUNK);
     let mut extra: Vec<Item> = Vec::new();
     let mut last_emit = Instant::now();
+    let mut last_dir: Option<Arc<Path>> = None;
     let mut writer_alive = true;
 
-    let mut flush = |chunk: &mut Vec<PathBuf>, extra: &mut Vec<Item>| -> bool {
-        let current = chunk.last().cloned();
+    let flush = |chunk: &mut Vec<PathBuf>, extra: &mut Vec<Item>| -> bool {
         let mut items: Vec<Item> = pool.install(|| {
             chunk
                 .par_chunks(SUB_CHUNK)
@@ -349,48 +368,69 @@ pub(crate) fn run(
                 sink.important(CoreEvent::Issue(i.clone()));
             }
         }
-        if last_emit.elapsed() >= PROGRESS_EVERY {
-            last_emit = Instant::now();
-            sink.progress(CoreEvent::Progress {
-                task: TaskKind::Scan,
-                done: ctx.seen.load(Ordering::Relaxed),
-                total: None,
-                bytes: ctx.bytes.load(Ordering::Relaxed),
-                current: current.and_then(|p| p.parent().map(Path::to_path_buf)),
-            });
-        }
         items.is_empty() || tx.send(items).is_ok()
     };
+    let emit = |dir: Option<&Arc<Path>>| {
+        let done = ctx.seen.load(Ordering::Relaxed);
+        sink.progress(CoreEvent::Progress {
+            task: TaskKind::Scan,
+            done,
+            // The last scan's count is only a guess. Once passed, the size is unknown again.
+            total: expected.filter(|&e| e > done),
+            bytes: ctx.bytes.load(Ordering::Relaxed),
+            current: dir.map(|d| d.to_path_buf()),
+        });
+    };
 
-    for entry in walker {
-        pending.fetch_sub(1, Ordering::Relaxed);
+    while let Some(entry) = walker.next_cancellable(cancel.flag()) {
         if cancel.is_cancelled() {
             break;
         }
         match entry {
-            Ok(e) => {
-                if e.file_type().is_file() {
-                    chunk.push(e.path());
-                    if chunk.len() >= CHUNK && !flush(&mut chunk, &mut extra) {
-                        writer_alive = false;
-                        break;
-                    }
+            Ok(e) if e.file_type.is_file() && !(skip_hidden && is_hidden(&e.file_name)) => {
+                chunk.push(e.path());
+                last_dir = Some(e.parent_path.clone());
+                if chunk.len() >= CHUNK && !flush(&mut chunk, &mut extra) {
+                    writer_alive = false;
+                    break;
                 }
             }
+            Ok(_) => {} // directories, symlinks, hidden files and other non-files
             Err(err) => {
                 let path = err
                     .path()
                     .map(Path::to_path_buf)
                     .unwrap_or_else(|| root.to_path_buf());
-                let kind = err
-                    .io_error()
-                    .map_or(IssueKind::Other, |e| IssueKind::from_io(e.kind()));
+                let kind = IssueKind::from_io(err.io_error().kind());
+                tracing::warn!(path = %path.display(), ?kind, "scan: walk error: {err}");
                 extra.push(issue(&path, kind, err.to_string()));
             }
         }
+        // Time-based, not per batch: a quiet stretch means the walk itself is waiting.
+        if last_emit.elapsed() >= PROGRESS_EVERY {
+            last_emit = Instant::now();
+            emit(last_dir.as_ref());
+        }
     }
+    drop(walker); // stops and joins the walker threads
+    tracing::debug!(
+        files_seen = ctx.seen.load(Ordering::Relaxed),
+        cancelled = cancel.is_cancelled(),
+        "scan: walk finished"
+    );
     if writer_alive && !cancel.is_cancelled() && !flush(&mut chunk, &mut extra) {
         writer_alive = false;
+    }
+    if !cancel.is_cancelled() {
+        // The walk is over, so the real size is known. The UI shows "finishing up" from here.
+        let done = ctx.seen.load(Ordering::Relaxed);
+        sink.important(CoreEvent::Progress {
+            task: TaskKind::Scan,
+            done,
+            total: Some(done),
+            bytes: ctx.bytes.load(Ordering::Relaxed),
+            current: None,
+        });
     }
     if let Ok(hits) = protected_hits.lock() {
         for (path, reason) in hits.iter() {
@@ -416,6 +456,7 @@ pub(crate) fn run(
         .map_err(|_| YojakaError::Internal("index writer thread panicked".into()))??;
 
     let cancelled = cancel.is_cancelled();
+    tracing::debug!(cancelled, issues = wstats.issues, "scan: writer joined");
     let pruned = if cancelled {
         0 // a partial scan has not seen everything: never prune on it
     } else {

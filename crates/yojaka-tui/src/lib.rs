@@ -2,6 +2,7 @@
 
 mod app;
 mod browser;
+mod dupes;
 mod event_loop;
 mod fmt;
 mod keymap;

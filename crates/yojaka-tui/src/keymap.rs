@@ -35,6 +35,17 @@ pub const HELP: &[(&str, &str)] = &[
     ("/", "filter by name, camera or place (Esc clears)"),
     ("t", "show all / photos / videos"),
     ("s  S", "next sort column / reverse order"),
+    ("", "Duplicates (nothing is deleted from here)"),
+    (
+        "f",
+        "look for identical files (reads only files of equal size)",
+    ),
+    ("j k  ↓ ↑", "move in the list; Tab switches groups / copies"),
+    ("Space", "mark / unmark the selected copy for removal"),
+    ("Enter", "groups: open it; copies: keep only this copy"),
+    ("p", "next keep rule, applied to every group"),
+    ("x", "keep every copy in this group"),
+    ("c  Esc", "stop the search"),
 ];
 
 fn is_plain(mods: KeyModifiers) -> bool {
@@ -108,6 +119,10 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('R') => Msg::FullRescan,
         KeyCode::Char('c') => Msg::CancelScan,
         KeyCode::Char('D') => Msg::ToggleDebug,
+        KeyCode::Char(' ') => Msg::Toggle,
+        KeyCode::Char('f') => Msg::FindDupes,
+        KeyCode::Char('p') => Msg::NextRule,
+        KeyCode::Char('x') => Msg::KeepAllInGroup,
         _ => return None,
     })
 }

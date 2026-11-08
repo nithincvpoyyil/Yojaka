@@ -22,6 +22,7 @@ pub mod livephoto;
 pub mod meta;
 pub mod organize;
 pub mod plan;
+mod pool;
 pub mod scan;
 
 pub use cancel::CancelToken;
@@ -81,6 +82,7 @@ impl Engine {
             sink,
             cancel,
         )?;
+        tracing::info!(?summary, "scan: finished");
         if opts.metadata && !cancel.is_cancelled() {
             summary.metadata = Some(self.run_metadata(&index, sink, cancel)?);
         }
@@ -167,6 +169,29 @@ impl Engine {
             idx.connection(),
             self.config.location.far_km,
             usize::MAX >> 1,
+        )
+    }
+
+    /// Finds exact duplicates in an already scanned `root`. Reads only files that share a size
+    /// with another file, and saves their hashes in the index for next time. Changes no media file.
+    pub fn dupes(
+        &self,
+        root: &std::path::Path,
+        local: bool,
+        sink: &EventSink,
+        cancel: &CancelToken,
+    ) -> Result<dupes::DupReport> {
+        let root = Self::protected().check_root(root)?;
+        let index = self.index_path(&root, local);
+        if !index.is_file() {
+            return Err(YojakaError::NoIndex(root));
+        }
+        dupes::find_exact(
+            &self.config,
+            dupes::DupOptions::default(),
+            &index,
+            sink,
+            cancel,
         )
     }
 

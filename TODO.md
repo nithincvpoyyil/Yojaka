@@ -15,3 +15,14 @@ Items that are not part of the current iteration.
   - Show every screen in the header with its name, e.g. `< 1 Dashboard | 2 Browser | 3 Duplicates | [4 Organize] | 5 History >`, and highlight the selected tab with the theme's selected style.
   - Keep `1`-`5` as the keys. Shorten labels (or show only numbers plus the active name) when the terminal is narrow.
   - Update the 80x24 and 160x48 snapshots, and check the header diff is only the tab bar.
+
+- [x] **TUI: Top places on the dashboard** (done 2026-11-08).
+- [x] **GeoNames attribution** in `--about` and the README (done 2026-11-08).
+- [x] **Enter opens the selected file** with the OS default app (done 2026-11-08).
+
+## Open
+
+See "Open items" in `docs/STATUS.md`. Next iteration: Iteration 5, safe execution (Trash, journal, undo).
+- [ ] Detailed dashboard (the user will describe it).
+- [ ] Select a place on the dashboard to filter the file browser.
+- [ ] Another theme (last iteration).

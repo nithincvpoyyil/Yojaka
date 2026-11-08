@@ -12,7 +12,7 @@ Commands:
   info      Show metadata for one file, including GPS and place
   places    List the places (countries and cities) found in the library
   export    Export the file list as CSV or JSON (GPS is left out unless --include-gps)
-  dupes     Find duplicates (Iteration 4)
+  dupes     Find identical files and preview what could be removed (changes nothing)
   organize  Organize into a folder template (Iteration 6)
   plan      Inspect plans (Iteration 5)
   apply     Execute a plan (Iteration 5)
@@ -30,6 +30,9 @@ Options:
       --about              Show the license and the credits for the data Yojaka uses, then exit
       --force              Ask first, then forget what is saved about the folder and scan it from
                            scratch (slower)
+      --debug              Write a detailed debug log (threads, steps, timings, errors) to the logs
+                           folder. The file name is printed at start. Without this flag no log is
+                           written
       --threads <THREADS>  Worker threads (default: auto)
   -h, --help               Print help
   -V, --version            Print version

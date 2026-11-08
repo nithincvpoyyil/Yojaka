@@ -793,6 +793,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dua-core"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77d4aa05c1fb32375c0d079f1b54a5b71bfe5a7eade2ffdd6f3715c49f4d4997"
+dependencies = [
+ "crossbeam",
+ "libc",
+ "windows-sys",
+]
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1196,16 +1207,6 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "jwalk"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e610b2b1eaea9e0e062c47e319d20a2e0f929e7aabf24d58514354de967bfbd"
-dependencies = [
- "crossbeam",
- "rayon",
 ]
 
 [[package]]
@@ -3129,10 +3130,10 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "directories",
+ "dua-core",
  "fixturegen",
  "imagesize",
  "insta",
- "jwalk",
  "kamadak-exif",
  "libc",
  "proptest",

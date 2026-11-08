@@ -27,10 +27,10 @@ pub fn render(app: &App, f: &mut Frame, area: Rect) {
 
 fn phase_name(s: &ScanView) -> &'static str {
     match s.phase {
-        Some(TaskKind::Metadata) => "Reading metadata",
-        Some(TaskKind::Geocode) => "Resolving places",
         _ if s.cancelling => "Stopping",
-        _ => "Scanning",
+        Some(TaskKind::Metadata) => "Reading details",
+        Some(TaskKind::Geocode) => "Resolving places",
+        _ => "Finding files",
     }
 }
 
@@ -61,23 +61,14 @@ fn render_scan(app: &App, f: &mut Frame, area: Rect) {
 
     // line 1: bar + numbers
     let text = if s.running {
-        let mut t = format!(
-            "{} {} · {} files",
-            SPINNER[(app.ticks as usize) % SPINNER.len()],
-            phase_name(s),
-            fmt::thousands(s.done)
-        );
-        if let Some(total) = s.total {
-            t = format!(
-                "{} {} · {} / {}",
-                SPINNER[(app.ticks as usize) % SPINNER.len()],
-                phase_name(s),
-                fmt::thousands(s.done),
-                fmt::thousands(total)
-            );
-        }
-        if let Some(r) = s.rate {
-            t.push_str(&format!(" · {}/s", fmt::thousands(r as u64)));
+        let spin = SPINNER[(app.ticks as usize) % SPINNER.len()];
+        let head = format!("{spin} Step {}/2 · {}", s.step(), phase_name(s));
+        let mut t = match s.ratio() {
+            Some(r) => format!("{head} {:.0}%", r * 100.0),
+            None => format!("{head} · {} files", fmt::thousands(s.done)),
+        };
+        if let Some(eta) = s.eta() {
+            t.push_str(&format!(" · ~{} left", fmt::span(eta.as_millis() as u64)));
         }
         t
     } else if d.stats.is_some() {
@@ -119,13 +110,7 @@ fn render_scan(app: &App, f: &mut Frame, area: Rect) {
     // line 2: what is being looked at, or what happened last
     let w = inner.width as usize;
     let line = if s.running {
-        match &s.current {
-            Some(p) => Line::styled(
-                fmt::truncate_start(&p.display().to_string(), w),
-                theme::dim(),
-            ),
-            None => Line::styled("starting…", theme::dim()),
-        }
+        running_line(s, w)
     } else if let Some(o) = &s.outcome {
         Line::styled(fmt::truncate(o, w), theme::dim())
     } else if let Some(last) = d.stats.as_ref().and_then(|st| st.last_scan.as_ref()) {
@@ -144,6 +129,51 @@ fn render_scan(app: &App, f: &mut Frame, area: Rect) {
         Line::styled("Press r to scan this folder.", theme::dim())
     };
     f.render_widget(Paragraph::new(line), line2);
+}
+
+/// Second line while working: counts, speed, time spent and the folder; or a plain warning
+/// when nothing has moved for a while.
+fn running_line(s: &ScanView, w: usize) -> Line<'static> {
+    let dir = s
+        .current
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    if let Some(stuck) = s.stalled_for() {
+        let msg = format!(
+            "No progress for {}s. Still working in {} · Esc stops and keeps what is done",
+            stuck.as_secs(),
+            if dir.is_empty() { "…" } else { &dir }
+        );
+        return Line::styled(fmt::truncate(&msg, w), theme::error());
+    }
+    if s.finishing() {
+        let mut t = "Finishing up".to_string();
+        if let Some(e) = s.elapsed() {
+            t.push_str(&format!(" · {} elapsed", fmt::clock(e.as_millis() as u64)));
+        }
+        return Line::styled(fmt::truncate(&t, w), theme::dim());
+    }
+    let tilde = if s.total_is_estimate() { "~" } else { "" };
+    let mut parts = vec![match s.total {
+        Some(t) => format!("{} of {tilde}{}", fmt::thousands(s.done), fmt::thousands(t)),
+        None => format!("{} found so far", fmt::thousands(s.done)),
+    }];
+    if let Some(r) = s.rate.filter(|r| *r >= 1.0) {
+        parts.push(format!("{}/s", fmt::thousands(r as u64)));
+    }
+    if let Some(e) = s.elapsed() {
+        parts.push(format!("{} elapsed", fmt::clock(e.as_millis() as u64)));
+    }
+    let head = parts.join(" · ");
+    let room = w.saturating_sub(head.chars().count() + 3);
+    if dir.is_empty() || room < 12 {
+        return Line::styled(fmt::truncate(&head, w), theme::dim());
+    }
+    Line::styled(
+        format!("{head} · {}", fmt::truncate_start(&dir, room)),
+        theme::dim(),
+    )
 }
 
 /// A progress bar `width` cells wide, filled to `ratio`.

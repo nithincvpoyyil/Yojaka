@@ -13,7 +13,7 @@ use crate::app::{App, Cmd, Msg};
 use crate::keymap;
 use crate::terminal::TerminalGuard;
 use crate::view;
-use crate::worker::{self, Bg, Request};
+use crate::worker::{self, Bg, DupOutcome, Request};
 
 const TICK: Duration = Duration::from_millis(250);
 
@@ -27,11 +27,16 @@ struct Runtime {
     bg_tx: Sender<Bg>,
     sink: EventSink,
     scan: Option<(CancelToken, JoinHandle<()>)>,
+    dupes: Option<(CancelToken, JoinHandle<()>)>,
 }
 
 impl Runtime {
     fn run(&mut self, cmds: Vec<Cmd>) {
         for cmd in cmds {
+            match &cmd {
+                Cmd::Worker(req) => tracing::trace!(?req, "ui: command"),
+                other => tracing::debug!(cmd = ?other, "ui: command"),
+            }
             match cmd {
                 Cmd::Worker(req) => {
                     if matches!(req, Request::Reload) {
@@ -49,6 +54,12 @@ impl Runtime {
                     }
                 }
                 Cmd::StartScan { force } => self.start_scan(force),
+                Cmd::FindDupes => self.start_dupes(),
+                Cmd::CancelDupes => {
+                    if let Some((token, _)) = &self.dupes {
+                        token.cancel();
+                    }
+                }
                 Cmd::OpenFile(path) => self.open_file(path),
             }
         }
@@ -120,7 +131,17 @@ impl Runtime {
         let spawned = std::thread::Builder::new()
             .name("scan".into())
             .spawn(move || {
+                tracing::info!("scan thread started");
+                let t = std::time::Instant::now();
                 let result = engine.scan(&opts, &sink, &token).map_err(|e| e.to_string());
+                match &result {
+                    Ok(_) => {
+                        tracing::info!(ms = t.elapsed().as_millis() as u64, "scan thread finished")
+                    }
+                    Err(e) => {
+                        tracing::error!(ms = t.elapsed().as_millis() as u64, "scan failed: {e}")
+                    }
+                }
                 let _ = tx.send(Bg::ScanFinished(result));
             });
         match spawned {
@@ -129,6 +150,56 @@ impl Runtime {
                 let _ = self
                     .bg_tx
                     .send(Bg::ScanFinished(Err(format!("cannot start the scan: {e}"))));
+            }
+        }
+    }
+
+    /// Looks for exact duplicates on its own thread. Reads files, changes none.
+    fn start_dupes(&mut self) {
+        if self.dupes.as_ref().is_some_and(|(_, h)| h.is_finished())
+            && let Some((_, h)) = self.dupes.take()
+        {
+            let _ = h.join();
+        }
+        if self.dupes.is_some() {
+            return;
+        }
+        let cancel = CancelToken::new();
+        let (engine, sink, tx, token) = (
+            self.engine.clone(),
+            self.sink.clone(),
+            self.bg_tx.clone(),
+            cancel.clone(),
+        );
+        let (root, local) = (self.root.clone(), self.local_index);
+        let spawned = std::thread::Builder::new()
+            .name("dupes".into())
+            .spawn(move || {
+                tracing::info!("dupes thread started");
+                let outcome = match engine.dupes(&root, local, &sink, &token) {
+                    Ok(report) => {
+                        tracing::info!("dupes thread finished");
+                        DupOutcome::Done(Box::new(report))
+                    }
+                    Err(yojaka_core::YojakaError::Cancelled) => {
+                        tracing::info!("dupes cancelled");
+                        DupOutcome::Cancelled
+                    }
+                    Err(e) => {
+                        tracing::error!("dupes failed: {e}");
+                        DupOutcome::Failed(e.to_string())
+                    }
+                };
+                let _ = tx.send(Bg::DupesFinished(outcome));
+            });
+        match spawned {
+            Ok(h) => self.dupes = Some((cancel, h)),
+            Err(e) => {
+                let _ = self
+                    .bg_tx
+                    .send(Bg::DupesFinished(DupOutcome::Failed(format!(
+                        "cannot start the search: {e}"
+                    ))));
             }
         }
     }
@@ -142,9 +213,21 @@ impl Runtime {
         }
     }
 
+    fn reap_dupes(&mut self) {
+        if self.dupes.as_ref().is_some_and(|(_, h)| h.is_finished())
+            && let Some((_, h)) = self.dupes.take()
+        {
+            let _ = h.join();
+        }
+    }
+
     /// Stops a running scan (it flushes its current batch) and waits for it.
     fn shutdown(&mut self) {
         if let Some((token, h)) = self.scan.take() {
+            token.cancel();
+            let _ = h.join();
+        }
+        if let Some((token, h)) = self.dupes.take() {
             token.cancel();
             let _ = h.join();
         }
@@ -188,6 +271,7 @@ pub fn run(
         bg_tx,
         sink,
         scan: None,
+        dupes: None,
     };
 
     let size = guard.term.size()?;
@@ -228,6 +312,9 @@ pub fn run(
         while let Ok(bg) = bg_rx.try_recv() {
             if matches!(bg, Bg::ScanFinished(_)) {
                 rt.reap_scan();
+            }
+            if matches!(bg, Bg::DupesFinished(_)) {
+                rt.reap_dupes();
             }
             msgs.push(Msg::Bg(bg));
         }

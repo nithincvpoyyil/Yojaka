@@ -8,6 +8,7 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 - `all-specs/02-tech-spec.md`: architecture, crates, data model, pipelines, safety engine
 - `all-specs/03-iteration-plan.md`: iterations I0–I10, with acceptance criteria. **Work one iteration at a time.**
 - `all-specs/04-boilerplate-impl-plan.md`: step-by-step plan for the Iteration 0 skeleton (files, crates, code shapes, CI, done checklist)
+- `all-specs/05-scan-walker-fix-plan.md`: scan hang fix (jwalk → dua-core, honest progress). Done 2026-11-09 (ADR-0005).
 
 ## Rules
 - **Safety first.** Never write to the user's files outside the Plan → Dry-run → Confirm → Execute (journaled) path. Read-only is the default. Delete means move to the Trash. Never overwrite a file.

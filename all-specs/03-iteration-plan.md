@@ -70,7 +70,7 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
 **Goal:** product spec S1 at the most basic level: "what photos and videos are here, and how many".
 **Covers:** FR-10, FR-12, FR-13, FR-14, FR-15, plus the counts part of FR-21.
 
-- Parallel walker (`jwalk`) with skip rules, no symlink following, dataless detection, and hard link `(dev, ino)` recording.
+- Parallel walker (`dua-core`, ADR-0005) with skip rules, no symlink following, dataless detection, and hard link `(dev, ino)` recording.
 - Detection by extension plus magic bytes (including the ISO-BMFF `ftyp` brand, which separates HEIC from MOV/MP4), with `--sniff-all` and `--kind image|video|all`.
 - SQLite index: schema v1 (`scan`, `file`, `scan_error`), WAL mode, migrations, and a single writer thread with batched transactions.
 - Incremental rescan using `(size, mtime, ino)`, and pruning of files that disappeared.

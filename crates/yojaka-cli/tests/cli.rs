@@ -51,10 +51,10 @@ fn doctor_json_uses_home_override() {
 fn stub_command_exits_1_and_names_iteration() {
     let tmp = tempfile::tempdir().unwrap();
     yojaka(tmp.path())
-        .args(["dupes", "."])
+        .args(["organize", "."])
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("Iteration 4"));
+        .stderr(predicate::str::contains("Iteration 6"));
 }
 
 #[test]
@@ -158,4 +158,142 @@ fn about_credits_geonames_with_the_licence_and_creates_nothing() {
             .and(predicate::str::contains("converted")),
     );
     assert!(!home.exists(), "--about must not create the data folder");
+}
+
+#[test]
+fn dupes_previews_and_saves_a_plan_without_touching_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let before = tree_listing(&tree);
+
+    let out = yojaka(tmp.path())
+        .args(["dupes", "--json"])
+        .arg(&tree)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let groups = v["groups"].as_array().unwrap();
+    assert!(!groups.is_empty(), "the fixture has duplicates");
+    for g in groups {
+        let marks: Vec<bool> = g["delete"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d.as_bool().unwrap())
+            .collect();
+        assert!(marks.iter().any(|d| !d), "one copy is always kept");
+    }
+    assert!(v["reclaim"].as_u64().unwrap() > 0);
+
+    let plan = tmp.path().join("plan.json");
+    yojaka(tmp.path())
+        .args(["dupes", "--keep", "shortest-path", "--plan-out"])
+        .arg(&plan)
+        .arg(&tree)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing has been changed"));
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+    assert_eq!(saved["kind"], "dedupe");
+    assert!(!saved["ops"].as_array().unwrap().is_empty());
+
+    // Never overwrites.
+    yojaka(tmp.path())
+        .args(["dupes", "--plan-out"])
+        .arg(&plan)
+        .arg(&tree)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("never overwrites"));
+    assert_eq!(
+        tree_listing(&tree),
+        before,
+        "dupes must not change the tree"
+    );
+}
+
+#[test]
+fn dupes_rejects_a_bad_keep_rule_and_unbuilt_tiers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    yojaka(tmp.path())
+        .args(["dupes", "--keep", "bogus"])
+        .arg(&tree)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown keep rule"));
+    yojaka(tmp.path())
+        .args(["dupes", "--tier", "likely"])
+        .arg(&tree)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("not available yet"));
+}
+
+fn tree_listing(root: &std::path::Path) -> Vec<(String, u64)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<(String, u64)>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let e = e.unwrap();
+            let md = std::fs::symlink_metadata(e.path()).unwrap();
+            if md.is_dir() {
+                walk(&e.path(), out);
+            } else {
+                out.push((e.path().display().to_string(), md.len()));
+            }
+        }
+    }
+    let mut v = Vec::new();
+    walk(root, &mut v);
+    v.sort();
+    v
+}
+
+fn debug_logs(home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let Ok(rd) = std::fs::read_dir(home.join("logs")) else {
+        return vec![];
+    };
+    rd.flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "log"))
+        .collect()
+}
+
+#[test]
+fn no_debug_flag_means_no_log_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    assert!(debug_logs(tmp.path()).is_empty());
+}
+
+#[test]
+fn debug_flag_writes_a_log_with_threads_and_steps() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path())
+        .args(["--debug", "scan"])
+        .arg(&tree)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("debug log:"));
+    let logs = debug_logs(tmp.path());
+    assert_eq!(logs.len(), 1);
+    let text = std::fs::read_to_string(&logs[0]).unwrap();
+    for needle in [
+        "yojaka starting (debug mode)",
+        "scan: starting",
+        "scan-worker-0",
+        "scan-writer",
+        "scan: finished",
+        "metadata: finished",
+    ] {
+        assert!(text.contains(needle), "log lacks {needle:?}");
+    }
 }

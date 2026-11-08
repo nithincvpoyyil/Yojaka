@@ -83,8 +83,17 @@ pub enum Response {
 pub enum Bg {
     Worker(Response),
     ScanFinished(Result<yojaka_core::scan::ScanSummary, String>),
+    DupesFinished(DupOutcome),
     /// A short message for the footer (e.g. the OS could not open a file).
     Notice(String),
+}
+
+/// How a duplicate search ended.
+#[derive(Debug)]
+pub enum DupOutcome {
+    Done(Box<yojaka_core::dupes::DupReport>),
+    Cancelled,
+    Failed(String),
 }
 
 /// Keeps only the newest request of each kind, in their original order. `Reload` is always kept.
@@ -204,6 +213,7 @@ pub fn spawn(
     std::thread::Builder::new()
         .name(name.to_string())
         .spawn(move || {
+            tracing::debug!("worker thread started");
             let mut st = State {
                 engine,
                 root,
@@ -214,10 +224,22 @@ pub fn spawn(
                 let mut batch = vec![first];
                 batch.extend(rx.try_iter());
                 for req in coalesce(batch) {
-                    if let Some(resp) = st.handle(req)
-                        && tx.send(Bg::Worker(resp)).is_err()
-                    {
-                        return;
+                    let what = format!("{req:?}");
+                    let t = std::time::Instant::now();
+                    let resp = st.handle(req);
+                    let ms = t.elapsed().as_millis() as u64;
+                    if ms >= 500 {
+                        tracing::warn!(request = %what, ms, "worker: slow request");
+                    } else {
+                        tracing::debug!(request = %what, ms, "worker: request done");
+                    }
+                    if let Some(resp) = resp {
+                        if let Response::Error(msg) = &resp {
+                            tracing::error!(request = %what, "worker: {msg}");
+                        }
+                        if tx.send(Bg::Worker(resp)).is_err() {
+                            return;
+                        }
                     }
                 }
             }

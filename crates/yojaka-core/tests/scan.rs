@@ -323,3 +323,71 @@ fn own_app_folders_are_never_scanned() {
         0
     );
 }
+
+/// Regression test: the old walker (jwalk plus a 50,000-entry back-pressure cap) deadlocked when
+/// one folder held more entries than the cap (docs/adr/0005-directory-walker.md). This test is a
+/// guard, not a reproduction: the old hang needed release-build timing. The manual check is a
+/// release scan of the repo root, whose `target/debug/deps` has about 60k entries.
+#[test]
+fn a_folder_bigger_than_any_buffer_scans_to_completion() {
+    use std::fs;
+    use std::time::Duration;
+    let env = TestEnv::new();
+    let root = env.tmp.path().join("photos");
+    for top in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+        for i in 0..4 {
+            for j in 0..4 {
+                for k in 0..4 {
+                    let dir = root.join(format!("{top}/{i}/{j}/{k}"));
+                    fs::create_dir_all(&dir).unwrap();
+                    for n in 0..10 {
+                        fs::write(dir.join(format!("{n}.jpg")), [0xFF, 0xD8, 0xFF, 0xE0]).unwrap();
+                    }
+                }
+            }
+        }
+    }
+    let big = root.join("big");
+    fs::create_dir_all(&big).unwrap();
+    for i in 0..60_000 {
+        fs::File::create(big.join(format!("{i}.txt"))).unwrap();
+    }
+
+    let e = engine(&env);
+    let o = ScanOptions {
+        root,
+        ..Default::default()
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let s = e.scan(&o, &EventSink::null(), &CancelToken::new()).unwrap();
+        let _ = tx.send(s);
+    });
+    let s = rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("scan did not finish in 60 s: the directory walker is stuck");
+    assert_eq!(s.status, ScanStatus::Complete);
+    assert_eq!(s.files_seen, 60_000 + 8 * 64 * 10);
+    assert_eq!(s.files_indexed, 8 * 64 * 10);
+}
+
+/// The skip list ("Library", "node_modules", hidden names...) applies inside the scanned folder,
+/// never to the folder the user picked.
+#[test]
+fn a_root_named_like_a_skipped_folder_is_still_scanned() {
+    let env = TestEnv::new();
+    let root = env.tmp.path().join("Library");
+    std::fs::create_dir_all(root.join("node_modules")).unwrap();
+    std::fs::write(root.join("a.jpg"), [0xFF, 0xD8, 0xFF, 0xE0]).unwrap();
+    std::fs::write(root.join("node_modules/b.jpg"), [0xFF, 0xD8, 0xFF, 0xE0]).unwrap();
+    let e = engine(&env);
+    let o = ScanOptions {
+        root,
+        ..Default::default()
+    };
+    let s = scan(&e, &o);
+    assert_eq!(
+        s.files_indexed, 1,
+        "a.jpg only; node_modules inside is still skipped"
+    );
+}

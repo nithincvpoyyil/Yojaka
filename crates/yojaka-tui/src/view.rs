@@ -27,6 +27,33 @@ pub fn browser_layout(body: Rect) -> BrowserLayout {
     }
 }
 
+/// Layout of the Duplicates screen: a summary box, then groups (left) and copies (right).
+pub struct DupesLayout {
+    pub summary: Rect,
+    pub groups: Rect,
+    pub copies: Rect,
+}
+
+pub fn dupes_layout(body: Rect) -> DupesLayout {
+    let [summary, rest] = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).areas(body);
+    let left_w = if body.width >= 120 { 40 } else { 30 };
+    let [groups, copies] =
+        Layout::horizontal([Constraint::Length(left_w), Constraint::Min(10)]).areas(rest);
+    DupesLayout {
+        summary,
+        groups,
+        copies,
+    }
+}
+
+/// Rows the group list shows at `w` × `h` (borders excluded).
+pub fn dupes_rows(w: u16, h: u16) -> u16 {
+    dupes_layout(body_area(Rect::new(0, 0, w, h)))
+        .groups
+        .height
+        .saturating_sub(2)
+}
+
 /// (tree rows, table rows) that fit a terminal of `w` × `h` cells.
 pub fn browser_rows(w: u16, h: u16) -> (u16, u16) {
     let body = body_area(Rect::new(0, 0, w, h));
@@ -67,12 +94,17 @@ pub fn render(app: &App, f: &mut Frame) {
     let scan = &app.dashboard.scan;
     let status = app.status_line();
     let mut right: Vec<Span> = vec![];
-    if scan.running {
+    let ratio = if scan.running {
+        scan.ratio()
+    } else {
+        app.dupes.ratio()
+    };
+    if scan.running || app.dupes.searching() {
         let spin =
             screens::dashboard::SPINNER[app.ticks as usize % screens::dashboard::SPINNER.len()];
         right.push(Span::styled(format!("{spin} "), theme::title()));
         right.push(Span::styled(format!("{status} "), theme::header()));
-        let bar = match scan.ratio() {
+        let bar = match ratio {
             Some(r) => screens::dashboard::ratio_bar(12, r, theme::bar()),
             None => screens::dashboard::indeterminate(12, app.ticks),
         };
@@ -98,10 +130,11 @@ pub fn render(app: &App, f: &mut Frame) {
     match app.screen {
         Screen::Dashboard => screens::dashboard::render(app, f, body),
         Screen::Browser => screens::browser::render(app, f, body),
+        Screen::Duplicates => screens::duplicates::render(app, f, body),
         _ => screens::placeholder::render(app, f, body),
     }
     if app.show_help {
-        screens::help::render(f, body);
+        screens::help::render(f, body, app.screen);
     }
     if app.confirm_flush {
         render_confirm(f, body);
@@ -233,6 +266,19 @@ fn footer_line(app: &App) -> Line<'static> {
             ("r", "rescan")
         };
         match app.screen {
+            Screen::Duplicates if app.dupes.searching() => {
+                vec![("q", "quit"), ("?", "help"), ("c", "stop the search")]
+            }
+            Screen::Duplicates => vec![
+                ("q", "quit"),
+                ("?", "help"),
+                ("f", "find"),
+                ("Space", "mark"),
+                ("Enter", "keep this"),
+                ("Tab", "pane"),
+                ("p", "rule"),
+                ("< >", "tabs"),
+            ],
             Screen::Browser => vec![
                 ("q", "quit"),
                 ("?", "help"),
