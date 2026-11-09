@@ -1,17 +1,12 @@
-//! Journaled execution (Iteration 5). Shapes only.
+//! Journaled execution: apply a plan, undo it, and list what was run.
 
-use crate::plan::Op;
+pub mod apply;
+pub mod history;
+pub mod journal;
+pub mod trash;
+pub mod undo;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpState {
-    Pending,
-    Done,
-    Failed,
-    Undone,
-}
-
-#[derive(Debug, Clone)]
-pub struct JournalEntry {
-    pub op: Op,
-    pub state: OpState,
-}
+pub use apply::{ApplyOptions, ApplyReport, OpNote, apply, check_plan};
+pub use history::{RunStatus, RunSummary};
+pub use trash::{DirTrash, SystemTrash, Trasher};
+pub use undo::{UndoReport, undo};

@@ -1,6 +1,8 @@
 //! Plans. A plan is data: building or saving one never touches the user's media files.
 //! (Executing a plan arrives in Iteration 5.)
 
+pub mod tree;
+
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -40,7 +42,7 @@ pub mod path_serde {
     }
 }
 
-mod opt_path_serde {
+pub(crate) mod opt_path_serde {
     use std::path::{Path, PathBuf};
 
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -78,6 +80,7 @@ pub enum OpMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DupRef {
     pub group: u32,
+    /// The copy that stays. For one half of a Live Photo, the matching half of the kept pair.
     #[serde(with = "path_serde")]
     pub kept: PathBuf,
     /// The other half of a Live Photo. Both halves must be acted on together or not at all.
@@ -203,7 +206,7 @@ impl Plan {
                 });
                 continue;
             };
-            let kept = g.members[keeper].primary().path.clone();
+            let keeper_files = &g.members[keeper].files;
             plan.summary.groups += 1;
             for (item, _) in g
                 .members
@@ -215,7 +218,13 @@ impl Plan {
                 if pair {
                     plan.summary.live_pairs += 1;
                 }
-                for f in &item.files {
+                for (pos, f) in item.files.iter().enumerate() {
+                    // The kept copy of this very file: for a Live Photo, the matching half.
+                    let kept = keeper_files
+                        .get(pos)
+                        .unwrap_or(&keeper_files[0])
+                        .path
+                        .clone();
                     let partner = item
                         .files
                         .iter()
@@ -231,7 +240,7 @@ impl Plan {
                         },
                         reason: DupRef {
                             group: g.id,
-                            kept: kept.clone(),
+                            kept,
                             partner,
                         },
                     });
@@ -242,6 +251,61 @@ impl Plan {
         }
         plan.summary.ops = plan.ops.len();
         plan
+    }
+
+    /// The same plan, but deleting for good instead of using the Trash. Cannot be undone.
+    pub fn into_permanent(mut self) -> Self {
+        self.mode = OpMode::DeletePermanent;
+        for op in &mut self.ops {
+            if let Op::Trash {
+                id,
+                path,
+                expect,
+                reason,
+            } = op.clone()
+            {
+                *op = Op::Delete {
+                    id,
+                    path,
+                    expect,
+                    reason,
+                };
+            }
+        }
+        self
+    }
+
+    /// Plans this big (or any permanent delete) need the phrase typed, not just a "y".
+    pub const LARGE_PLAN_FILES: usize = 50;
+
+    pub fn is_permanent(&self) -> bool {
+        self.mode == OpMode::DeletePermanent
+    }
+
+    pub fn needs_typed_confirmation(&self) -> bool {
+        self.is_permanent() || self.ops.len() >= Self::LARGE_PLAN_FILES
+    }
+
+    /// The words the user types to confirm, e.g. `trash 120 files` / `delete 4 files forever`.
+    pub fn confirm_phrase(&self) -> String {
+        let n = self.ops.len();
+        let files = if n == 1 { "file" } else { "files" };
+        if self.is_permanent() {
+            format!("delete {n} {files} forever")
+        } else {
+            format!("trash {n} {files}")
+        }
+    }
+
+    /// A dry-run view: the files the plan removes, grouped by folder (relative to the plan root).
+    pub fn removal_tree(&self) -> tree::DirTree {
+        let mut t = tree::DirTree::new();
+        for op in &self.ops {
+            if let Op::Trash { path, expect, .. } | Op::Delete { path, expect, .. } = op {
+                t.add(path.strip_prefix(&self.root).unwrap_or(path), expect.size);
+            }
+        }
+        t
     }
 
     /// Writes the plan as JSON. Refuses to replace an existing file.

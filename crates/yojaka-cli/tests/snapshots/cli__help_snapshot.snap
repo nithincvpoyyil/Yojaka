@@ -14,10 +14,11 @@ Commands:
   export    Export the file list as CSV or JSON (GPS is left out unless --include-gps)
   dupes     Find identical files and preview what could be removed (changes nothing)
   organize  Organize into a folder template (Iteration 6)
-  plan      Inspect plans (Iteration 5)
-  apply     Execute a plan (Iteration 5)
-  undo      Undo an applied plan (Iteration 5)
-  history   List executed plans (Iteration 5)
+  plan      Inspect plans
+  apply     Run a saved plan: moves the listed files to the Trash. Shows a dry run unless --write is
+            given
+  undo      Put back the files a run moved to the Trash. Shows a preview unless --write is given
+  history   List what has been run, newest first
   doctor    Check the environment and print paths
   help      Print this message or the help of the given subcommand(s)
 

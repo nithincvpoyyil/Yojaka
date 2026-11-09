@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 use ratatui::crossterm::event::{self, Event};
+use yojaka_core::exec::{self, ApplyOptions, DirTrash, SystemTrash, Trasher};
 use yojaka_core::scan::ScanOptions;
 use yojaka_core::{CancelToken, CoreEvent, Engine, EventSink};
 
@@ -13,7 +14,13 @@ use crate::app::{App, Cmd, Msg};
 use crate::keymap;
 use crate::terminal::TerminalGuard;
 use crate::view;
-use crate::worker::{self, Bg, DupOutcome, Request};
+use crate::worker::{self, Bg, DupOutcome, ExecOutcome, Request};
+
+/// What the `exec` thread does.
+enum Job {
+    Apply(Box<yojaka_core::plan::Plan>),
+    Undo(uuid::Uuid),
+}
 
 const TICK: Duration = Duration::from_millis(250);
 
@@ -28,6 +35,8 @@ struct Runtime {
     sink: EventSink,
     scan: Option<(CancelToken, JoinHandle<()>)>,
     dupes: Option<(CancelToken, JoinHandle<()>)>,
+    exec: Option<(CancelToken, JoinHandle<()>)>,
+    trasher: Arc<dyn Trasher>,
 }
 
 impl Runtime {
@@ -61,6 +70,14 @@ impl Runtime {
                     }
                 }
                 Cmd::OpenFile(path) => self.open_file(path),
+                Cmd::ApplyPlan(plan) => self.start_exec(Job::Apply(plan)),
+                Cmd::UndoRun(id) => self.start_exec(Job::Undo(id)),
+                Cmd::CancelExec => {
+                    if let Some((token, _)) = &self.exec {
+                        token.cancel();
+                    }
+                }
+                Cmd::LoadHistory => self.load_history(),
             }
         }
     }
@@ -204,6 +221,86 @@ impl Runtime {
         }
     }
 
+    /// Applies a plan or undoes a run on its own thread. Everything it does is journaled.
+    fn start_exec(&mut self, job: Job) {
+        self.reap_exec();
+        if self.exec.is_some() {
+            let _ = self.bg_tx.send(Bg::ExecFinished(ExecOutcome::Failed(
+                "another run is still going".into(),
+            )));
+            return;
+        }
+        let cancel = CancelToken::new();
+        let (engine, sink, tx, token, trasher) = (
+            self.engine.clone(),
+            self.sink.clone(),
+            self.bg_tx.clone(),
+            cancel.clone(),
+            self.trasher.clone(),
+        );
+        let spawned = std::thread::Builder::new()
+            .name("exec".into())
+            .spawn(move || {
+                let outcome = match job {
+                    Job::Apply(plan) => {
+                        tracing::info!(plan = %plan.id, ops = plan.ops.len(), "apply started");
+                        match exec::apply(
+                            &plan,
+                            &engine.paths,
+                            trasher.as_ref(),
+                            ApplyOptions::default(),
+                            &sink,
+                            &token,
+                        ) {
+                            Ok(r) => ExecOutcome::Applied(Box::new(r)),
+                            Err(e) => ExecOutcome::Failed(e.to_string()),
+                        }
+                    }
+                    Job::Undo(id) => {
+                        tracing::info!(plan = %id, "undo started");
+                        match exec::undo(id, &engine.paths, &sink, &token) {
+                            Ok(r) => ExecOutcome::Undone(Box::new(r)),
+                            Err(e) => ExecOutcome::Failed(e.to_string()),
+                        }
+                    }
+                };
+                tracing::info!("exec thread finished");
+                let _ = tx.send(Bg::ExecFinished(outcome));
+            });
+        match spawned {
+            Ok(h) => self.exec = Some((cancel, h)),
+            Err(e) => {
+                let _ = self
+                    .bg_tx
+                    .send(Bg::ExecFinished(ExecOutcome::Failed(format!(
+                        "cannot start: {e}"
+                    ))));
+            }
+        }
+    }
+
+    fn load_history(&self) {
+        let (engine, tx) = (self.engine.clone(), self.bg_tx.clone());
+        let _ = std::thread::Builder::new()
+            .name("history".into())
+            .spawn(move || match exec::history::list(&engine.paths) {
+                Ok(runs) => {
+                    let _ = tx.send(Bg::History(runs));
+                }
+                Err(e) => {
+                    let _ = tx.send(Bg::Notice(format!("Cannot read the history: {e}")));
+                }
+            });
+    }
+
+    fn reap_exec(&mut self) {
+        if self.exec.as_ref().is_some_and(|(_, h)| h.is_finished())
+            && let Some((_, h)) = self.exec.take()
+        {
+            let _ = h.join();
+        }
+    }
+
     /// Joins the scan thread once it has reported back.
     fn reap_scan(&mut self) {
         if self.scan.as_ref().is_some_and(|(_, h)| h.is_finished())
@@ -231,6 +328,11 @@ impl Runtime {
             token.cancel();
             let _ = h.join();
         }
+        // A run stops after the file it is on; `apply --resume` finishes it later.
+        if let Some((token, h)) = self.exec.take() {
+            token.cancel();
+            let _ = h.join();
+        }
     }
 }
 
@@ -239,6 +341,7 @@ pub fn run(
     app: &mut App,
     engine: Arc<Engine>,
     local_index: bool,
+    trash_dir: Option<std::path::PathBuf>,
 ) -> std::io::Result<()> {
     let (sink, core_rx): (EventSink, Receiver<CoreEvent>) = EventSink::channel(1024);
     let (bg_tx, bg_rx) = crossbeam_channel::bounded::<Bg>(256);
@@ -272,6 +375,11 @@ pub fn run(
         sink,
         scan: None,
         dupes: None,
+        exec: None,
+        trasher: match trash_dir {
+            Some(dir) => Arc::new(DirTrash(dir)),
+            None => Arc::new(SystemTrash),
+        },
     };
 
     let size = guard.term.size()?;
@@ -299,7 +407,11 @@ pub fn run(
                 Ok(Event::Key(k)) => {
                     let editing =
                         app.screen == crate::app::Screen::Browser && app.browser.editing_filter;
-                    msgs.extend(keymap::translate(k, editing, app.confirm_flush));
+                    if app.modal.is_some() {
+                        msgs.extend(keymap::translate_modal(k));
+                    } else {
+                        msgs.extend(keymap::translate(k, editing, app.confirm_flush));
+                    }
                 }
                 Ok(Event::Resize(w, h)) => msgs.push(Msg::Resize(w, h)),
                 Ok(_) => {}
@@ -315,6 +427,9 @@ pub fn run(
             }
             if matches!(bg, Bg::DupesFinished(_)) {
                 rt.reap_dupes();
+            }
+            if matches!(bg, Bg::ExecFinished(_)) {
+                rt.reap_exec();
             }
             msgs.push(Msg::Bg(bg));
         }

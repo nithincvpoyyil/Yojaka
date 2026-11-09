@@ -105,6 +105,7 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
                     local_index: cli.local_index,
                     refresh: cli.refresh,
                     force: cli.force,
+                    trash_dir: cli.trash_dir.clone(),
                 },
             )?;
             Ok(Exit::Ok)
@@ -168,6 +169,29 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
                 local_index: cli.local_index,
             },
         )?),
+        Some(Cmd::Plan {
+            sub: cli::PlanCmd::Show { file, full_tree },
+        }) => cmd::exec::plan_show(file, *full_tree),
+        Some(Cmd::Apply {
+            file,
+            yes,
+            resume,
+            permanent,
+        }) => cmd::exec::apply(
+            &engine,
+            &cmd::exec::ApplyArgs {
+                file,
+                write: cli.write,
+                yes: *yes,
+                resume: *resume,
+                permanent: *permanent,
+                trash_dir: cli.trash_dir.as_deref(),
+            },
+        ),
+        Some(Cmd::Undo { plan_id, last }) => {
+            cmd::exec::undo(&engine, plan_id.as_deref(), *last, cli.write)
+        }
+        Some(Cmd::History { json }) => cmd::exec::history(&engine, *json),
         Some(other) => Ok(cmd::stub::not_yet(other)),
     }
 }

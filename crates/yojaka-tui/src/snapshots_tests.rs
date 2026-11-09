@@ -369,10 +369,8 @@ fn help_overlay() {
 }
 
 #[test]
-fn later_screens_say_when_they_arrive() {
+fn the_organize_screen_says_when_it_arrives() {
     let mut a = app_at(80, 24);
-    a.screen = Screen::History;
-    assert!(draw(&a, 80, 24).contains("Arrives in Iteration 5"));
     a.screen = Screen::Organize;
     assert!(draw(&a, 80, 24).contains("Arrives in Iteration 6"));
 }
@@ -1264,4 +1262,234 @@ fn nothing_the_duplicates_screen_does_asks_the_runtime_to_change_a_file() {
         ],
     );
     assert!(cmds.iter().all(|c| matches!(c, Cmd::FindDupes)), "{cmds:?}");
+}
+
+// ---- write mode, review, history -----------------------------------------------------------
+
+mod write_path {
+    use yojaka_core::exec::{ApplyReport, RunStatus, RunSummary};
+    use yojaka_core::plan::{OpMode, PlanKind};
+
+    use super::*;
+    use crate::modal::Modal;
+    use crate::worker::{Bg, ExecOutcome};
+
+    fn write_app(w: u16, h: u16) -> App {
+        let mut a = with_dupes(w, h);
+        a.update(Msg::ToggleWrite);
+        a.update(Msg::Char('y'));
+        a
+    }
+
+    fn run_summary(done: usize, undone: usize, status: RunStatus) -> RunSummary {
+        RunSummary {
+            plan_id: uuid::Uuid::now_v7(),
+            started: 1_800_000_000,
+            root: "/photos".into(),
+            kind: PlanKind::Dedupe,
+            mode: OpMode::Trash,
+            ops: done,
+            done,
+            skipped: 0,
+            failed: 0,
+            undone,
+            bytes: 12_000_000,
+            status,
+        }
+    }
+
+    #[test]
+    fn write_mode_is_asked_for_and_can_be_turned_off() {
+        let mut a = with_dupes(80, 24);
+        a.update(Msg::ToggleWrite);
+        assert!(matches!(a.modal, Some(Modal::EnableWrite)));
+        assert_eq!(a.mode, Mode::ReadOnly, "still off until confirmed");
+        assert!(draw(&a, 80, 24).contains("Turn on write mode?"));
+        a.update(Msg::Char('n'));
+        assert!(a.modal.is_none() && a.mode == Mode::ReadOnly);
+
+        a.update(Msg::ToggleWrite);
+        a.update(Msg::Char('y'));
+        assert_eq!(a.mode, Mode::Write);
+        assert!(draw(&a, 80, 24).lines().next().unwrap().contains("[WRITE]"));
+        a.update(Msg::ToggleWrite);
+        assert_eq!(a.mode, Mode::ReadOnly);
+    }
+
+    #[test]
+    fn nothing_can_be_reviewed_while_read_only() {
+        let mut a = with_dupes(80, 24);
+        let cmds = a.update(Msg::ReviewPlan);
+        assert!(cmds.is_empty() && a.modal.is_none());
+        assert!(a.notice.as_ref().unwrap().0.contains("Write mode is off"));
+    }
+
+    #[test]
+    fn a_small_plan_is_confirmed_with_y_and_runs_once() {
+        let mut a = write_app(100, 40);
+        let marked = a.dupes.marked_files();
+        assert!(marked > 0);
+        a.update(Msg::ReviewPlan);
+        assert!(matches!(a.modal, Some(Modal::Review(_))));
+        let out = draw(&a, 100, 40);
+        assert!(out.contains("to the Trash"), "{out}");
+        assert!(out.contains("y / Enter"), "{out}");
+
+        let cmds = a.update(Msg::Char('y'));
+        assert!(matches!(&cmds[..], [Cmd::ApplyPlan(p)] if p.ops.len() == marked));
+        assert!(matches!(a.modal, Some(Modal::Running(_))));
+        // Keys do nothing while it runs, except Ctrl-C which asks it to stop.
+        assert!(a.update(Msg::Char('y')).is_empty());
+        let stop = a.update(Msg::Interrupt);
+        assert!(matches!(&stop[..], [Cmd::CancelExec]));
+    }
+
+    #[test]
+    fn escape_leaves_the_review_without_running_anything() {
+        let mut a = write_app(100, 40);
+        a.update(Msg::ReviewPlan);
+        assert!(a.update(Msg::Back).is_empty());
+        assert!(a.modal.is_none());
+    }
+
+    #[test]
+    fn a_large_plan_needs_its_phrase_typed() {
+        let mut a = write_app(100, 40);
+        a.update(Msg::ReviewPlan);
+        let Some(Modal::Review(r)) = &mut a.modal else {
+            panic!("no review");
+        };
+        // Pretend the plan is big.
+        let first = r.plan.ops[0].clone();
+        while r.plan.ops.len() < yojaka_core::plan::Plan::LARGE_PLAN_FILES {
+            r.plan.ops.push(first.clone());
+        }
+        let phrase = r.plan.confirm_phrase();
+        // 'y' is text now, not a shortcut, and Enter does nothing until the phrase matches.
+        assert!(a.update(Msg::Char('y')).is_empty());
+        assert!(a.update(Msg::Enter).is_empty());
+        assert!(matches!(a.modal, Some(Modal::Review(_))));
+        assert!(draw(&a, 100, 40).contains("Type \"trash"));
+        a.update(Msg::Backspace);
+        for c in phrase.chars() {
+            a.update(Msg::Char(c));
+        }
+        let cmds = a.update(Msg::Enter);
+        assert!(matches!(&cmds[..], [Cmd::ApplyPlan(_)]));
+    }
+
+    #[test]
+    fn when_a_run_ends_the_report_shows_and_everything_stale_is_dropped() {
+        let mut a = write_app(100, 40);
+        a.update(Msg::ReviewPlan);
+        a.update(Msg::Char('y'));
+        let report = ApplyReport {
+            trashed: 3,
+            bytes: 9_000_000,
+            ..Default::default()
+        };
+        let cmds = a.update(Msg::Bg(Bg::ExecFinished(ExecOutcome::Applied(Box::new(
+            report,
+        )))));
+        assert!(matches!(a.modal, Some(Modal::Report(_))));
+        assert!(a.dupes.groups.is_empty(), "the old results are gone");
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::LoadHistory)));
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::StartScan { .. })));
+        let out = draw(&a, 100, 40);
+        assert!(out.contains("3 files moved to the Trash"), "{out}");
+        a.update(Msg::Char('x'));
+        assert!(a.modal.is_none());
+    }
+
+    #[test]
+    fn a_failed_run_says_so_and_leaves_the_files_alone() {
+        let mut a = write_app(100, 40);
+        a.modal = Some(Modal::Running(crate::modal::RunView {
+            label: "x",
+            done: 0,
+            total: None,
+            cancelling: false,
+        }));
+        a.update(Msg::Bg(Bg::ExecFinished(ExecOutcome::Failed(
+            "plan was already applied".into(),
+        ))));
+        assert!(draw(&a, 100, 40).contains("already applied"));
+    }
+
+    #[test]
+    fn history_loads_on_entry_lists_runs_and_undo_needs_write_mode() {
+        let mut a = app_at(100, 40);
+        let cmds = a.update(Msg::Goto(Screen::History));
+        assert!(matches!(&cmds[..], [Cmd::LoadHistory]));
+        assert!(draw(&a, 100, 40).contains("Loading"));
+        a.update(Msg::Bg(Bg::History(vec![
+            run_summary(10, 0, RunStatus::Applied),
+            run_summary(4, 4, RunStatus::Undone),
+        ])));
+        let out = draw(&a, 100, 40);
+        assert!(out.contains("applied") && out.contains("undone"), "{out}");
+
+        a.update(Msg::Down);
+        assert_eq!(a.history.selected, 1);
+        a.update(Msg::Up);
+        a.update(Msg::UndoRun);
+        assert!(a.modal.is_none(), "read-only: no undo");
+        assert!(a.notice.as_ref().unwrap().0.contains("Write mode is off"));
+
+        a.update(Msg::ToggleWrite);
+        a.update(Msg::Char('y'));
+        a.update(Msg::UndoRun);
+        assert!(matches!(a.modal, Some(Modal::Undo(_))));
+        let cmds = a.update(Msg::Char('y'));
+        assert!(matches!(&cmds[..], [Cmd::UndoRun(_)]));
+    }
+
+    #[test]
+    fn a_run_that_is_fully_undone_cannot_be_undone_again() {
+        let mut a = app_at(100, 40);
+        a.mode = Mode::Write;
+        a.screen = Screen::History;
+        a.update(Msg::Bg(Bg::History(vec![run_summary(
+            4,
+            4,
+            RunStatus::Undone,
+        )])));
+        a.update(Msg::UndoRun);
+        assert!(a.modal.is_none());
+    }
+
+    #[test]
+    fn the_new_screens_and_boxes_render_at_every_small_size() {
+        for (w, h) in [(20, 6), (40, 12), (60, 16), (80, 24), (120, 40)] {
+            let mut a = with_dupes(w, h);
+            a.mode = Mode::Write;
+            a.update(Msg::ReviewPlan);
+            let _ = draw(&a, w, h);
+            a.modal = Some(Modal::EnableWrite);
+            let _ = draw(&a, w, h);
+            a.modal = Some(Modal::Report(vec![crate::modal::ReportLine {
+                text: "a very long line ".repeat(10),
+                bad: true,
+            }]));
+            let _ = draw(&a, w, h);
+            a.modal = None;
+            a.screen = Screen::History;
+            let _ = draw(&a, w, h);
+            a.update(Msg::Bg(Bg::History(vec![run_summary(
+                3,
+                0,
+                RunStatus::Incomplete,
+            )])));
+            let _ = draw(&a, w, h);
+        }
+    }
+
+    #[test]
+    fn help_describes_the_write_keys() {
+        let lines = crate::screens::help::lines_for(Screen::Duplicates);
+        assert!(lines.iter().any(|(k, _)| *k == "W"));
+        assert!(lines.iter().any(|(k, _)| *k == "a"));
+        let hist = crate::screens::help::lines_for(Screen::History);
+        assert!(hist.iter().any(|(k, _)| *k == "u"));
+    }
 }

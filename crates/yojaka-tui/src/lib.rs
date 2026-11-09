@@ -5,7 +5,9 @@ mod browser;
 mod dupes;
 mod event_loop;
 mod fmt;
+mod history;
 mod keymap;
+mod modal;
 mod screens;
 mod terminal;
 mod theme;
@@ -30,6 +32,8 @@ pub struct TuiOptions {
     pub refresh: bool,
     /// `--force`: ask on start-up whether to wipe the folder's saved data and scan again.
     pub force: bool,
+    /// Tests and tooling: use this folder as the Trash instead of the real one.
+    pub trash_dir: Option<PathBuf>,
 }
 
 /// Open the TUI on `root` and block until the user quits.
@@ -39,7 +43,13 @@ pub fn run(engine: Engine, root: PathBuf, opts: TuiOptions) -> std::io::Result<(
     app.refresh_when_stale = opts.refresh;
     app.confirm_flush = opts.force;
     let mut guard = terminal::TerminalGuard::enter()?;
-    let result = event_loop::run(&mut guard, &mut app, Arc::new(engine), opts.local_index);
+    let result = event_loop::run(
+        &mut guard,
+        &mut app,
+        Arc::new(engine),
+        opts.local_index,
+        opts.trash_dir,
+    );
     drop(guard);
     tracing::info!("tui stopped");
     result

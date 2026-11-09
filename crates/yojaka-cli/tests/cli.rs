@@ -297,3 +297,114 @@ fn debug_flag_writes_a_log_with_threads_and_steps() {
         assert!(text.contains(needle), "log lacks {needle:?}");
     }
 }
+
+#[test]
+fn apply_is_a_dry_run_without_write_then_trashes_and_undo_restores() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    let trash = tmp.path().join("trash");
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let plan = tmp.path().join("plan.json");
+    yojaka(tmp.path())
+        .args(["dupes", "--keep", "shortest-path", "--plan-out"])
+        .arg(&plan)
+        .arg(&tree)
+        .assert()
+        .success();
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+    let n = saved["ops"].as_array().unwrap().len();
+    assert!(n > 0);
+    let before = tree_listing(&tree);
+
+    // Without --write: a summary, and nothing changes.
+    yojaka(tmp.path())
+        .arg("apply")
+        .arg(&plan)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dry run: nothing was changed"));
+    assert_eq!(tree_listing(&tree), before);
+
+    // A wrong phrase changes nothing.
+    let phrase = if n == 1 {
+        "trash 1 file".to_string()
+    } else {
+        format!("trash {n} files")
+    };
+    let apply = |input: &str| {
+        let mut c = yojaka(tmp.path());
+        c.args(["--write", "--trash-dir"])
+            .arg(&trash)
+            .arg("apply")
+            .arg(&plan)
+            .write_stdin(format!("{input}\n"));
+        c
+    };
+    if n >= 50 {
+        apply("nope").assert().code(1);
+        assert_eq!(tree_listing(&tree), before);
+    }
+    let answer = if n >= 50 { phrase } else { "y".to_string() };
+    apply(&answer)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("moved to the Trash"));
+    assert_eq!(tree_listing(&tree).len(), before.len() - n);
+    assert_eq!(std::fs::read_dir(&trash).unwrap().count(), n);
+
+    // Applying the same plan again is refused.
+    apply(&answer).assert().code(1);
+
+    yojaka(tmp.path())
+        .arg("history")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("applied"));
+
+    // Undo previews without --write, and restores with it.
+    yojaka(tmp.path())
+        .args(["undo", "--last"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Preview only"));
+    assert_eq!(tree_listing(&tree).len(), before.len() - n);
+    yojaka(tmp.path())
+        .args(["--write", "undo", "--last"])
+        .assert()
+        .success();
+    assert_eq!(tree_listing(&tree), before);
+    yojaka(tmp.path())
+        .arg("history")
+        .assert()
+        .stdout(predicate::str::contains("undone"));
+}
+
+#[test]
+fn a_permanent_delete_needs_its_phrase_even_with_yes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let plan = tmp.path().join("plan.json");
+    yojaka(tmp.path())
+        .args(["dupes", "--plan-out"])
+        .arg(&plan)
+        .arg(&tree)
+        .assert()
+        .success();
+    let before = tree_listing(&tree);
+    yojaka(tmp.path())
+        .args(["--write", "apply", "--yes", "--permanent"])
+        .arg(&plan)
+        .write_stdin("yes\n")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Nothing was changed"));
+    assert_eq!(tree_listing(&tree), before);
+    // And without --permanent a permanent plan is not possible at all.
+    yojaka(tmp.path())
+        .args(["plan", "show"])
+        .arg(&plan)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("move to the Trash"));
+}

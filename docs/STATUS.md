@@ -1,13 +1,13 @@
 # Yojaka: project status and hand-off
 
-Last updated: 2026-11-08. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
+Last updated: 2026-11-09. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
 rules are in `CLAUDE.md`.
 
 **Scan walker (after I4), done 2026-11-09** (`all-specs/05-scan-walker-fix-plan.md`, ADR-0005): `dua-core`
 replaces jwalk, so folders over 50k entries no longer freeze the scan and memory is flat (1M entries: 51.9 s,
 25 MB; rescan 6.5 s). A root named like a skip-list entry is now scanned. Progress has a "Finishing up" state
 with no false "No progress" warning or stale ETA, and live statistics back off when slow. 251 tests pass.
-Not committed yet. Next: Iteration 5.
+Committed. Iteration 5 was built the same day (below); Iteration 6 is next after sign-off.
 
 ## Where we are
 
@@ -18,8 +18,8 @@ Not committed yet. Next: Iteration 5.
 | 2 | Metadata, Live Photos, offline places, `info` / `places` / `export` | Done |
 | 3 | TUI: dashboard, file browser, help, scan control | Done |
 | 4 | Exact duplicates (hashing, `dupes`, Duplicates screen) | Done (not committed or tagged yet) |
-| 5 | Safe executor, History (screen is a placeholder) | **Next, not started** |
-| 6 | Organize (screen is a placeholder) | Not started |
+| 5 | Safe executor, History | **Built 2026-11-09, awaiting the user's manual sign-off on a real folder** (ADR-0006) |
+| 6 | Organize (screen is a placeholder) | **Next** |
 | 7-10 | See the plan | Not started |
 
 No git tags exist (`v0.1.0` .. `v0.3.0` not created). Everything up to the GeoNames attribution
@@ -44,7 +44,7 @@ automatically in `~/Library` (no user choice, no jargon).
 | `--local-index` | Hidden. For tests and tooling only: keeps the data inside the folder. |
 
 CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`, `export`, `doctor`.
-`dupes` (exact tier; see below). `organize`, `plan`, `apply`, `undo`, `history` are stubs.
+`dupes` (exact tier; see below), `plan show`, `apply`, `undo`, `history` (Iteration 5; see below). `organize` is a stub.
 
 ### TUI keys (the `?` overlay is generated from `keymap.rs`)
 
@@ -60,7 +60,7 @@ CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`
 
 ### Duplicates (Iteration 4, exact tier only)
 
-Nothing is deleted anywhere yet: results are marks and a saved plan file. Executing a plan is Iteration 5.
+Finding copies never deletes anything: results are marks and a saved plan file. Running a plan is the executor below.
 
 - Core: `yojaka_core::dupes` (`find_exact`, `DupGroup`, keep rules), `hash.rs` (BLAKE3 partial / full),
   `plan/mod.rs` (`Plan::from_dupes`, JSON save / load, `Op::Trash`). `Engine::dupes(root, local, sink, cancel)`.
@@ -81,6 +81,30 @@ Nothing is deleted anywhere yet: results are marks and a saved plan file. Execut
   The search does not start by itself: it reads files, so it waits for `f`.
 - Help (`?`) now shows only the global keys plus the current screen's keys (the full list no longer fits 24 rows).
 - Measured: 20k-file fixture, 0.7 s, 58 MB read; the second run reads 0 B.
+
+### Safe executor (Iteration 5, ADR-0006)
+
+The first write-capable release. Off by default: no `--write` means a preview only.
+
+- `yojaka dupes PATH --plan-out plan.json` -> `yojaka plan show plan.json [--full-tree]` -> `yojaka apply plan.json`
+  (dry run) -> `yojaka --write apply plan.json` -> `yojaka history` -> `yojaka --write undo --last`
+  (or an id, or the start of one). `--write` is a global flag, so it goes before the subcommand or anywhere.
+- `apply` re-checks every file (size, mtime, BLAKE3) and the copy that stays, then moves it to the Trash and
+  records the exact Trash path in the journal. Changed files are skipped and listed. A Live Photo pair is
+  skipped or moved as one. 50 or more files need `trash N files` typed; fewer need `y` (`--yes` skips that).
+- `apply --resume` finishes an interrupted plan. Applying a plan twice is refused.
+- `apply --permanent --write` deletes for good (typed phrase `delete N files forever`, even with `--yes`);
+  `undo` reports those as not restorable. Not available in the TUI.
+- Journal and plan copy: `<data>/journal/<plan-id>.jsonl` and `.plan.json`.
+- TUI: `W` turns write mode on (asks) or off; on Duplicates `a` opens the Review box (summary, folders
+  losing files, typed phrase for large plans); a run shows progress (Ctrl-C stops after the current file),
+  then a report, then rescans. Screen 5 History lists runs; `u` puts the selected run back.
+- Hidden `--trash-dir DIR` makes tests use a folder as the Trash.
+- Core: `yojaka_core::exec` (`apply`, `undo`, `history`, `journal`, `trash`), `plan::tree` (`DirTree`
+  glimpse, `Plan::removal_tree`). Tests: `crates/yojaka-core/tests/exec.rs` (12 + 1 ignored real-Trash test),
+  CLI pipeline tests in `crates/yojaka-cli/tests/cli.rs`, TUI tests in `snapshots_tests.rs::write_path`.
+- Not done: a real-process SIGKILL test (simulated in-process instead), copy / move ops (Iteration 6), a
+  before/after tree for non-dedupe plans (only "files removed, by folder" exists), parallel execution.
 
 ### Look
 
@@ -115,8 +139,8 @@ gitignored. Re-check before the first public release.
 
 ## Open items
 
-- **Iteration 5** is next: `Plan` execution, journal, Trash, undo, History. `Plan::from_dupes` and `Op::Trash` exist already; `DupRef.partner` is there so the executor can skip both halves of a Live Photo together.
-- Iteration 4 is not committed. Likely / name tiers are not built (the spec puts them in a later iteration).
+- **Iteration 5** needs the user's own sign-off on a real folder (acceptance item), then commit and tag. The Iteration 5 work is not committed yet.
+- Iteration 4 is committed (`1c698fc`). Likely / name tiers are not built (the spec puts them in a later iteration).
 - No TUI key writes a plan file yet (only `yojaka dupes --plan-out`).
   Add a `Screen` arm in `view::render` and a state struct like `browser.rs`.
 - Tag `v0.2.0` / `v0.3.0` (and `v0.1.0`) when the user wants.

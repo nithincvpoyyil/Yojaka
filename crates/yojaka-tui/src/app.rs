@@ -11,7 +11,9 @@ use yojaka_core::{CoreEvent, TaskKind};
 use crate::browser::{BrowserState, Focus};
 use crate::dupes::{DupesState, Pane, Toggled};
 use crate::fmt;
-use crate::worker::{Bg, DupOutcome, Request, Response};
+use crate::history::{self, HistoryState};
+use crate::modal::{self, Modal, Review, RunView};
+use crate::worker::{Bg, DupOutcome, ExecOutcome, Request, Response};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -105,6 +107,12 @@ pub enum Msg {
     NextRule,
     /// `x`: keep every copy in the selected group.
     KeepAllInGroup,
+    /// `W`: write mode on (asks first) / off.
+    ToggleWrite,
+    /// `a` (Duplicates): review the marked copies before moving them to the Trash.
+    ReviewPlan,
+    /// `u` (History): put back the files of the selected run.
+    UndoRun,
     CycleKind,
     CycleSort,
     ReverseSort,
@@ -139,6 +147,12 @@ pub enum Cmd {
     /// Hand the file to the OS to open with its default app. Never modifies it.
     OpenFile(PathBuf),
     Worker(Request),
+    /// Run a reviewed plan (moves files to the Trash; journaled).
+    ApplyPlan(Box<yojaka_core::plan::Plan>),
+    /// Put back everything a journaled run moved.
+    UndoRun(uuid::Uuid),
+    CancelExec,
+    LoadHistory,
 }
 
 /// What the scan gauge shows.
@@ -320,6 +334,9 @@ pub struct App {
     pub dashboard: DashboardState,
     pub browser: BrowserState,
     pub dupes: DupesState,
+    pub history: HistoryState,
+    /// The question, plan review or progress that has the keyboard.
+    pub modal: Option<Modal>,
     pub debug: bool,
     pub debug_info: DebugInfo,
     /// Set by `update` when the screen needs a redraw.
@@ -350,6 +367,8 @@ impl App {
             dashboard: DashboardState::default(),
             browser: BrowserState::default(),
             dupes: DupesState::default(),
+            history: HistoryState::default(),
+            modal: None,
             debug: false,
             debug_info: DebugInfo::default(),
             dirty: true,
@@ -371,6 +390,7 @@ impl App {
         self.browser.tree_rows = tree_rows;
         self.browser.table_rows = table_rows;
         self.dupes.page_rows = crate::view::dupes_rows(self.size.0, self.size.1);
+        self.history.page_rows = crate::view::history_rows(self.size.0, self.size.1);
     }
 
     /// One-line index/scan status for the header.
@@ -605,10 +625,162 @@ impl App {
         vec![]
     }
 
+    fn toggle_write(&mut self) -> Vec<Cmd> {
+        if self.is_busy_writing() {
+            self.dirty = false;
+            return vec![];
+        }
+        match self.mode {
+            Mode::ReadOnly => self.modal = Some(Modal::EnableWrite),
+            Mode::Write => {
+                self.mode = Mode::ReadOnly;
+                self.say("Write mode is off".into());
+            }
+        }
+        vec![]
+    }
+
+    fn is_busy_writing(&self) -> bool {
+        matches!(self.modal, Some(Modal::Running(_)))
+    }
+
+    /// `a` on the Duplicates screen: build the plan from the marks and show it for review.
+    fn review_plan(&mut self) -> Vec<Cmd> {
+        if self.mode != Mode::Write {
+            self.say("Write mode is off. Press W to turn it on".into());
+            return vec![];
+        }
+        if self.dashboard.scan.running || self.dupes.searching() {
+            self.say("Wait for the scan or search to finish first".into());
+            return vec![];
+        }
+        if self.dupes.marked_files() == 0 {
+            self.say("Nothing is marked for removal".into());
+            return vec![];
+        }
+        let plan = yojaka_core::plan::Plan::from_dupes(&self.root, &self.dupes.groups);
+        for w in &plan.warnings {
+            tracing::warn!("plan: {}", w.message);
+        }
+        if plan.ops.is_empty() {
+            self.say("Nothing is marked for removal".into());
+            return vec![];
+        }
+        self.modal = Some(Modal::Review(Box::new(Review::new(plan))));
+        vec![]
+    }
+
+    /// `u` on the History screen.
+    fn ask_undo(&mut self) -> Vec<Cmd> {
+        if self.mode != Mode::Write {
+            self.say("Write mode is off. Press W to turn it on".into());
+            return vec![];
+        }
+        if self.dashboard.scan.running {
+            self.say("Wait for the scan to finish first".into());
+            return vec![];
+        }
+        match self.history.current() {
+            Some(run) if history::can_undo(run) => {
+                self.modal = Some(Modal::Undo(Box::new(run.clone())));
+            }
+            Some(_) => self.say("Nothing left to put back for that run".into()),
+            None => self.dirty = false,
+        }
+        vec![]
+    }
+
+    /// Keys while a question, review or progress box is open.
+    fn modal_key(&mut self, msg: Msg) -> Vec<Cmd> {
+        let Some(modal) = self.modal.take() else {
+            return vec![];
+        };
+        let yes = matches!(msg, Msg::Char('y' | 'Y'));
+        let no = matches!(msg, Msg::Back | Msg::Interrupt | Msg::Char('n' | 'N'));
+        match modal {
+            Modal::Running(mut r) => {
+                if matches!(msg, Msg::Interrupt) && !r.cancelling {
+                    r.cancelling = true;
+                    self.modal = Some(Modal::Running(r));
+                    return vec![Cmd::CancelExec];
+                }
+                self.modal = Some(Modal::Running(r));
+                self.dirty = false;
+                vec![]
+            }
+            Modal::Report(_) => vec![],
+            Modal::EnableWrite => {
+                if yes || matches!(msg, Msg::Enter) {
+                    self.mode = Mode::Write;
+                    self.say("Write mode is on. Nothing changes until you review a plan".into());
+                } else if !no {
+                    self.modal = Some(Modal::EnableWrite);
+                    self.dirty = false;
+                }
+                vec![]
+            }
+            Modal::Undo(run) => {
+                if yes || matches!(msg, Msg::Enter) {
+                    self.modal = Some(Modal::Running(RunView {
+                        label: "Putting files back",
+                        done: 0,
+                        total: Some(run.done as u64),
+                        cancelling: false,
+                    }));
+                    vec![Cmd::UndoRun(run.plan_id)]
+                } else {
+                    if !no {
+                        self.modal = Some(Modal::Undo(run));
+                        self.dirty = false;
+                    }
+                    vec![]
+                }
+            }
+            Modal::Review(mut rv) => {
+                let typing = rv.needs_typing();
+                match msg {
+                    Msg::Char(c) if typing => rv.typed.push(c),
+                    Msg::Backspace => {
+                        rv.typed.pop();
+                    }
+                    Msg::Enter if rv.ready() => return self.start_apply(*rv),
+                    Msg::Char('y' | 'Y') if !typing => return self.start_apply(*rv),
+                    Msg::Back | Msg::Interrupt => return vec![],
+                    Msg::Char('n' | 'N') if !typing => return vec![],
+                    _ => self.dirty = false,
+                }
+                self.modal = Some(Modal::Review(rv));
+                vec![]
+            }
+        }
+    }
+
+    fn start_apply(&mut self, rv: Review) -> Vec<Cmd> {
+        if self.mode != Mode::Write {
+            self.say("Write mode is off".into());
+            return vec![];
+        }
+        self.modal = Some(Modal::Running(RunView {
+            label: "Moving files to the Trash",
+            done: 0,
+            total: Some(rv.plan.ops.len() as u64),
+            cancelling: false,
+        }));
+        vec![Cmd::ApplyPlan(Box::new(rv.plan))]
+    }
+
     /// Applies `msg`. The caller must run the returned commands and redraw when `self.dirty`.
     pub fn update(&mut self, msg: Msg) -> Vec<Cmd> {
         // Everything except background chatter redraws; the few exceptions say so below.
         self.dirty = true;
+        if self.modal.is_some()
+            && matches!(
+                msg,
+                Msg::Back | Msg::Enter | Msg::Char(_) | Msg::Backspace | Msg::Interrupt
+            )
+        {
+            return self.modal_key(msg);
+        }
         if self.tab_mode {
             match msg {
                 Msg::Left | Msg::PrevScreen => {
@@ -633,6 +805,8 @@ impl App {
                 | Msg::Toggle
                 | Msg::FindDupes
                 | Msg::NextRule
+                | Msg::ReviewPlan
+                | Msg::UndoRun
                 | Msg::KeepAllInGroup => {
                     self.dirty = false;
                     return vec![];
@@ -699,7 +873,11 @@ impl App {
                 self.screen = s;
                 self.show_help = false;
                 self.browser.editing_filter = false;
-                vec![]
+                if s == Screen::History {
+                    vec![Cmd::LoadHistory]
+                } else {
+                    vec![]
+                }
             }
             Msg::Resize(w, h) => {
                 self.size = (w, h);
@@ -736,6 +914,26 @@ impl App {
             Msg::CancelScan => self.cancel_scan(),
             Msg::ToggleDebug => {
                 self.debug = !self.debug;
+                vec![]
+            }
+            Msg::ToggleWrite => self.toggle_write(),
+            Msg::ReviewPlan if self.screen == Screen::Duplicates => self.review_plan(),
+            Msg::UndoRun if self.screen == Screen::History => self.ask_undo(),
+            Msg::ReviewPlan | Msg::UndoRun => {
+                self.dirty = false;
+                vec![]
+            }
+            Msg::Up | Msg::Down | Msg::PageUp | Msg::PageDown | Msg::Top | Msg::Bottom
+                if self.screen == Screen::History =>
+            {
+                match msg {
+                    Msg::Up => self.history.move_by(-1),
+                    Msg::Down => self.history.move_by(1),
+                    Msg::PageUp => self.history.page(false),
+                    Msg::PageDown => self.history.page(true),
+                    Msg::Top => self.history.jump(false),
+                    _ => self.history.jump(true),
+                }
                 vec![]
             }
             Msg::Up
@@ -864,6 +1062,37 @@ impl App {
     }
 
     fn on_core(&mut self, ev: CoreEvent) -> Vec<Cmd> {
+        // Applying or undoing a plan reports through the same channel; it has its own box.
+        match &ev {
+            CoreEvent::Progress {
+                task: TaskKind::Execute | TaskKind::Undo,
+                done,
+                total,
+                ..
+            } => {
+                if let Some(Modal::Running(r)) = &mut self.modal {
+                    r.done = *done;
+                    r.total = *total;
+                }
+                return vec![];
+            }
+            CoreEvent::TaskStarted {
+                task: TaskKind::Execute | TaskKind::Undo,
+                ..
+            } => return vec![],
+            CoreEvent::TaskFinished {
+                task: TaskKind::Execute | TaskKind::Undo,
+                ..
+            } => {
+                self.dirty = false;
+                return vec![];
+            }
+            CoreEvent::Issue(_) if self.is_busy_writing() => {
+                self.dirty = false;
+                return vec![];
+            }
+            _ => {}
+        }
         // The duplicate search has its own progress; it must not disturb the scan gauge.
         match &ev {
             CoreEvent::Progress {
@@ -958,6 +1187,26 @@ impl App {
             Bg::Notice(m) => {
                 self.say(m);
                 vec![]
+            }
+            Bg::History(runs) => {
+                self.history.set(runs);
+                vec![]
+            }
+            Bg::ExecFinished(outcome) => {
+                let lines = match outcome {
+                    ExecOutcome::Applied(r) => modal::apply_report(&r),
+                    ExecOutcome::Undone(r) => modal::undo_report(&r),
+                    ExecOutcome::Failed(e) => vec![modal::ReportLine {
+                        text: format!("Nothing more was changed: {e}"),
+                        bad: true,
+                    }],
+                };
+                self.modal = Some(Modal::Report(lines));
+                // The files on disk changed: what was found is stale, and so is the index.
+                self.dupes.reset();
+                let mut cmds = vec![Cmd::LoadHistory];
+                cmds.extend(self.start_scan());
+                cmds
             }
             Bg::Worker(r) => self.on_response(r),
         }

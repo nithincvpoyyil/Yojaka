@@ -1,5 +1,6 @@
 pub mod doctor;
 pub mod dupes;
+pub mod exec;
 pub mod export;
 pub mod fmt;
 pub mod info;

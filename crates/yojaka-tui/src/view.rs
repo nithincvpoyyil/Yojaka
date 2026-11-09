@@ -46,6 +46,25 @@ pub fn dupes_layout(body: Rect) -> DupesLayout {
     }
 }
 
+/// Layout of the History screen: the runs, then details of the selected one.
+pub struct HistoryLayout {
+    pub list: Rect,
+    pub detail: Rect,
+}
+
+pub fn history_layout(body: Rect) -> HistoryLayout {
+    let [list, detail] = Layout::vertical([Constraint::Min(3), Constraint::Length(6)]).areas(body);
+    HistoryLayout { list, detail }
+}
+
+/// Rows the run list shows at `w` × `h` (borders excluded).
+pub fn history_rows(w: u16, h: u16) -> u16 {
+    history_layout(body_area(Rect::new(0, 0, w, h)))
+        .list
+        .height
+        .saturating_sub(2)
+}
+
 /// Rows the group list shows at `w` × `h` (borders excluded).
 pub fn dupes_rows(w: u16, h: u16) -> u16 {
     dupes_layout(body_area(Rect::new(0, 0, w, h)))
@@ -131,6 +150,7 @@ pub fn render(app: &App, f: &mut Frame) {
         Screen::Dashboard => screens::dashboard::render(app, f, body),
         Screen::Browser => screens::browser::render(app, f, body),
         Screen::Duplicates => screens::duplicates::render(app, f, body),
+        Screen::History => screens::history::render(app, f, body),
         _ => screens::placeholder::render(app, f, body),
     }
     if app.show_help {
@@ -138,6 +158,9 @@ pub fn render(app: &App, f: &mut Frame) {
     }
     if app.confirm_flush {
         render_confirm(f, body);
+    }
+    if let Some(m) = &app.modal {
+        screens::modal::render(f, body, m);
     }
     if app.debug {
         render_debug(app, f, body);
@@ -251,7 +274,20 @@ fn footer_line(app: &App) -> Line<'static> {
             Span::styled(" clear", theme::footer()),
         ]);
     }
-    let hints: Vec<(&str, &str)> = if app.confirm_flush {
+    let hints: Vec<(&str, &str)> = if let Some(m) = &app.modal {
+        use crate::modal::Modal;
+        match m {
+            Modal::Running(_) => vec![("Ctrl-C", "stop after this file")],
+            Modal::Report(_) => vec![("any key", "close")],
+            Modal::Review(r) if r.needs_typing() => {
+                vec![
+                    ("Enter", "confirm (once the phrase matches)"),
+                    ("Esc", "cancel"),
+                ]
+            }
+            _ => vec![("y", "yes"), ("n", "cancel")],
+        }
+    } else if app.confirm_flush {
         vec![("y", "scan from scratch"), ("n", "cancel")]
     } else if app.tab_mode {
         vec![
@@ -274,9 +310,17 @@ fn footer_line(app: &App) -> Line<'static> {
                 ("?", "help"),
                 ("f", "find"),
                 ("Space", "mark"),
-                ("Enter", "keep this"),
-                ("Tab", "pane"),
+                ("Enter", "keep"),
                 ("p", "rule"),
+                ("a", "review"),
+                ("W", "write"),
+            ],
+            Screen::History => vec![
+                ("q", "quit"),
+                ("?", "help"),
+                ("j k", "move"),
+                ("u", "undo"),
+                ("W", "write"),
                 ("< >", "tabs"),
             ],
             Screen::Browser => vec![

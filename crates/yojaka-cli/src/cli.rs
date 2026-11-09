@@ -59,6 +59,9 @@ pub struct Cli {
     /// For tests and tooling: keep the saved data inside the scanned folder
     #[arg(long, global = true, hide = true)]
     pub local_index: bool,
+    /// For tests and tooling: use this folder as the Trash instead of the real one
+    #[arg(long, global = true, hide = true)]
+    pub trash_dir: Option<PathBuf>,
     #[arg(long, global = true, env = "YOJAKA_HOME", hide = true)]
     pub home: Option<PathBuf>,
     #[command(subcommand)]
@@ -163,27 +166,37 @@ pub enum Cmd {
         #[arg(long)]
         plan_out: Option<PathBuf>,
     },
-    /// Inspect plans (Iteration 5)
+    /// Inspect plans
     Plan {
         #[command(subcommand)]
         sub: PlanCmd,
     },
-    /// Execute a plan (Iteration 5)
+    /// Run a saved plan: moves the listed files to the Trash. Shows a dry run unless --write is given
     Apply {
         file: PathBuf,
+        /// Skip the y/n question for small plans (large plans still need the phrase typed)
         #[arg(long)]
         yes: bool,
+        /// Finish a plan that was started and interrupted
         #[arg(long)]
         resume: bool,
+        /// Delete for good instead of using the Trash. Cannot be undone; always asks for a typed phrase
+        #[arg(long)]
+        permanent: bool,
     },
-    /// Undo an applied plan (Iteration 5)
+    /// Put back the files a run moved to the Trash. Shows a preview unless --write is given
     Undo {
+        /// Run id (or the start of it) from `yojaka history`
         plan_id: Option<String>,
+        /// The most recent run
         #[arg(long)]
         last: bool,
     },
-    /// List executed plans (Iteration 5)
-    History,
+    /// List what has been run, newest first
+    History {
+        #[arg(long)]
+        json: bool,
+    },
     /// Check the environment and print paths
     Doctor {
         #[arg(long)]
@@ -209,10 +222,9 @@ impl Cmd {
             Cmd::Info { .. } | Cmd::Places { .. } | Cmd::Export { .. } => return None,
             Cmd::Dupes { .. } => return None,
             Cmd::Organize { .. } => ("organize", 6),
-            Cmd::Plan { .. } => ("plan", 5),
-            Cmd::Apply { .. } => ("apply", 5),
-            Cmd::Undo { .. } => ("undo", 5),
-            Cmd::History => ("history", 5),
+            Cmd::Plan { .. } | Cmd::Apply { .. } | Cmd::Undo { .. } | Cmd::History { .. } => {
+                return None;
+            }
             Cmd::Doctor { .. } => return None,
         })
     }

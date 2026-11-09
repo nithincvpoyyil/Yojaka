@@ -22,6 +22,7 @@ pub const HELP: &[(&str, &str)] = &[
         "R",
         "forget what is saved and scan from scratch (asks first)",
     ),
+    ("W", "write mode on (asks first) / off"),
     ("D", "debug overlay: frame time, fetch time"),
     ("", "File browser"),
     ("Tab", "switch between folders and files"),
@@ -35,18 +36,46 @@ pub const HELP: &[(&str, &str)] = &[
     ("/", "filter by name, camera or place (Esc clears)"),
     ("t", "show all / photos / videos"),
     ("s  S", "next sort column / reverse order"),
-    ("", "Duplicates (nothing is deleted from here)"),
-    (
-        "f",
-        "look for identical files (reads only files of equal size)",
-    ),
+    ("", "Duplicates (removing needs write mode)"),
+    ("f  c", "look for identical files / stop the search"),
     ("j k  ↓ ↑", "move in the list; Tab switches groups / copies"),
     ("Space", "mark / unmark the selected copy for removal"),
     ("Enter", "groups: open it; copies: keep only this copy"),
-    ("p", "next keep rule, applied to every group"),
-    ("x", "keep every copy in this group"),
-    ("c  Esc", "stop the search"),
+    (
+        "p  x",
+        "next keep rule for every group / keep all in this group",
+    ),
+    ("a", "review the marked copies, then move them to the Trash"),
+    ("", "History"),
+    ("j k  ↓ ↑", "move"),
+    (
+        "u",
+        "put back the files of the selected run (needs write mode)",
+    ),
 ];
+
+/// Keys while a question, plan review or progress box is open: only text, Enter, Esc, Backspace.
+pub fn translate_modal(key: KeyEvent) -> Option<Msg> {
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return (key.code == KeyCode::Char('c')).then_some(Msg::Interrupt);
+    }
+    if key
+        .modifiers
+        .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Esc => Some(Msg::Back),
+        KeyCode::Enter => Some(Msg::Enter),
+        KeyCode::Backspace => Some(Msg::Backspace),
+        KeyCode::Char(c) => Some(Msg::Char(c)),
+        _ => None,
+    }
+}
 
 fn is_plain(mods: KeyModifiers) -> bool {
     !mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
@@ -123,6 +152,9 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('f') => Msg::FindDupes,
         KeyCode::Char('p') => Msg::NextRule,
         KeyCode::Char('x') => Msg::KeepAllInGroup,
+        KeyCode::Char('W') => Msg::ToggleWrite,
+        KeyCode::Char('a') => Msg::ReviewPlan,
+        KeyCode::Char('u') => Msg::UndoRun,
         _ => return None,
     })
 }

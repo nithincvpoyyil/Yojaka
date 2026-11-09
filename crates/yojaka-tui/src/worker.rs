@@ -84,8 +84,20 @@ pub enum Bg {
     Worker(Response),
     ScanFinished(Result<yojaka_core::scan::ScanSummary, String>),
     DupesFinished(DupOutcome),
+    /// A reviewed plan finished (or was stopped), or an undo did.
+    ExecFinished(ExecOutcome),
+    /// The runs listed by the journals.
+    History(Vec<yojaka_core::exec::RunSummary>),
     /// A short message for the footer (e.g. the OS could not open a file).
     Notice(String),
+}
+
+/// How applying a plan, or undoing a run, ended.
+#[derive(Debug)]
+pub enum ExecOutcome {
+    Applied(Box<yojaka_core::exec::ApplyReport>),
+    Undone(Box<yojaka_core::exec::UndoReport>),
+    Failed(String),
 }
 
 /// How a duplicate search ended.
