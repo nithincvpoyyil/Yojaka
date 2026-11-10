@@ -150,8 +150,8 @@ pub fn render(app: &App, f: &mut Frame) {
         Screen::Dashboard => screens::dashboard::render(app, f, body),
         Screen::Browser => screens::browser::render(app, f, body),
         Screen::Duplicates => screens::duplicates::render(app, f, body),
+        Screen::Organize => screens::organize::render(app, f, body),
         Screen::History => screens::history::render(app, f, body),
-        _ => screens::placeholder::render(app, f, body),
     }
     if app.show_help {
         screens::help::render(f, body, app.screen);
@@ -314,6 +314,19 @@ fn footer_line(app: &App) -> Line<'static> {
                 ("p", "rule"),
                 ("a", "review"),
                 ("W", "write"),
+            ],
+            Screen::Organize if app.organize.editing.is_some() => {
+                vec![("Enter", "keep"), ("Esc", "undo the edit")]
+            }
+            Screen::Organize => vec![
+                ("q", "quit"),
+                ("?", "help"),
+                ("e", "pattern"),
+                ("d", "folder"),
+                ("p", "preset"),
+                ("m", "copy/move"),
+                ("Enter", "plan"),
+                ("a", "review"),
             ],
             Screen::History => vec![
                 ("q", "quit"),

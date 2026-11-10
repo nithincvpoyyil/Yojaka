@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::hash::ContentHash;
 use crate::plan::{OpMode, Plan, PlanKind, opt_path_serde, path_serde};
 use crate::{AppPaths, Result, YojakaError};
 
@@ -43,6 +44,9 @@ pub struct Entry {
         with = "opt_path_serde"
     )]
     pub trashed_to: Option<PathBuf>,
+    /// Copies and cross-volume moves: the content hash that was verified. Undo checks it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<ContentHash>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +155,18 @@ impl Journal {
         detail: Option<String>,
         trashed_to: Option<PathBuf>,
     ) -> Result<()> {
+        self.append_hashed(run, op, state, detail, trashed_to, None)
+    }
+
+    pub fn append_hashed(
+        &mut self,
+        run: Run,
+        op: u64,
+        state: State,
+        detail: Option<String>,
+        trashed_to: Option<PathBuf>,
+        hash: Option<ContentHash>,
+    ) -> Result<()> {
         self.write(&Line::Entry(Entry {
             ts: now(),
             run,
@@ -158,6 +174,7 @@ impl Journal {
             state,
             detail,
             trashed_to,
+            hash,
         }))
     }
 }

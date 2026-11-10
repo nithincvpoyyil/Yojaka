@@ -48,16 +48,6 @@ fn doctor_json_uses_home_override() {
 }
 
 #[test]
-fn stub_command_exits_1_and_names_iteration() {
-    let tmp = tempfile::tempdir().unwrap();
-    yojaka(tmp.path())
-        .args(["organize", "."])
-        .assert()
-        .code(1)
-        .stderr(predicate::str::contains("Iteration 6"));
-}
-
-#[test]
 fn bad_usage_exits_2() {
     let tmp = tempfile::tempdir().unwrap();
     yojaka(tmp.path()).arg("--nope").assert().code(2);
@@ -407,4 +397,99 @@ fn a_permanent_delete_needs_its_phrase_even_with_yes() {
         .assert()
         .success()
         .stdout(predicate::str::contains("move to the Trash"));
+}
+
+#[test]
+fn organize_plans_then_apply_copies_and_undo_removes_the_copies() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let before = tree_listing(&tree);
+    let dest = tmp.path().join("sorted");
+    let plan = tmp.path().join("organize.json");
+
+    // A bad template is a usage error and plans nothing.
+    yojaka(tmp.path())
+        .args(["organize", "--template", "{year}/{nope}/{name}"])
+        .arg(&tree)
+        .arg(&dest)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("unknown placeholder"));
+
+    yojaka(tmp.path())
+        .args(["organize", "--preset", "date", "--plan-out"])
+        .arg(&plan)
+        .arg(&tree)
+        .arg(&dest)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing has been changed"))
+        .stdout(predicate::str::contains("copy (originals stay)"));
+    assert!(!dest.exists());
+    assert_eq!(tree_listing(&tree), before);
+
+    // Never overwrites the plan file.
+    yojaka(tmp.path())
+        .args(["organize", "--plan-out"])
+        .arg(&plan)
+        .arg(&tree)
+        .arg(&dest)
+        .assert()
+        .code(2);
+
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+    assert_eq!(saved["kind"], "organize");
+    let copies = saved["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["op"] == "copy")
+        .count();
+    assert!(copies > 0);
+
+    // Dry run first.
+    yojaka(tmp.path())
+        .arg("apply")
+        .arg(&plan)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Dry run"));
+    assert!(!dest.exists());
+
+    let phrase = if copies >= 1000 {
+        format!("copy {copies} files")
+    } else {
+        "y".into()
+    };
+    yojaka(tmp.path())
+        .args(["--write", "apply"])
+        .arg(&plan)
+        .write_stdin(format!("{phrase}\n"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("{copies} copied")));
+    assert_eq!(tree_listing(&tree), before, "originals untouched");
+    assert_eq!(tree_listing(&dest).len(), copies);
+
+    yojaka(tmp.path())
+        .args(["--write", "undo", "--last"])
+        .assert()
+        .success();
+    assert!(!dest.exists() || tree_listing(&dest).is_empty());
+    assert_eq!(tree_listing(&tree), before);
+}
+
+#[test]
+fn organize_into_a_protected_folder_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    yojaka(tmp.path())
+        .arg("organize")
+        .arg(&tree)
+        .arg("/System/yojaka")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("protected"));
 }

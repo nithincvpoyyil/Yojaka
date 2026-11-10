@@ -46,6 +46,12 @@ pub const HELP: &[(&str, &str)] = &[
         "next keep rule for every group / keep all in this group",
     ),
     ("a", "review the marked copies, then move them to the Trash"),
+    ("", "Organize (writes only after you review)"),
+    ("e  d", "edit the folder pattern / the destination folder"),
+    ("p", "next ready-made pattern"),
+    ("m  i", "copy or move / infer places for files without GPS"),
+    ("Enter", "work out the plan (changes nothing)"),
+    ("a", "review the plan, then run it (needs write mode)"),
     ("", "History"),
     ("j k  ↓ ↑", "move"),
     (
@@ -155,6 +161,10 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('W') => Msg::ToggleWrite,
         KeyCode::Char('a') => Msg::ReviewPlan,
         KeyCode::Char('u') => Msg::UndoRun,
+        KeyCode::Char('e') => Msg::EditTemplate,
+        KeyCode::Char('d') => Msg::EditDest,
+        KeyCode::Char('m') => Msg::ToggleTransfer,
+        KeyCode::Char('i') => Msg::ToggleInfer,
         _ => return None,
     })
 }

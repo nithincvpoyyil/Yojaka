@@ -75,7 +75,10 @@ pub fn summarize(paths: &AppPaths, plan_id: Uuid) -> Result<RunSummary> {
             .ops
             .iter()
             .filter_map(|o| match o {
-                Op::Trash { id, expect, .. } | Op::Delete { id, expect, .. }
+                Op::Trash { id, expect, .. }
+                | Op::Delete { id, expect, .. }
+                | Op::Move { id, expect, .. }
+                | Op::Copy { id, expect, .. }
                     if done_ops.contains(id) && !undone_ops.contains(id) =>
                 {
                     Some(expect.size)

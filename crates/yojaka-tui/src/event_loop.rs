@@ -36,6 +36,7 @@ struct Runtime {
     scan: Option<(CancelToken, JoinHandle<()>)>,
     dupes: Option<(CancelToken, JoinHandle<()>)>,
     exec: Option<(CancelToken, JoinHandle<()>)>,
+    plan: Option<(CancelToken, JoinHandle<()>)>,
     trasher: Arc<dyn Trasher>,
 }
 
@@ -78,6 +79,12 @@ impl Runtime {
                     }
                 }
                 Cmd::LoadHistory => self.load_history(),
+                Cmd::PlanOrganize(req) => self.start_plan(*req),
+                Cmd::CancelPlan => {
+                    if let Some((token, _)) = &self.plan {
+                        token.cancel();
+                    }
+                }
             }
         }
     }
@@ -279,6 +286,59 @@ impl Runtime {
         }
     }
 
+    /// Works out an organize plan on its own thread. Reads the index; changes no file.
+    fn start_plan(&mut self, req: crate::organize::PlanRequest) {
+        self.reap_plan();
+        if self.plan.is_some() {
+            return;
+        }
+        let cancel = CancelToken::new();
+        let (engine, sink, tx, token) = (
+            self.engine.clone(),
+            self.sink.clone(),
+            self.bg_tx.clone(),
+            cancel.clone(),
+        );
+        let (root, local) = (self.root.clone(), self.local_index);
+        let spawned = std::thread::Builder::new()
+            .name("plan".into())
+            .spawn(move || {
+                let mut location = engine.config.location.clone();
+                location.infer |= req.infer;
+                let opts = yojaka_core::organize::OrganizeOptions {
+                    dest: req.dest,
+                    template: req.template,
+                    transfer: req.transfer,
+                    infer_location: req.infer,
+                    location,
+                };
+                let result = engine
+                    .organize(&root, local, &opts, &sink, &token)
+                    .map(Box::new)
+                    .map_err(|e| match e {
+                        yojaka_core::YojakaError::Cancelled => "Stopped".to_string(),
+                        other => other.to_string(),
+                    });
+                let _ = tx.send(Bg::Planned(result));
+            });
+        match spawned {
+            Ok(h) => self.plan = Some((cancel, h)),
+            Err(e) => {
+                let _ = self
+                    .bg_tx
+                    .send(Bg::Planned(Err(format!("cannot start planning: {e}"))));
+            }
+        }
+    }
+
+    fn reap_plan(&mut self) {
+        if self.plan.as_ref().is_some_and(|(_, h)| h.is_finished())
+            && let Some((_, h)) = self.plan.take()
+        {
+            let _ = h.join();
+        }
+    }
+
     fn load_history(&self) {
         let (engine, tx) = (self.engine.clone(), self.bg_tx.clone());
         let _ = std::thread::Builder::new()
@@ -325,6 +385,10 @@ impl Runtime {
             let _ = h.join();
         }
         if let Some((token, h)) = self.dupes.take() {
+            token.cancel();
+            let _ = h.join();
+        }
+        if let Some((token, h)) = self.plan.take() {
             token.cancel();
             let _ = h.join();
         }
@@ -376,6 +440,7 @@ pub fn run(
         scan: None,
         dupes: None,
         exec: None,
+        plan: None,
         trasher: match trash_dir {
             Some(dir) => Arc::new(DirTrash(dir)),
             None => Arc::new(SystemTrash),
@@ -405,8 +470,10 @@ pub fn run(
         match event::poll(Duration::from_millis(16)) {
             Ok(true) => match event::read() {
                 Ok(Event::Key(k)) => {
-                    let editing =
-                        app.screen == crate::app::Screen::Browser && app.browser.editing_filter;
+                    let editing = (app.screen == crate::app::Screen::Browser
+                        && app.browser.editing_filter)
+                        || (app.screen == crate::app::Screen::Organize
+                            && app.organize.editing.is_some());
                     if app.modal.is_some() {
                         msgs.extend(keymap::translate_modal(k));
                     } else {
@@ -430,6 +497,9 @@ pub fn run(
             }
             if matches!(bg, Bg::ExecFinished(_)) {
                 rt.reap_exec();
+            }
+            if matches!(bg, Bg::Planned(_)) {
+                rt.reap_plan();
             }
             msgs.push(Msg::Bg(bg));
         }

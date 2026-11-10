@@ -44,7 +44,15 @@ pub struct ApplyReport {
     pub trashed: usize,
     /// Files permanently deleted by this run.
     pub deleted: usize,
-    /// Bytes freed by this run.
+    /// Organize: files moved to their new place (renamed, or copied across volumes and removed).
+    pub moved: usize,
+    /// Organize: copies made (the originals are untouched).
+    pub copied: usize,
+    /// Organize: folders created.
+    pub created: usize,
+    /// Organize: files left where they were because the same file was already at the destination.
+    pub already_there: usize,
+    /// Bytes freed (dedupe) or transferred (organize) by this run.
     pub bytes: u64,
     /// Ops finished by an earlier run (resume).
     pub already_done: usize,
@@ -62,8 +70,8 @@ impl ApplyReport {
 /// Checks a plan without touching any file: kind, paths inside the root, nothing protected, and
 /// no file that the plan also marks as the copy to keep.
 pub fn check_plan(plan: &Plan, opts: ApplyOptions) -> Result<()> {
-    if plan.kind != PlanKind::Dedupe {
-        return Err(YojakaError::NotYet("running organize plans", "Iteration 6"));
+    if plan.kind == PlanKind::Organize {
+        return super::organize_run::check(plan, opts);
     }
     if (plan.mode == OpMode::DeletePermanent
         || plan.ops.iter().any(|o| matches!(o, Op::Delete { .. })))
@@ -99,7 +107,9 @@ pub fn check_plan(plan: &Plan, opts: ApplyOptions) -> Result<()> {
             }
             Op::Skip { .. } => {}
             Op::Move { .. } | Op::Copy { .. } | Op::MkDir { .. } => {
-                return Err(YojakaError::NotYet("moving and copying", "Iteration 6"));
+                return Err(YojakaError::Internal(
+                    "a duplicate-removal plan cannot move or copy files".into(),
+                ));
             }
         }
     }
@@ -140,6 +150,28 @@ pub fn apply(
     } else {
         Journal::create(paths, plan)?
     };
+
+    if plan.kind == PlanKind::Organize {
+        let mut report = ApplyReport {
+            plan_id: Some(plan.id),
+            ..Default::default()
+        };
+        sink.important(CoreEvent::TaskStarted {
+            task: TaskKind::Execute,
+            label: "Applying plan".into(),
+        });
+        let outcome = super::organize_run::run(plan, &mut jr, &prior, sink, cancel, &mut report);
+        sink.important(CoreEvent::TaskFinished {
+            task: TaskKind::Execute,
+            outcome: match &outcome {
+                Err(e) => TaskOutcome::Failed(e.to_string()),
+                Ok(()) if report.cancelled => TaskOutcome::Cancelled,
+                Ok(()) if report.is_clean() => TaskOutcome::Complete,
+                Ok(()) => TaskOutcome::Partial,
+            },
+        });
+        return outcome.map(|()| report);
+    }
 
     let root = plan
         .root
@@ -508,7 +540,11 @@ impl Runner<'_> {
 }
 
 /// Size, modification time and (when known) content must still match the fingerprint.
-fn check_file(path: &Path, expect: &Fingerprint, what: &str) -> std::result::Result<(), String> {
+pub(super) fn check_file(
+    path: &Path,
+    expect: &Fingerprint,
+    what: &str,
+) -> std::result::Result<(), String> {
     let md = std::fs::symlink_metadata(path).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => format!("{what} is missing"),
         _ => format!("{what} cannot be read ({e})"),
@@ -544,4 +580,19 @@ pub fn free_bytes(dir: &Path) -> Option<u64> {
     let line = text.lines().nth(1)?;
     let kib: u64 = line.split_whitespace().nth(3)?.parse().ok()?;
     Some(kib * 1024)
+}
+
+/// `1.5 GB`-style size for messages.
+pub(super) fn human(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let (mut v, mut i) = (n as f64, 0);
+    while v >= 1000.0 && i < UNITS.len() - 1 {
+        v /= 1000.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
 }

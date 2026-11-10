@@ -17,6 +17,8 @@ pub fn lines_for(screen: Screen) -> Vec<(&'static str, &'static str)> {
                     screen == Screen::Browser
                 } else if d.starts_with("Duplicates") {
                     screen == Screen::Duplicates
+                } else if d.starts_with("Organize") {
+                    screen == Screen::Organize
                 } else if d.starts_with("History") {
                     screen == Screen::History
                 } else {

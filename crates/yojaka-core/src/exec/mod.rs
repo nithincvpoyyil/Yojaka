@@ -3,6 +3,8 @@
 pub mod apply;
 pub mod history;
 pub mod journal;
+mod organize_run;
+pub mod transfer;
 pub mod trash;
 pub mod undo;
 

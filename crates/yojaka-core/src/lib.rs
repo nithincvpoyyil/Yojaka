@@ -195,6 +195,40 @@ impl Engine {
         )
     }
 
+    /// Plans how to arrange the files of an already scanned `root` under `opts.dest`. Reads the
+    /// index and the destination's names; changes nothing. Refuses protected folders.
+    pub fn organize(
+        &self,
+        root: &std::path::Path,
+        local: bool,
+        opts: &organize::OrganizeOptions,
+        sink: &EventSink,
+        cancel: &CancelToken,
+    ) -> Result<organize::OrganizePlan> {
+        let protected = Self::protected();
+        let root = protected.check_root(root)?;
+        // The destination may not exist yet: judge its nearest existing folder.
+        let existing = opts
+            .dest
+            .ancestors()
+            .find(|a| a.exists())
+            .unwrap_or(&opts.dest);
+        let canon = existing
+            .canonicalize()
+            .map_err(|e| YojakaError::io(existing, e))?;
+        if let Some(reason) = protected.reason(&canon) {
+            return Err(YojakaError::Protected {
+                path: opts.dest.clone(),
+                reason,
+            });
+        }
+        let index = self.index_path(&root, local);
+        if !index.is_file() {
+            return Err(YojakaError::NoIndex(root));
+        }
+        organize::plan(&index, &root, opts, sink, cancel)
+    }
+
     /// A read-only handle for browsing the index of an already scanned `root`.
     pub fn browser(&self, root: &std::path::Path, local: bool) -> Result<browse::Browser> {
         let root = Self::protected().check_root(root)?;

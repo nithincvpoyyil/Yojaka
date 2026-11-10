@@ -4,7 +4,7 @@ pub mod exec;
 pub mod export;
 pub mod fmt;
 pub mod info;
+pub mod organize;
 pub mod places;
 pub mod scan;
 pub mod stats;
-pub mod stub;

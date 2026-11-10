@@ -192,6 +192,29 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
             cmd::exec::undo(&engine, plan_id.as_deref(), *last, cli.write)
         }
         Some(Cmd::History { json }) => cmd::exec::history(&engine, *json),
-        Some(other) => Ok(cmd::stub::not_yet(other)),
+        Some(Cmd::Organize {
+            path,
+            dest,
+            template,
+            preset,
+            copy: _,
+            r#move,
+            infer_location,
+            plan_out,
+            full_tree,
+        }) => cmd::organize::run(
+            &engine,
+            cmd::organize::Args {
+                path: Some(path.as_path()),
+                dest,
+                template: template.as_deref(),
+                preset: *preset,
+                r#move: *r#move,
+                infer_location: *infer_location,
+                plan_out: plan_out.as_deref(),
+                full_tree: *full_tree,
+                local_index: cli.local_index,
+            },
+        ),
     }
 }

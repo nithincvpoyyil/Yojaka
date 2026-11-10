@@ -24,6 +24,8 @@ zstd.workspace = true
 kamadak-exif.workspace = true
 imagesize.workspace = true
 objc2-foundation = { version = "0.3.2", features = ["NSFileManager", "NSURL", "NSError", "NSString", "NSPathUtilities"] }
+unicode-normalization.workspace = true
+reflink-copy = "0.1.32"
 
 [dev-dependencies]
 tempfile.workspace = true

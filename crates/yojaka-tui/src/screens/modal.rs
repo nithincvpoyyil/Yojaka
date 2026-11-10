@@ -113,15 +113,32 @@ fn running(f: &mut Frame, body: Rect, r: &RunView) {
 
 fn review(f: &mut Frame, body: Rect, r: &Review) {
     let p = &r.plan;
-    let mut v = vec![Line::styled(
-        format!(
-            "Move {} files ({}) to the Trash, keeping one copy of each of {} groups.",
-            fmt::thousands(p.ops.len() as u64),
+    use yojaka_core::plan::OpMode;
+    let n = fmt::thousands(p.file_ops() as u64);
+    let head = match p.mode {
+        OpMode::Copy => format!(
+            "Copy {n} files ({}) to {}. The originals stay.",
+            fmt::bytes(p.summary.bytes),
+            p.dest
+                .as_deref()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default()
+        ),
+        OpMode::Move => format!(
+            "Move {n} files ({}) to {}.",
+            fmt::bytes(p.summary.bytes),
+            p.dest
+                .as_deref()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default()
+        ),
+        _ => format!(
+            "Move {n} files ({}) to the Trash, keeping one copy of each of {} groups.",
             fmt::bytes(p.summary.bytes),
             fmt::thousands(p.summary.groups as u64)
         ),
-        theme::title(),
-    )];
+    };
+    let mut v = vec![Line::styled(head, theme::title())];
     if p.summary.live_pairs > 0 {
         v.push(Line::raw(format!(
             "{} Live Photo pairs: both halves go together.",
@@ -134,14 +151,22 @@ fn review(f: &mut Frame, body: Rect, r: &Review) {
             theme::error(),
         ));
     }
-    v.push(Line::styled("Files removed, by folder:", theme::dim()));
+    v.push(Line::styled(
+        if p.dest.is_some() {
+            "Files by new folder:"
+        } else {
+            "Files removed, by folder:"
+        },
+        theme::dim(),
+    ));
     // Leave room for the frame, the lines above and the confirmation below.
     let room = (body.height as usize).saturating_sub(v.len() + 7).max(1);
     let shown = r.glimpse.len().min(room);
     let width = 84.min(body.width) as usize;
     for l in r.glimpse.iter().take(shown) {
+        let sign = if p.dest.is_some() { "+" } else { "−" };
         let tail = format!(
-            "  −{} files ({})",
+            "  {sign}{} files ({})",
             fmt::thousands(l.files),
             fmt::bytes(l.bytes)
         );
@@ -173,7 +198,11 @@ fn review(f: &mut Frame, body: Rect, r: &Review) {
         v.push(Line::styled(format!("> {}▏", r.typed), theme::accent()));
     } else {
         v.push(Line::styled(
-            "y / Enter  move to the Trash      n / Esc  cancel",
+            if p.dest.is_some() {
+                "y / Enter  go ahead      n / Esc  cancel"
+            } else {
+                "y / Enter  move to the Trash      n / Esc  cancel"
+            },
             theme::accent(),
         ));
     }

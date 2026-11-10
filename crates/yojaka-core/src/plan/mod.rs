@@ -98,6 +98,12 @@ pub enum Op {
         #[serde(with = "path_serde")]
         dst: PathBuf,
         expect: Fingerprint,
+        /// The destination folder came from a place borrowed from another file (marked `≈`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        inferred: bool,
+        /// Both halves of a Live Photo share this number: they are acted on together or not at all.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pair: Option<u32>,
     },
     Copy {
         id: u64,
@@ -106,6 +112,11 @@ pub enum Op {
         #[serde(with = "path_serde")]
         dst: PathBuf,
         expect: Fingerprint,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        inferred: bool,
+        /// Both halves of a Live Photo share this number: they are acted on together or not at all.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pair: Option<u32>,
     },
     Trash {
         id: u64,
@@ -157,6 +168,21 @@ pub struct PlanSummary {
     pub skipped: usize,
     pub groups: usize,
     pub live_pairs: usize,
+    /// Organize plans: moves whose destination is on another volume (copy, verify, then remove).
+    #[serde(default)]
+    pub cross_volume: usize,
+    /// Organize plans: files whose folder uses an inferred place.
+    #[serde(default)]
+    pub inferred: usize,
+    /// Organize plans: files placed in `_undated`.
+    #[serde(default)]
+    pub undated: usize,
+    /// Organize plans: files placed in the "no location" folder.
+    #[serde(default)]
+    pub no_location: usize,
+    /// Organize plans: files dated by their modification time because they have no recorded date.
+    #[serde(default)]
+    pub date_fallback: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,7 +190,15 @@ pub struct Plan {
     pub id: Uuid,
     pub created_at: i64,
     #[serde(with = "path_serde")]
+    /// Where the files are now (the scanned folder).
     pub root: PathBuf,
+    /// Organize plans: the folder the files go to.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "opt_path_serde"
+    )]
+    pub dest: Option<PathBuf>,
     pub kind: PlanKind,
     pub mode: OpMode,
     pub ops: Vec<Op>,
@@ -173,11 +207,12 @@ pub struct Plan {
 }
 
 impl Plan {
-    fn empty(root: &Path, kind: PlanKind, mode: OpMode) -> Self {
+    pub(crate) fn empty(root: &Path, kind: PlanKind, mode: OpMode) -> Self {
         Self {
             id: Uuid::now_v7(),
             created_at: time::OffsetDateTime::now_utc().unix_timestamp(),
             root: root.to_path_buf(),
+            dest: None,
             kind,
             mode,
             ops: Vec::new(),
@@ -282,19 +317,53 @@ impl Plan {
         self.mode == OpMode::DeletePermanent
     }
 
+    /// Copies leave the originals alone, so only a very large copy plan asks for typing.
+    pub const LARGE_COPY_FILES: usize = 1000;
+
+    /// Files the plan acts on (folders to create and skipped files do not count).
+    pub fn file_ops(&self) -> usize {
+        self.ops
+            .iter()
+            .filter(|o| {
+                matches!(
+                    o,
+                    Op::Trash { .. } | Op::Delete { .. } | Op::Move { .. } | Op::Copy { .. }
+                )
+            })
+            .count()
+    }
+
     pub fn needs_typed_confirmation(&self) -> bool {
-        self.is_permanent() || self.ops.len() >= Self::LARGE_PLAN_FILES
+        let limit = if self.mode == OpMode::Copy {
+            Self::LARGE_COPY_FILES
+        } else {
+            Self::LARGE_PLAN_FILES
+        };
+        self.is_permanent() || self.file_ops() >= limit
     }
 
     /// The words the user types to confirm, e.g. `trash 120 files` / `delete 4 files forever`.
     pub fn confirm_phrase(&self) -> String {
-        let n = self.ops.len();
+        let n = self.file_ops();
         let files = if n == 1 { "file" } else { "files" };
-        if self.is_permanent() {
-            format!("delete {n} {files} forever")
-        } else {
-            format!("trash {n} {files}")
+        match self.mode {
+            OpMode::DeletePermanent => format!("delete {n} {files} forever"),
+            OpMode::Move => format!("move {n} {files}"),
+            OpMode::Copy => format!("copy {n} {files}"),
+            OpMode::Trash => format!("trash {n} {files}"),
         }
+    }
+
+    /// Organize dry run: where the files will land, by folder (relative to the destination).
+    pub fn destination_tree(&self) -> tree::DirTree {
+        let mut t = tree::DirTree::new();
+        let dest = self.dest.as_deref().unwrap_or(Path::new(""));
+        for op in &self.ops {
+            if let Op::Move { dst, expect, .. } | Op::Copy { dst, expect, .. } = op {
+                t.add(dst.strip_prefix(dest).unwrap_or(dst), expect.size);
+            }
+        }
+        t
     }
 
     /// A dry-run view: the files the plan removes, grouped by folder (relative to the plan root).

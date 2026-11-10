@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use yojaka_core::exec::{self, ApplyOptions, DirTrash, SystemTrash, Trasher, history as hist};
-use yojaka_core::plan::Plan;
+use yojaka_core::plan::{OpMode, Plan};
 use yojaka_core::{CancelToken, CoreEvent, Engine, EventSink, TaskKind, YojakaError};
 
 use super::fmt::bytes;
@@ -28,31 +28,83 @@ fn trasher(dir: Option<&Path>) -> Box<dyn Trasher> {
     }
 }
 
-fn print_summary(plan: &Plan, full_tree: bool) {
-    let verb = if plan.is_permanent() {
-        "delete for good"
-    } else {
-        "move to the Trash"
-    };
+pub(crate) fn print_summary(plan: &Plan, full_tree: bool) {
     println!("Plan {}", plan.id);
-    println!("  folder:  {}", plan.root.display());
-    println!(
-        "  action:  {verb} {} files ({}) from {} duplicate groups",
-        plan.ops.len(),
-        bytes(plan.summary.bytes),
-        plan.summary.groups
-    );
-    if plan.summary.live_pairs > 0 {
-        println!(
-            "  Live Photos: {} pairs (both halves go together)",
-            plan.summary.live_pairs
-        );
+    println!("  from:    {}", plan.root.display());
+    if let Some(d) = &plan.dest {
+        println!("  to:      {}", d.display());
+    }
+    let n = plan.file_ops();
+    match plan.mode {
+        OpMode::Copy | OpMode::Move => {
+            let verb = if plan.mode == OpMode::Copy {
+                "copy (originals stay)"
+            } else {
+                "move"
+            };
+            println!(
+                "  action:  {verb} {n} files ({})",
+                bytes(plan.summary.bytes)
+            );
+            if plan.summary.live_pairs > 0 {
+                println!(
+                    "  Live Photos: {} pairs (both halves go to the same folder)",
+                    plan.summary.live_pairs
+                );
+            }
+            let s = &plan.summary;
+            if s.skipped > 0 {
+                println!(
+                    "  left alone: {} (already in place, or already at the destination)",
+                    s.skipped
+                );
+            }
+            if s.undated > 0 {
+                println!("  {} files have no date and go to _undated", s.undated);
+            }
+            if s.no_location > 0 {
+                println!("  {} files have no location", s.no_location);
+            }
+            if s.inferred > 0 {
+                println!("  {} files use an inferred place (≈)", s.inferred);
+            }
+        }
+        _ => {
+            let verb = if plan.is_permanent() {
+                "delete for good"
+            } else {
+                "move to the Trash"
+            };
+            println!(
+                "  action:  {verb} {n} files ({}) from {} duplicate groups",
+                bytes(plan.summary.bytes),
+                plan.summary.groups
+            );
+            if plan.summary.live_pairs > 0 {
+                println!(
+                    "  Live Photos: {} pairs (both halves go together)",
+                    plan.summary.live_pairs
+                );
+            }
+        }
     }
     for w in &plan.warnings {
         println!("  warning: {}", w.message);
     }
-    let tree = plan.removal_tree();
-    println!("  files removed, by folder:");
+    let organize = plan.dest.is_some();
+    let tree = if organize {
+        plan.destination_tree()
+    } else {
+        plan.removal_tree()
+    };
+    println!(
+        "  {}",
+        if organize {
+            "files by new folder:"
+        } else {
+            "files removed, by folder:"
+        }
+    );
     let lines = if full_tree {
         tree.glimpse(usize::MAX, usize::MAX)
     } else {
@@ -60,9 +112,10 @@ fn print_summary(plan: &Plan, full_tree: bool) {
     };
     for l in lines {
         println!(
-            "    {}{}  −{} files ({})",
+            "    {}{}  {}{} files ({})",
             "  ".repeat(l.depth),
             l.label,
+            if organize { "+" } else { "−" },
             l.files,
             bytes(l.bytes)
         );
@@ -171,16 +224,29 @@ pub fn apply(engine: &Engine, a: &ApplyArgs<'_>) -> anyhow::Result<Exit> {
         }
     };
 
-    let what = if plan.is_permanent() {
-        "deleted"
+    if plan.dest.is_some() {
+        println!(
+            "{} files moved, {} copied, {} folders created ({}).",
+            report.moved,
+            report.copied,
+            report.created,
+            bytes(report.bytes)
+        );
+        if report.already_there > 0 {
+            println!("{} were already in place.", report.already_there);
+        }
     } else {
-        "moved to the Trash"
-    };
-    println!(
-        "{} files {what} ({} freed).",
-        report.trashed + report.deleted,
-        bytes(report.bytes)
-    );
+        let what = if plan.is_permanent() {
+            "deleted"
+        } else {
+            "moved to the Trash"
+        };
+        println!(
+            "{} files {what} ({} freed).",
+            report.trashed + report.deleted,
+            bytes(report.bytes)
+        );
+    }
     if report.already_done > 0 {
         println!(
             "{} were already done by an earlier run.",
@@ -199,7 +265,7 @@ pub fn apply(engine: &Engine, a: &ApplyArgs<'_>) -> anyhow::Result<Exit> {
             a.file.display()
         );
     } else if report.deleted == 0 {
-        println!("Put them back with: yojaka undo {} --write", plan.id);
+        println!("Undo it with: yojaka undo {} --write", plan.id);
     }
     Ok(if report.is_clean() {
         Exit::Ok
@@ -209,9 +275,14 @@ pub fn apply(engine: &Engine, a: &ApplyArgs<'_>) -> anyhow::Result<Exit> {
 }
 
 fn phrase_question(plan: &Plan) -> String {
+    let what = match plan.mode {
+        OpMode::Copy => "Copy",
+        OpMode::Move => "Move",
+        _ => "Move to the Trash:",
+    };
     format!(
-        "Move {} files ({}) to the Trash?",
-        plan.ops.len(),
+        "{what} {} files ({})?",
+        plan.file_ops(),
         bytes(plan.summary.bytes)
     )
 }

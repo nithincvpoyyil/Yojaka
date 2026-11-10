@@ -4,4 +4,4 @@ pub mod duplicates;
 pub mod help;
 pub mod history;
 pub mod modal;
-pub mod placeholder;
+pub mod organize;

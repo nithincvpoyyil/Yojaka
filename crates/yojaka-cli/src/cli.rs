@@ -69,6 +69,26 @@ pub struct Cli {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum PresetArg {
+    Date,
+    Place,
+    PlaceDate,
+    KindDate,
+}
+
+impl PresetArg {
+    pub fn template(self) -> &'static str {
+        let i = match self {
+            PresetArg::Date => 0,
+            PresetArg::Place => 1,
+            PresetArg::PlaceDate => 2,
+            PresetArg::KindDate => 3,
+        };
+        yojaka_core::organize::PRESETS[i].1
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum KindArg {
     Image,
     Video,
@@ -151,20 +171,37 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Organize into a folder template (Iteration 6)
+    /// Plan how to arrange the scanned files into folders by a template. Nothing is changed:
+    /// save the plan with --plan-out, then run it with `yojaka --write apply`
     Organize {
-        path: Option<PathBuf>,
-        dest: Option<PathBuf>,
-        #[arg(long)]
+        /// Scanned folder to read from (`.` for the current folder)
+        path: PathBuf,
+        /// Folder the files go to (created if needed)
+        dest: PathBuf,
+        /// Folder pattern, e.g. `{year}/{month:02}/{name}` (default from the config file).
+        /// Placeholders: year month day camera make model format ext name stem parent kind
+        /// country country_code state district city
+        #[arg(long, conflicts_with = "preset")]
         template: Option<String>,
-        #[arg(long)]
+        /// A ready-made pattern
+        #[arg(long, value_enum)]
+        preset: Option<PresetArg>,
+        /// Copy the files (originals stay). This is the default
+        #[arg(long, conflicts_with = "move")]
         copy: bool,
+        /// Move the files instead of copying them
         #[arg(long = "move")]
         r#move: bool,
+        /// Give files without GPS the place of a geotagged file of the same camera taken within
+        /// two hours; marked as inferred in the plan
         #[arg(long)]
         infer_location: bool,
+        /// Save the plan to this new file (an existing file is never overwritten)
         #[arg(long)]
         plan_out: Option<PathBuf>,
+        /// Print every folder instead of the short overview
+        #[arg(long)]
+        full_tree: bool,
     },
     /// Inspect plans
     Plan {
@@ -212,20 +249,4 @@ pub enum PlanCmd {
         #[arg(long)]
         full_tree: bool,
     },
-}
-
-impl Cmd {
-    /// (command name, iteration that implements it) for stubbed commands.
-    pub fn stub_info(&self) -> Option<(&'static str, u8)> {
-        Some(match self {
-            Cmd::Scan { .. } | Cmd::Stats { .. } => return None,
-            Cmd::Info { .. } | Cmd::Places { .. } | Cmd::Export { .. } => return None,
-            Cmd::Dupes { .. } => return None,
-            Cmd::Organize { .. } => ("organize", 6),
-            Cmd::Plan { .. } | Cmd::Apply { .. } | Cmd::Undo { .. } | Cmd::History { .. } => {
-                return None;
-            }
-            Cmd::Doctor { .. } => return None,
-        })
-    }
 }

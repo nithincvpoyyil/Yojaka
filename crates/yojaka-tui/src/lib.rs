@@ -8,6 +8,7 @@ mod fmt;
 mod history;
 mod keymap;
 mod modal;
+mod organize;
 mod screens;
 mod terminal;
 mod theme;

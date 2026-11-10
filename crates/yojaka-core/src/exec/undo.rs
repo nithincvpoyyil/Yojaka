@@ -46,7 +46,11 @@ pub fn undo(
         .ops
         .iter()
         .filter_map(|o| match o {
-            Op::Trash { id, .. } | Op::Delete { id, .. } => Some((*id, o)),
+            Op::Trash { id, .. }
+            | Op::Delete { id, .. }
+            | Op::Move { id, .. }
+            | Op::Copy { id, .. }
+            | Op::MkDir { id, .. } => Some((*id, o)),
             _ => None,
         })
         .collect();
@@ -80,6 +84,8 @@ pub fn undo(
         };
         let (path, expect) = match op {
             Op::Trash { path, expect, .. } | Op::Delete { path, expect, .. } => (path, expect),
+            Op::Move { src, expect, .. } | Op::Copy { src, expect, .. } => (src, expect),
+            Op::MkDir { path, .. } => (path, &NO_FINGERPRINT),
             _ => continue,
         };
         let note = |reason: &str, list: &mut Vec<OpNote>| {
@@ -115,6 +121,23 @@ pub fn undo(
         });
         if undone.contains(&entry.op) {
             report.already_undone += 1;
+            continue;
+        }
+        if matches!(op, Op::Move { .. } | Op::Copy { .. } | Op::MkDir { .. }) {
+            jr.append(Run::Undo, entry.op, State::Begin, None, None)?;
+            match undo_organize(op, entry) {
+                Ok(detail) => {
+                    jr.append(Run::Undo, entry.op, State::Done, detail, None)?;
+                    if !matches!(op, Op::MkDir { .. }) {
+                        report.restored += 1;
+                        report.bytes += expect.size;
+                    }
+                }
+                Err(msg) => {
+                    jr.append(Run::Undo, entry.op, State::Failed, Some(msg.clone()), None)?;
+                    note(&msg, &mut report.failed);
+                }
+            }
             continue;
         }
         if matches!(op, Op::Delete { .. }) {
@@ -186,5 +209,79 @@ fn restore_one(
             "{} is no longer in the Trash (it may have been emptied)",
             trashed.display()
         )),
+    }
+}
+
+const NO_FINGERPRINT: crate::model::Fingerprint = crate::model::Fingerprint {
+    size: 0,
+    mtime_ns: 0,
+    hash: None,
+};
+
+/// Reverses one finished move, copy or folder creation.
+fn undo_organize(op: &Op, entry: &journal::Entry) -> std::result::Result<Option<String>, String> {
+    use super::transfer;
+    match op {
+        Op::Move {
+            id,
+            src,
+            dst,
+            expect,
+            ..
+        } => {
+            if src.symlink_metadata().is_ok() {
+                if !dst.exists() && transfer::is_same_file(src, expect.size, entry.hash) {
+                    return Ok(Some("already back in place".into()));
+                }
+                return Err(format!(
+                    "{} already exists, so the moved file was left at {}",
+                    src.display(),
+                    dst.display()
+                ));
+            }
+            if !transfer::is_same_file(dst, expect.size, entry.hash) {
+                return Err(format!(
+                    "{} is missing or has changed since it was moved",
+                    dst.display()
+                ));
+            }
+            transfer::move_back(dst, src, *id, expect.size, expect.mtime_ns)
+                .map(|()| None)
+                .map_err(|e| e.to_string())
+        }
+        Op::Copy {
+            dst, src, expect, ..
+        } => {
+            if !transfer::is_same_file(dst, expect.size, entry.hash) {
+                return Err(format!(
+                    "{} is missing or has changed, so it was left alone",
+                    dst.display()
+                ));
+            }
+            // Never remove the last copy.
+            if !transfer::is_same_file(src, expect.size, entry.hash) {
+                return Err(format!(
+                    "the original {} is gone or changed, so the copy was kept",
+                    src.display()
+                ));
+            }
+            std::fs::remove_file(dst)
+                .map(|()| None)
+                .map_err(|e| format!("{}: {e}", dst.display()))
+        }
+        Op::MkDir { path, .. } => {
+            if entry.detail.as_deref() != Some("created") {
+                return Ok(Some("was there before; kept".into()));
+            }
+            match std::fs::remove_dir(path) {
+                Ok(()) => Ok(None),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(Some("already gone".into()))
+                }
+                // Not empty: something else is in it. Leave it.
+                Err(_) => Ok(Some("not empty; kept".into())),
+            }
+        }
+        _ => Ok(None),
     }
 }

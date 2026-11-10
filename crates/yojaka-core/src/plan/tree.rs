@@ -140,4 +140,27 @@ mod tests {
         }
         assert!(t.glimpse(5, 100).len() <= 5);
     }
+
+    #[test]
+    fn a_hundred_thousand_files_fit_in_forty_lines() {
+        let mut t = DirTree::new();
+        for i in 0..100_000u32 {
+            t.add(
+                Path::new(&format!(
+                    "{}/{:02}/{}/f{i}.jpg",
+                    2000 + i % 25,
+                    i % 12 + 1,
+                    i % 40
+                )),
+                1000,
+            );
+        }
+        let g = t.glimpse(40, 8);
+        assert!(g.len() <= 40, "{} lines", g.len());
+        assert_eq!(t.files(), 100_000);
+        assert!(
+            g.iter().any(|l| l.is_more),
+            "the rest is summarised, not dropped"
+        );
+    }
 }

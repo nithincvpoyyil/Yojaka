@@ -1,12 +1,7 @@
-//! Organize templates (Iteration 6). Shapes only.
+//! Organize: turn a path template into a plan of moves or copies (Iteration 6).
 
-use crate::{Result, YojakaError};
+pub mod planner;
+pub mod template;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Template(String);
-
-impl Template {
-    pub fn parse(_src: &str) -> Result<Self> {
-        Err(YojakaError::NotYet("organize templates", "Iteration 6"))
-    }
-}
+pub use planner::{OrganizeOptions, OrganizePlan, OrganizeStats, Transfer, plan};
+pub use template::{Facts, PRESETS, Rendered, Template, UNDATED_DIR, Where, Ymd};

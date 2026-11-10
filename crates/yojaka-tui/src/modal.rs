@@ -29,7 +29,12 @@ pub struct Review {
 
 impl Review {
     pub fn new(plan: Plan) -> Self {
-        let glimpse = plan.removal_tree().glimpse(40, 8);
+        let tree = if plan.dest.is_some() {
+            plan.destination_tree()
+        } else {
+            plan.removal_tree()
+        };
+        let glimpse = tree.glimpse(40, 8);
         Self {
             plan,
             typed: String::new(),
@@ -96,14 +101,34 @@ fn problems(out: &mut Vec<ReportLine>, label: &str, notes: &[yojaka_core::exec::
 }
 
 pub fn apply_report(r: &ApplyReport) -> Vec<ReportLine> {
-    let mut out = vec![line(
-        format!(
-            "{} files moved to the Trash ({} freed).",
-            fmt::thousands((r.trashed + r.deleted) as u64),
-            fmt::bytes(r.bytes)
-        ),
-        false,
-    )];
+    let organized = r.moved + r.copied + r.created + r.already_there > 0;
+    let mut out = vec![if organized {
+        line(
+            format!(
+                "{} files moved, {} copied, {} folders created ({}).",
+                fmt::thousands(r.moved as u64),
+                fmt::thousands(r.copied as u64),
+                r.created,
+                fmt::bytes(r.bytes)
+            ),
+            false,
+        )
+    } else {
+        line(
+            format!(
+                "{} files moved to the Trash ({} freed).",
+                fmt::thousands((r.trashed + r.deleted) as u64),
+                fmt::bytes(r.bytes)
+            ),
+            false,
+        )
+    }];
+    if r.already_there > 0 {
+        out.push(line(
+            format!("{} were already in place.", r.already_there),
+            false,
+        ));
+    }
     if r.cancelled {
         out.push(line(
             "Stopped early. Run `yojaka apply <plan> --resume --write` to finish it.",

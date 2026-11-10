@@ -13,6 +13,7 @@ use crate::dupes::{DupesState, Pane, Toggled};
 use crate::fmt;
 use crate::history::{self, HistoryState};
 use crate::modal::{self, Modal, Review, RunView};
+use crate::organize::{Editing, OrganizeState, Phase as OrgPhase, PlanRequest};
 use crate::worker::{Bg, DupOutcome, ExecOutcome, Request, Response};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,16 +52,6 @@ impl Screen {
         } else {
             (i + n - 1) % n
         }]
-    }
-
-    /// Iteration in which the screen gets real content.
-    pub fn arrives_in(self) -> u8 {
-        match self {
-            Screen::Dashboard | Screen::Browser => 3,
-            Screen::Duplicates => 4,
-            Screen::Organize => 6,
-            Screen::History => 5,
-        }
     }
 }
 
@@ -113,6 +104,14 @@ pub enum Msg {
     ReviewPlan,
     /// `u` (History): put back the files of the selected run.
     UndoRun,
+    /// `e` (Organize): edit the folder pattern.
+    EditTemplate,
+    /// `d` (Organize): edit the destination folder.
+    EditDest,
+    /// `m` (Organize): copy / move.
+    ToggleTransfer,
+    /// `i` (Organize): infer places for files without GPS.
+    ToggleInfer,
     CycleKind,
     CycleSort,
     ReverseSort,
@@ -148,6 +147,9 @@ pub enum Cmd {
     OpenFile(PathBuf),
     Worker(Request),
     /// Run a reviewed plan (moves files to the Trash; journaled).
+    /// Work out an organize plan (reads the index and the destination's names, changes nothing).
+    PlanOrganize(Box<PlanRequest>),
+    CancelPlan,
     ApplyPlan(Box<yojaka_core::plan::Plan>),
     /// Put back everything a journaled run moved.
     UndoRun(uuid::Uuid),
@@ -335,6 +337,7 @@ pub struct App {
     pub browser: BrowserState,
     pub dupes: DupesState,
     pub history: HistoryState,
+    pub organize: OrganizeState,
     /// The question, plan review or progress that has the keyboard.
     pub modal: Option<Modal>,
     pub debug: bool,
@@ -360,6 +363,7 @@ impl App {
             notice: None,
             refresh_when_stale: false,
             auto_scan_tried: false,
+            organize: OrganizeState::new(&root),
             mode,
             root,
             should_quit: false,
@@ -535,6 +539,10 @@ impl App {
             self.say("Wait for the duplicate search, or press c to stop it".into());
             return vec![];
         }
+        if self.organize.phase == OrgPhase::Planning {
+            self.say("Wait for the plan to finish, or press Esc to stop it".into());
+            return vec![];
+        }
         let s = &mut self.dashboard.scan;
         *s = ScanView {
             running: true,
@@ -670,6 +678,57 @@ impl App {
         vec![]
     }
 
+    /// Enter on the Organize screen: work out the plan for the current settings.
+    fn plan_organize(&mut self) -> Vec<Cmd> {
+        if self.organize.phase == OrgPhase::Planning {
+            self.dirty = false;
+            return vec![];
+        }
+        if self.dashboard.scan.running || self.dupes.searching() {
+            self.say("Wait for the scan or search to finish first".into());
+            return vec![];
+        }
+        if self.dashboard.no_index || self.dashboard.stats.is_none() {
+            self.say("Scan this folder first".into());
+            return vec![];
+        }
+        match self.organize.request() {
+            Ok(req) => {
+                self.organize.problem = None;
+                self.organize.plan = None;
+                self.organize.phase = OrgPhase::Planning;
+                vec![Cmd::PlanOrganize(Box::new(req))]
+            }
+            Err(e) => {
+                self.organize.problem = Some(e);
+                vec![]
+            }
+        }
+    }
+
+    /// `a` on the Organize screen: review the plan before anything is done.
+    fn review_organize(&mut self) -> Vec<Cmd> {
+        if self.mode != Mode::Write {
+            self.say("Write mode is off. Press W to turn it on".into());
+            return vec![];
+        }
+        let Some(p) = self
+            .organize
+            .plan
+            .as_ref()
+            .filter(|_| self.organize.phase == OrgPhase::Ready)
+        else {
+            self.say("Press Enter first to plan".into());
+            return vec![];
+        };
+        if p.plan.file_ops() == 0 {
+            self.say("Nothing to do: every file is already in place".into());
+            return vec![];
+        }
+        self.modal = Some(Modal::Review(Box::new(Review::new(p.plan.clone()))));
+        vec![]
+    }
+
     /// `u` on the History screen.
     fn ask_undo(&mut self) -> Vec<Cmd> {
         if self.mode != Mode::Write {
@@ -760,8 +819,13 @@ impl App {
             self.say("Write mode is off".into());
             return vec![];
         }
+        let label = match rv.plan.mode {
+            yojaka_core::plan::OpMode::Copy => "Copying files",
+            yojaka_core::plan::OpMode::Move => "Moving files",
+            _ => "Moving files to the Trash",
+        };
         self.modal = Some(Modal::Running(RunView {
-            label: "Moving files to the Trash",
+            label,
             done: 0,
             total: Some(rv.plan.ops.len() as u64),
             cancelling: false,
@@ -780,6 +844,16 @@ impl App {
             )
         {
             return self.modal_key(msg);
+        }
+        if self.screen == Screen::Organize && self.organize.editing.is_some() {
+            match msg {
+                Msg::Char(c) => self.organize.type_char(c),
+                Msg::Backspace => self.organize.backspace(),
+                Msg::FilterAccept => self.organize.accept_edit(),
+                Msg::FilterCancel => self.organize.cancel_edit(),
+                _ => self.dirty = false,
+            }
+            return vec![];
         }
         if self.tab_mode {
             match msg {
@@ -807,6 +881,10 @@ impl App {
                 | Msg::NextRule
                 | Msg::ReviewPlan
                 | Msg::UndoRun
+                | Msg::EditTemplate
+                | Msg::EditDest
+                | Msg::ToggleTransfer
+                | Msg::ToggleInfer
                 | Msg::KeepAllInGroup => {
                     self.dirty = false;
                     return vec![];
@@ -844,6 +922,8 @@ impl App {
                     self.browser.set_text(String::new())
                 } else if self.dupes.searching() {
                     self.cancel_dupes()
+                } else if self.organize.phase == OrgPhase::Planning {
+                    vec![Cmd::CancelPlan]
                 } else if self.dashboard.scan.running {
                     self.cancel_scan()
                 } else if self.screen == Screen::Browser {
@@ -917,6 +997,27 @@ impl App {
                 vec![]
             }
             Msg::ToggleWrite => self.toggle_write(),
+            Msg::EditTemplate | Msg::EditDest | Msg::ToggleTransfer | Msg::ToggleInfer
+                if self.screen == Screen::Organize =>
+            {
+                match msg {
+                    Msg::EditTemplate => self.organize.start_edit(Editing::Template),
+                    Msg::EditDest => self.organize.start_edit(Editing::Dest),
+                    Msg::ToggleTransfer => self.organize.toggle_transfer(),
+                    _ => self.organize.toggle_infer(),
+                }
+                vec![]
+            }
+            Msg::EditTemplate | Msg::EditDest | Msg::ToggleTransfer | Msg::ToggleInfer => {
+                self.dirty = false;
+                vec![]
+            }
+            Msg::NextRule if self.screen == Screen::Organize => {
+                self.organize.next_preset();
+                vec![]
+            }
+            Msg::Enter if self.screen == Screen::Organize => self.plan_organize(),
+            Msg::ReviewPlan if self.screen == Screen::Organize => self.review_organize(),
             Msg::ReviewPlan if self.screen == Screen::Duplicates => self.review_plan(),
             Msg::UndoRun if self.screen == Screen::History => self.ask_undo(),
             Msg::ReviewPlan | Msg::UndoRun => {
@@ -1087,6 +1188,24 @@ impl App {
                 self.dirty = false;
                 return vec![];
             }
+            CoreEvent::Progress {
+                task: TaskKind::Plan,
+                ..
+            }
+            | CoreEvent::TaskStarted {
+                task: TaskKind::Plan,
+                ..
+            } => {
+                self.dirty = false;
+                return vec![];
+            }
+            CoreEvent::TaskFinished {
+                task: TaskKind::Plan,
+                ..
+            } => {
+                self.dirty = false;
+                return vec![];
+            }
             CoreEvent::Issue(_) if self.is_busy_writing() => {
                 self.dirty = false;
                 return vec![];
@@ -1166,6 +1285,7 @@ impl App {
                 match result {
                     Ok(sum) => {
                         self.dupes.reset();
+                        self.organize.reset();
                         s.partial = sum.status == ScanStatus::Partial;
                         s.outcome = Some(outcome_line(&sum));
                         self.reload_index()
@@ -1188,6 +1308,16 @@ impl App {
                 self.say(m);
                 vec![]
             }
+            Bg::Planned(result) => {
+                match result {
+                    Ok(p) => {
+                        self.organize.plan = Some(p);
+                        self.organize.phase = OrgPhase::Ready;
+                    }
+                    Err(e) => self.organize.phase = OrgPhase::Failed(e),
+                }
+                vec![]
+            }
             Bg::History(runs) => {
                 self.history.set(runs);
                 vec![]
@@ -1204,6 +1334,7 @@ impl App {
                 self.modal = Some(Modal::Report(lines));
                 // The files on disk changed: what was found is stale, and so is the index.
                 self.dupes.reset();
+                self.organize.reset();
                 let mut cmds = vec![Cmd::LoadHistory];
                 cmds.extend(self.start_scan());
                 cmds

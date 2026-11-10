@@ -13,7 +13,8 @@ Commands:
   places    List the places (countries and cities) found in the library
   export    Export the file list as CSV or JSON (GPS is left out unless --include-gps)
   dupes     Find identical files and preview what could be removed (changes nothing)
-  organize  Organize into a folder template (Iteration 6)
+  organize  Plan how to arrange the scanned files into folders by a template. Nothing is changed:
+            save the plan with --plan-out, then run it with `yojaka --write apply`
   plan      Inspect plans
   apply     Run a saved plan: moves the listed files to the Trash. Shows a dry run unless --write is
             given

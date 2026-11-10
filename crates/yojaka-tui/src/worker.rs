@@ -86,6 +86,8 @@ pub enum Bg {
     DupesFinished(DupOutcome),
     /// A reviewed plan finished (or was stopped), or an undo did.
     ExecFinished(ExecOutcome),
+    /// An organize plan is ready (or could not be made).
+    Planned(Result<Box<yojaka_core::organize::OrganizePlan>, String>),
     /// The runs listed by the journals.
     History(Vec<yojaka_core::exec::RunSummary>),
     /// A short message for the footer (e.g. the OS could not open a file).

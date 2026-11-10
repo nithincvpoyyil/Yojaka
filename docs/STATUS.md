@@ -19,8 +19,9 @@ Committed. Iteration 5 was built the same day (below); Iteration 6 is next after
 | 3 | TUI: dashboard, file browser, help, scan control | Done |
 | 4 | Exact duplicates (hashing, `dupes`, Duplicates screen) | Done (not committed or tagged yet) |
 | 5 | Safe executor, History | **Built 2026-11-09, awaiting the user's manual sign-off on a real folder** (ADR-0006) |
-| 6 | Organize (screen is a placeholder) | **Next** |
-| 7-10 | See the plan | Not started |
+| 6 | Organize (templates, planner, copy/move, undo, screen, CLI) | **Built 2026-11-10, awaiting sign-off** (ADR-0007) |
+| 7 | More duplicate tiers | **Next** |
+| 8-10 | See the plan | Not started |
 
 No git tags exist (`v0.1.0` .. `v0.3.0` not created). Everything up to the GeoNames attribution
 commit (`a1c39a9`) is on `origin/main`. Checks at the end of the session: 210 tests passed
@@ -44,7 +45,7 @@ automatically in `~/Library` (no user choice, no jargon).
 | `--local-index` | Hidden. For tests and tooling only: keeps the data inside the folder. |
 
 CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`, `export`, `doctor`.
-`dupes` (exact tier; see below), `plan show`, `apply`, `undo`, `history` (Iteration 5; see below). `organize` is a stub.
+`dupes` (exact tier; see below), `plan show`, `apply`, `undo`, `history` (Iteration 5; see below). `organize` (Iteration 6; see below).
 
 ### TUI keys (the `?` overlay is generated from `keymap.rs`)
 
@@ -106,6 +107,19 @@ The first write-capable release. Off by default: no `--write` means a preview on
 - Not done: a real-process SIGKILL test (simulated in-process instead), copy / move ops (Iteration 6), a
   before/after tree for non-dedupe plans (only "files removed, by folder" exists), parallel execution.
 
+### Organize (Iteration 6, ADR-0007)
+
+- `yojaka organize PATH DEST [--template T | --preset date|place|place-date|kind-date] [--move] [--infer-location]
+  [--plan-out FILE] [--full-tree]` plans only (copy is the default). Run the plan with `yojaka --write apply FILE`;
+  `undo` reverses it. Placeholders: `year month day camera make model format ext name stem parent kind country
+  country_code state district city`; `{month:02}` pads. See the ADR for the folder-dropping rules.
+- TUI screen 4: `e` pattern, `d` folder, `p` next preset, `m` copy/move, `i` infer places, Enter plans (changes
+  nothing), `a` reviews and runs (needs `W`). Examples and a folder overview come from the plan.
+- Core: `yojaka_core::organize` (`template`, `planner`), `exec::transfer`, `exec::organize_run`.
+- Tests: `tests/organize.rs` (planner), `tests/organize_exec.rs` (apply, resume, undo, pairs, refusals; the
+  cross-volume test is ignored), template proptest, TUI `organize_screen`, CLI `organize_plans_then_apply...`.
+- Not done: live re-planning while typing; a place picker; `index-only` operation (use `plan show`).
+
 ### Look
 
 - Default theme is Cobalt2 (terminalcolors.com/themes/cobalt2/default): background `#122738`, yellow
@@ -139,7 +153,7 @@ gitignored. Re-check before the first public release.
 
 ## Open items
 
-- **Iteration 5** needs the user's own sign-off on a real folder (acceptance item), then commit and tag. The Iteration 5 work is not committed yet.
+- **Iteration 5** is committed (`79ea0b6`); it still needs the user's own sign-off on a real folder. **Iteration 6** needs the same, and is not committed.
 - Iteration 4 is committed (`1c698fc`). Likely / name tiers are not built (the spec puts them in a later iteration).
 - No TUI key writes a plan file yet (only `yojaka dupes --plan-out`).
   Add a `Screen` arm in `view::render` and a state struct like `browser.rs`.
