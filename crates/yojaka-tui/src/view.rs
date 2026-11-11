@@ -316,18 +316,18 @@ fn footer_line(app: &App) -> Line<'static> {
                 ("a", "review"),
                 ("W", "write"),
             ],
-            Screen::Organize if app.organize.editing.is_some() => {
-                vec![("Enter", "keep"), ("Esc", "undo the edit")]
-            }
+            Screen::Organize if app.organize.editing.is_some() => vec![
+                ("Enter", "keep"),
+                ("Esc", "undo the edit"),
+                ("Ctrl-U", "clear"),
+            ],
             Screen::Organize => vec![
                 ("q", "quit"),
                 ("?", "help"),
-                ("e", "pattern"),
-                ("d", "folder"),
-                ("p", "preset"),
-                ("m", "copy/move"),
-                ("Enter", "plan"),
-                ("a", "review"),
+                ("↑↓", "choose"),
+                ("Enter", "change"),
+                ("a", "review & run"),
+                ("< >", "tabs"),
             ],
             Screen::History => vec![
                 ("q", "quit"),

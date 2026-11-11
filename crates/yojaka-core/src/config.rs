@@ -93,7 +93,7 @@ impl Default for DupesConfig {
 impl Default for OrganizeConfig {
     fn default() -> Self {
         Self {
-            template: "{year}/{month:02}/{name}".into(),
+            template: crate::organize::PRESETS[0].1.into(),
             mode: "copy".into(),
             large_plan_threshold: 1000,
         }

@@ -13,7 +13,7 @@ use crate::dupes::{DupesState, Pane, Toggled};
 use crate::fmt;
 use crate::history::HistoryState;
 use crate::modal::{self, Modal, Review, RunView};
-use crate::organize::{Editing, OrganizeState, Phase as OrgPhase, PlanRequest};
+use crate::organize::{OrganizeState, Phase as OrgPhase, PlanRequest};
 use crate::worker::{Bg, DupOutcome, ExecOutcome, Request, Response};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +104,8 @@ pub enum Msg {
     KeepAllInGroup,
     /// `W`: write mode on (asks first) / off.
     ToggleWrite,
-    /// `a` (Duplicates): review the marked copies before moving them to the Trash.
+    /// `a` (Duplicates, Organize): review the plan before it runs. In read-only mode it first
+    /// asks to turn write mode on.
     ReviewPlan,
     /// `P` (Duplicates, Organize): save the current plan as a file in Yojaka's data folder.
     SavePlan,
@@ -112,20 +113,14 @@ pub enum Msg {
     ExportView,
     /// `M` (Duplicates, Organize): remember the current choices in the config file.
     Remember,
-    /// `e` (Organize): edit the folder pattern.
-    EditTemplate,
-    /// `d` (Organize): edit the destination folder.
-    EditDest,
-    /// `m` (Organize): copy / move.
-    ToggleTransfer,
-    /// `i` (Organize): infer places for files without GPS.
-    ToggleInfer,
     CycleKind,
     CycleSort,
     ReverseSort,
     StartFilter,
     Char(char),
     Backspace,
+    /// Ctrl-U while typing: empty the box.
+    ClearText,
     FilterAccept,
     FilterCancel,
     Rescan,
@@ -546,8 +541,52 @@ impl App {
         self.notice = Some((msg, self.ticks + NOTICE_TICKS));
     }
 
-    fn arrows_move_tree(&self) -> bool {
-        self.screen == Screen::Browser && self.browser.focus == Focus::Tree
+    /// ← → act inside the screen (the folder tree; the Organize choices) instead of changing it.
+    fn arrows_stay_in_screen(&self) -> bool {
+        (self.screen == Screen::Browser && self.browser.focus == Focus::Tree)
+            || self.screen == Screen::Organize
+    }
+
+    /// Why the Organize plan cannot be worked out right now, if it cannot.
+    pub fn plan_blocker(&self) -> Option<&'static str> {
+        if self.dashboard.scan.running {
+            Some("Waiting for the scan to finish…")
+        } else if self.dashboard.no_index {
+            Some("Scan this folder first: press r.")
+        } else if self.dupes.searching() {
+            Some("Waiting for the duplicate search to finish…")
+        } else if self.dashboard.stats.is_none() {
+            Some("Loading…")
+        } else {
+            None
+        }
+    }
+
+    /// The Organize preview follows the settings: work the plan out again whenever they change
+    /// and nothing else is busy. Working it out only reads; it changes no file.
+    fn follow_settings(&mut self) -> Option<Cmd> {
+        if self.organize.take_cancel() {
+            return Some(Cmd::CancelPlan);
+        }
+        if self.screen != Screen::Organize
+            || !self.organize.wants_plan()
+            || self.modal.is_some()
+            || self.confirm_flush
+            || self.plan_blocker().is_some()
+        {
+            return None;
+        }
+        self.dirty = true;
+        match self.organize.request() {
+            Ok(req) => {
+                self.organize.phase = OrgPhase::Planning;
+                Some(Cmd::PlanOrganize(Box::new(req)))
+            }
+            Err(e) => {
+                self.organize.problem = Some(e);
+                None
+            }
+        }
     }
 
     fn start_scan(&mut self) -> Vec<Cmd> {
@@ -670,7 +709,7 @@ impl App {
             return vec![];
         }
         match self.mode {
-            Mode::ReadOnly => self.modal = Some(Modal::EnableWrite),
+            Mode::ReadOnly => self.modal = Some(Modal::EnableWrite { then_review: false }),
             Mode::Write => {
                 self.mode = Mode::ReadOnly;
                 self.say("Write mode is off".into());
@@ -683,12 +722,23 @@ impl App {
         matches!(self.modal, Some(Modal::Running(_)))
     }
 
+    /// `a`: review what the current screen would do. Asked again after write mode is turned on.
+    fn review_current(&mut self) -> Vec<Cmd> {
+        match self.screen {
+            Screen::Duplicates => self.review_plan(),
+            Screen::Organize => self.review_organize(),
+            _ => vec![],
+        }
+    }
+
+    /// Write mode is off: ask to turn it on, then go on to the review.
+    fn ask_for_write_mode(&mut self) -> Vec<Cmd> {
+        self.modal = Some(Modal::EnableWrite { then_review: true });
+        vec![]
+    }
+
     /// `a` on the Duplicates screen: build the plan from the marks and show it for review.
     fn review_plan(&mut self) -> Vec<Cmd> {
-        if self.mode != Mode::Write {
-            self.say("Write mode is off. Press W to turn it on".into());
-            return vec![];
-        }
         if self.dashboard.scan.running || self.dupes.searching() {
             self.say("Wait for the scan or search to finish first".into());
             return vec![];
@@ -705,56 +755,38 @@ impl App {
             self.say("Nothing is marked for removal".into());
             return vec![];
         }
+        if self.mode != Mode::Write {
+            return self.ask_for_write_mode();
+        }
         self.modal = Some(Modal::Review(Box::new(Review::new(plan))));
         vec![]
     }
 
-    /// Enter on the Organize screen: work out the plan for the current settings.
-    fn plan_organize(&mut self) -> Vec<Cmd> {
-        if self.organize.phase == OrgPhase::Planning {
-            self.dirty = false;
-            return vec![];
-        }
-        if self.dashboard.scan.running || self.dupes.searching() {
-            self.say("Wait for the scan or search to finish first".into());
-            return vec![];
-        }
-        if self.dashboard.no_index || self.dashboard.stats.is_none() {
-            self.say("Scan this folder first".into());
-            return vec![];
-        }
-        match self.organize.request() {
-            Ok(req) => {
-                self.organize.problem = None;
-                self.organize.plan = None;
-                self.organize.phase = OrgPhase::Planning;
-                vec![Cmd::PlanOrganize(Box::new(req))]
-            }
-            Err(e) => {
-                self.organize.problem = Some(e);
-                vec![]
-            }
-        }
-    }
-
     /// `a` on the Organize screen: review the plan before anything is done.
     fn review_organize(&mut self) -> Vec<Cmd> {
-        if self.mode != Mode::Write {
-            self.say("Write mode is off. Press W to turn it on".into());
-            return vec![];
-        }
         let Some(p) = self
             .organize
             .plan
             .as_ref()
             .filter(|_| self.organize.phase == OrgPhase::Ready)
         else {
-            self.say("Press Enter first to plan".into());
+            let why = if self.organize.problem.is_some() {
+                "Fix the setting first"
+            } else if let OrgPhase::Failed(_) = self.organize.phase {
+                "There is no plan: the preview says why"
+            } else {
+                self.plan_blocker()
+                    .unwrap_or("Wait a moment: the plan is still being worked out")
+            };
+            self.say(why.into());
             return vec![];
         };
         if p.plan.file_ops() == 0 {
             self.say("Nothing to do: every file is already in place".into());
             return vec![];
+        }
+        if self.mode != Mode::Write {
+            return self.ask_for_write_mode();
         }
         self.modal = Some(Modal::Review(Box::new(Review::new(p.plan.clone()))));
         vec![]
@@ -827,12 +859,15 @@ impl App {
                 vec![]
             }
             Modal::Report(_) => vec![],
-            Modal::EnableWrite => {
+            Modal::EnableWrite { then_review } => {
                 if yes || matches!(msg, Msg::Enter) {
                     self.mode = Mode::Write;
+                    if then_review {
+                        return self.review_current();
+                    }
                     self.say("Write mode is on. Nothing changes until you review a plan".into());
                 } else if !no {
-                    self.modal = Some(Modal::EnableWrite);
+                    self.modal = Some(Modal::EnableWrite { then_review });
                     self.dirty = false;
                 }
                 vec![]
@@ -856,6 +891,36 @@ impl App {
         }
     }
 
+    /// The Organize form: ↑ ↓ choose a row, Enter changes it, ← → step through a choice.
+    fn organize_key(&mut self, msg: Msg) {
+        let o = &mut self.organize;
+        let changed = match msg {
+            Msg::Up => {
+                o.move_cursor(-1);
+                true
+            }
+            Msg::Down => {
+                o.move_cursor(1);
+                true
+            }
+            Msg::Top | Msg::PageUp => {
+                o.jump(false);
+                true
+            }
+            Msg::Bottom | Msg::PageDown => {
+                o.jump(true);
+                true
+            }
+            Msg::Left => o.change(false),
+            Msg::Right => o.change(true),
+            _ => {
+                o.activate();
+                true
+            }
+        };
+        self.dirty = changed;
+    }
+
     fn start_apply(&mut self, rv: Review) -> Vec<Cmd> {
         if self.mode != Mode::Write {
             self.say("Write mode is off".into());
@@ -877,6 +942,12 @@ impl App {
 
     /// Applies `msg`. The caller must run the returned commands and redraw when `self.dirty`.
     pub fn update(&mut self, msg: Msg) -> Vec<Cmd> {
+        let mut cmds = self.handle(msg);
+        cmds.extend(self.follow_settings());
+        cmds
+    }
+
+    fn handle(&mut self, msg: Msg) -> Vec<Cmd> {
         // Everything except background chatter redraws; the few exceptions say so below.
         self.dirty = true;
         if self.modal.is_some()
@@ -888,15 +959,24 @@ impl App {
             return self.modal_key(msg);
         }
         if self.screen == Screen::Organize && self.organize.editing.is_some() {
+            // Keys go to the box; background news (a finished plan, scan progress) still counts.
             match msg {
                 Msg::Char(c) => self.organize.type_char(c),
                 Msg::Backspace => self.organize.backspace(),
+                Msg::ClearText => self.organize.clear_text(),
                 Msg::FilterAccept => self.organize.accept_edit(),
                 Msg::FilterCancel => self.organize.cancel_edit(),
+                Msg::Core(_) | Msg::Bg(_) | Msg::Tick | Msg::Resize(..) | Msg::Interrupt => {
+                    return self.dispatch(msg);
+                }
                 _ => self.dirty = false,
             }
             return vec![];
         }
+        self.dispatch(msg)
+    }
+
+    fn dispatch(&mut self, msg: Msg) -> Vec<Cmd> {
         if self.tab_mode {
             match msg {
                 Msg::Left | Msg::PrevScreen => {
@@ -927,10 +1007,6 @@ impl App {
                 | Msg::SavePlan
                 | Msg::Remember
                 | Msg::ExportView
-                | Msg::EditTemplate
-                | Msg::EditDest
-                | Msg::ToggleTransfer
-                | Msg::ToggleInfer
                 | Msg::KeepAllInGroup => {
                     self.dirty = false;
                     return vec![];
@@ -972,8 +1048,9 @@ impl App {
                     vec![Cmd::CancelPlan]
                 } else if self.dashboard.scan.running {
                     self.cancel_scan()
-                } else if self.screen == Screen::Browser {
-                    // nothing left to close: hand the arrow keys to the tabs
+                } else if matches!(self.screen, Screen::Browser | Screen::Organize) {
+                    // Nothing left to close, and ← → act inside these screens: hand them to the
+                    // tabs.
                     self.tab_mode = true;
                     vec![]
                 } else {
@@ -987,11 +1064,12 @@ impl App {
             }
             Msg::PrevScreen => self.update(Msg::Goto(self.screen.step(false))),
             Msg::NextScreen => self.update(Msg::Goto(self.screen.step(true))),
-            // ←/→ change the tab, except on the folder tree where they collapse / expand.
-            Msg::Left if !self.arrows_move_tree() => {
+            // ←/→ change the tab, except on the folder tree (collapse / expand) and on Organize
+            // (previous / next choice).
+            Msg::Left if !self.arrows_stay_in_screen() => {
                 self.update(Msg::Goto(self.screen.step(false)))
             }
-            Msg::Right if !self.arrows_move_tree() => {
+            Msg::Right if !self.arrows_stay_in_screen() => {
                 self.update(Msg::Goto(self.screen.step(true)))
             }
             Msg::Goto(s) => {
@@ -1043,26 +1121,20 @@ impl App {
                 vec![]
             }
             Msg::ToggleWrite => self.toggle_write(),
-            Msg::EditTemplate | Msg::EditDest | Msg::ToggleTransfer | Msg::ToggleInfer
+            Msg::Up
+            | Msg::Down
+            | Msg::PageUp
+            | Msg::PageDown
+            | Msg::Top
+            | Msg::Bottom
+            | Msg::Left
+            | Msg::Right
+            | Msg::Enter
                 if self.screen == Screen::Organize =>
             {
-                match msg {
-                    Msg::EditTemplate => self.organize.start_edit(Editing::Template),
-                    Msg::EditDest => self.organize.start_edit(Editing::Dest),
-                    Msg::ToggleTransfer => self.organize.toggle_transfer(),
-                    _ => self.organize.toggle_infer(),
-                }
+                self.organize_key(msg);
                 vec![]
             }
-            Msg::EditTemplate | Msg::EditDest | Msg::ToggleTransfer | Msg::ToggleInfer => {
-                self.dirty = false;
-                vec![]
-            }
-            Msg::NextRule if self.screen == Screen::Organize => {
-                self.organize.next_preset();
-                vec![]
-            }
-            Msg::Enter if self.screen == Screen::Organize => self.plan_organize(),
             Msg::ReviewPlan if self.screen == Screen::Organize => self.review_organize(),
             Msg::ReviewPlan if self.screen == Screen::Duplicates => self.review_plan(),
             Msg::SavePlan if self.screen == Screen::Organize => self.save_organize_plan(),
@@ -1192,6 +1264,11 @@ impl App {
                 let mut t = self.browser.query.text.clone();
                 t.pop();
                 self.browser.set_text(t)
+            }
+            Msg::ClearText if self.browser.editing_filter => self.browser.set_text(String::new()),
+            Msg::ClearText => {
+                self.dirty = false;
+                vec![]
             }
             Msg::FilterAccept => {
                 self.browser.editing_filter = false;
@@ -1397,13 +1474,7 @@ impl App {
                 vec![]
             }
             Bg::Planned(result) => {
-                match result {
-                    Ok(p) => {
-                        self.organize.plan = Some(p);
-                        self.organize.phase = OrgPhase::Ready;
-                    }
-                    Err(e) => self.organize.phase = OrgPhase::Failed(e),
-                }
+                self.organize.planned(result);
                 vec![]
             }
             Bg::History(runs) => {

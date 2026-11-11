@@ -37,13 +37,16 @@ Live Photo pair. (It was meant to be undoable too; undo was dropped in ADR-0009.
   the verified hash **and the original still exists** (the last copy is never removed); a folder is
   removed only if Yojaka created it and it is empty. Journal entries now carry the verified hash.
 - **Free space**: copies and cross-volume moves need their bytes plus 64 MiB free at the destination.
-- **Confirmation**: copy plans type a phrase at 1,000 files; move and trash plans at 50 (`file_ops()`
-  counts only files, not folders or skips).
+- **Confirmation** (changed 2026-11-12): a copy only ever asks yes or no (the originals stay); a move
+  always needs `move N files` typed, whatever N; trash plans type a phrase at 50 (`file_ops()` counts
+  only files, not folders or skips).
+- **Month names** (2026-11-12): `{month_name}` gives `Jan` … `Dec` and the presets and default use it;
+  `{month}` / `{month:02}` still give numbers.
 
 ## Consequences
 - Plans got fields: `dest`, `inferred`, `pair`, and summary counters (all `serde(default)`).
 - `reflink-copy` and `unicode-normalization` are new dependencies.
 - The cross-volume test mounts a disk image, so it is `#[ignore]` (`-E 'test(cross_volume)'`).
 - Inference is tested on synthetic rows; the fixture has no same-camera, time-adjacent pairs.
-- The TUI does not re-plan live while typing: Enter plans (it reads the whole index), and examples
-  come from the plan, not from a separate sample query.
+- The TUI re-plans by itself after each change (not on every key while typing): a change during a
+  plan stops it and plans again. Examples come from the plan, not from a separate sample query.

@@ -11,18 +11,25 @@ use crate::{fmt, theme};
 
 pub fn render(f: &mut Frame, body: Rect, modal: &Modal) {
     match modal {
-        Modal::EnableWrite => popup(
+        Modal::EnableWrite { then_review } => popup(
             f,
             body,
             "Turn on write mode?",
             vec![
-                Line::raw("Write mode lets Yojaka move files to the Trash, but only after you"),
-                Line::raw("have reviewed a plan. Nothing is ever deleted for good from here."),
+                Line::raw("Write mode lets Yojaka copy, move or trash files, but only after"),
+                Line::raw("you review a plan and confirm it. Nothing is deleted for good here."),
                 Line::raw("Yojaka has no undo: a move or a copy is your decision, and final."),
                 Line::raw(""),
-                Line::styled("y / Enter  turn on      n / Esc  cancel", theme::accent()),
+                Line::styled(
+                    if *then_review {
+                        "y / Enter  turn on and review      n / Esc  cancel"
+                    } else {
+                        "y / Enter  turn on      n / Esc  cancel"
+                    },
+                    theme::accent(),
+                ),
             ],
-            64,
+            68,
         ),
         Modal::Running(r) => running(f, body, r),
         Modal::Report(lines) => {

@@ -15,18 +15,27 @@ pub const UNDATED_DIR: &str = "_undated";
 /// Longest folder or file name Yojaka will produce (bytes; APFS allows 255).
 const MAX_NAME_BYTES: usize = 200;
 
-/// Ready-made templates: (label, template).
+/// Ready-made templates: (label, template). Months are named (`Jan`), not numbered.
 pub const PRESETS: [(&str, &str); 4] = [
-    ("Date", "{year}/{month:02}/{name}"),
+    ("Date", "{year}/{month_name}/{name}"),
     ("Place", "{country}/{city}/{name}"),
-    ("Place + Date", "{country}/{city}/{year}-{month:02}/{name}"),
-    ("Kind + Date", "{kind}/{year}/{month:02}/{name}"),
+    (
+        "Place + Date",
+        "{country}/{city}/{year}-{month_name}/{name}",
+    ),
+    ("Kind + Date", "{kind}/{year}/{month_name}/{name}"),
+];
+
+/// What `{month_name}` gives, January first.
+const MONTH_NAMES: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Year,
     Month,
+    MonthName,
     Day,
     Camera,
     Make,
@@ -44,9 +53,10 @@ pub enum Field {
     City,
 }
 
-const NAMES: [(&str, Field); 17] = [
+const NAMES: [(&str, Field); 18] = [
     ("year", Field::Year),
     ("month", Field::Month),
+    ("month_name", Field::MonthName),
     ("day", Field::Day),
     ("camera", Field::Camera),
     ("make", Field::Make),
@@ -66,7 +76,10 @@ const NAMES: [(&str, Field); 17] = [
 
 impl Field {
     fn is_date(self) -> bool {
-        matches!(self, Field::Year | Field::Month | Field::Day)
+        matches!(
+            self,
+            Field::Year | Field::Month | Field::MonthName | Field::Day
+        )
     }
     fn is_place(self) -> bool {
         matches!(
@@ -348,6 +361,10 @@ fn value(field: Field, pad: usize, f: &Facts) -> Option<String> {
     match field {
         Field::Year => f.date.map(|d| num(i64::from(d.year))),
         Field::Month => f.date.map(|d| num(i64::from(d.month))),
+        Field::MonthName => f
+            .date
+            .and_then(|d| MONTH_NAMES.get(usize::from(d.month).checked_sub(1)?))
+            .map(|m| (*m).to_string()),
         Field::Day => f.date.map(|d| num(i64::from(d.day))),
         Field::Make => f.camera_make.as_deref().and_then(nonempty),
         Field::Model => f.camera_model.as_deref().and_then(nonempty),
@@ -454,6 +471,31 @@ mod tests {
             render("{year}/{month}/{day:02}-{stem}.{ext}", &f),
             "2023/8/05-IMG_1.jpg"
         );
+    }
+
+    #[test]
+    fn month_names_are_short_english_names() {
+        let mut f = facts("a.jpg");
+        assert_eq!(render("{year}/{month_name}/{name}", &f), "2023/Aug/a.jpg");
+        for (month, name) in [(1, "Jan"), (12, "Dec")] {
+            f.date = Some(Ymd {
+                year: 2023,
+                month,
+                day: 1,
+            });
+            assert_eq!(render("{month_name}/{name}", &f), format!("{name}/a.jpg"));
+        }
+        // An impossible month drops the folder instead of inventing one.
+        f.date = Some(Ymd {
+            year: 2023,
+            month: 13,
+            day: 1,
+        });
+        assert_eq!(render("{year}/{month_name}/{name}", &f), "2023/a.jpg");
+        // Without a date it is an undated file, like {month}.
+        f.date = None;
+        assert_eq!(render("{month_name}/{name}", &f), "_undated/a.jpg");
+        assert!(Template::parse("{month_name:02}/{name}").is_err());
     }
 
     #[test]
@@ -581,7 +623,7 @@ mod tests {
             has_place in any::<bool>(),
             tpl in prop::sample::select(vec![
                 "{year}/{month:02}/{name}",
-                "{country}/{city}/{year}-{month:02}/{name}",
+                "{country}/{city}/{year}-{month_name}/{name}",
                 "{kind}/{camera}/{parent}/{stem}.{ext}",
                 "{state}/{district}/{day:02}/{name}",
             ]),

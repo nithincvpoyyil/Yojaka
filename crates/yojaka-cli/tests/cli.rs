@@ -546,15 +546,11 @@ fn organize_plans_then_apply_copies() {
         .stdout(predicate::str::contains("Dry run"));
     assert!(!dest.exists());
 
-    let phrase = if copies >= 1000 {
-        format!("copy {copies} files")
-    } else {
-        "y".into()
-    };
+    // A copy leaves the originals alone: a "y" is enough, whatever the count.
     yojaka(tmp.path())
         .args(["--write", "apply"])
         .arg(&plan)
-        .write_stdin(format!("{phrase}\n"))
+        .write_stdin("y\n")
         .assert()
         .success()
         .stdout(predicate::str::contains(format!("{copies} copied")));

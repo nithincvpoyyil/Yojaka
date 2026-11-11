@@ -27,7 +27,7 @@ keep_rules = [
 similar_distance = 6
 
 [organize]
-template = "{year}/{month:02}/{name}"
+template = "{year}/{month_name}/{name}"
 mode = "copy"
 large_plan_threshold = 1000
 

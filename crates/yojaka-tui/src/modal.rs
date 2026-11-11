@@ -9,8 +9,10 @@ use crate::fmt;
 
 #[derive(Debug)]
 pub enum Modal {
-    /// "Turn on write mode?"
-    EnableWrite,
+    /// "Turn on write mode?" `then_review`: asked by `a`, so the review follows a yes.
+    EnableWrite {
+        then_review: bool,
+    },
     Review(Box<Review>),
     /// "Put back the files of this run?"
     Running(RunView),

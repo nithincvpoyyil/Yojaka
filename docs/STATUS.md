@@ -1,6 +1,6 @@
 # Yojaka: project status and hand-off
 
-Last updated: 2026-11-11. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
+Last updated: 2026-11-12. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
 rules are in `CLAUDE.md`.
 
 **Scan walker (after I4), done 2026-11-09** (`all-specs/05-scan-walker-fix-plan.md`, ADR-0005): `dua-core`
@@ -54,9 +54,11 @@ CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`
 ### TUI keys (the `?` overlay is generated from `keymap.rs`)
 
 - Screens: `1`-`5`, `<` `>`, `←` `→`, Shift+`←` `→`. In the file browser's folder pane `←` `→` collapse /
-  expand, so use `<` `>` or Shift+arrows there.
-- Tab mode: `T` anywhere, or Esc in the File browser when nothing else needs closing. `←` `→` then pick
-  the tab; Enter / Esc / ↑ / ↓ go back. During a scan Esc stops the scan first, so use `T`.
+  expand, and on Organize they step through a choice, so use `<` `>` or Shift+arrows there.
+- Tab mode: `T` anywhere, or Esc in the File browser or Organize when nothing else needs closing. `←` `→`
+  then pick the tab; Enter / Esc / ↑ / ↓ go back. During a scan Esc stops the scan first, so use `T`.
+- Typing in a box (browser filter, Organize pattern / destination): Enter keeps, Esc undoes, Ctrl-U clears.
+- `a` (Duplicates, Organize) in read-only mode asks "Turn on write mode?" (y/n) and then opens the review.
 - File browser: `Tab` pane, `j k` / arrows move, `PgUp PgDn g G`, `/` find (name, camera, place),
   `t` all / photos / videos, `s` sort column, `S` reverse. **Enter on a file opens it with the OS default
   app** (`/usr/bin/open`); iCloud-only files are refused; a vanished file gives a footer message.
@@ -152,8 +154,8 @@ The first write-capable release. Off by default: no `--write` means a preview on
   Not available in the TUI.
 - Journal and plan copy: `<data>/journal/<plan-id>.jsonl` and `.plan.json`.
 - TUI: `W` turns write mode on (asks) or off; on Duplicates `a` opens the Review box (summary, folders
-  losing files, typed phrase for large plans); a run shows progress (Ctrl-C stops after the current file),
-  then a report, then rescans. Screen 5 History lists runs; `u` puts the selected run back.
+  losing files, typed phrase for large plans; asks to turn on write mode first if it is off); a run shows
+  progress (Ctrl-C stops after the current file), then a report, then rescans. Screen 5 History lists runs.
 - Hidden `--trash-dir DIR` makes tests use a folder as the Trash.
 - Core: `yojaka_core::exec` (`apply`, `history`, `journal`, `trash`), `plan::tree` (`DirTree`
   glimpse, `Plan::removal_tree`). Tests: `crates/yojaka-core/tests/exec.rs` (12 + 1 ignored real-Trash test),
@@ -165,14 +167,24 @@ The first write-capable release. Off by default: no `--write` means a preview on
 
 - `yojaka organize PATH DEST [--template T | --preset date|place|place-date|kind-date] [--move] [--infer-location]
   [--plan-out FILE] [--full-tree]` plans only (copy is the default). Run the plan with `yojaka --write apply FILE`.
-  Placeholders: `year month day camera make model format ext name stem parent kind country
-  country_code state district city`; `{month:02}` pads. See the ADR for the folder-dropping rules.
-- TUI screen 4: `e` pattern, `d` folder, `p` next preset, `m` copy/move, `i` infer places, Enter plans (changes
-  nothing), `a` reviews and runs (needs `W`). Examples and a folder overview come from the plan.
+  Placeholders: `year month month_name day camera make model format ext name stem parent kind country
+  country_code state district city`; `{month:02}` pads, `{month_name}` is `Jan` … `Dec` (the presets and
+  the default use it since 2026-11-12). See the ADR for the folder-dropping rules.
+- Confirmation (2026-11-12, CLI and TUI): a copy asks only y/n; a move always needs `move N files` typed.
+- TUI screen 4 is a form (2026-11-12, user feedback): rows Layout (preset or Custom), Pattern, Destination,
+  Action (copy / move), Without GPS (No Location folder / guess the place). `↑ ↓` choose a row, Enter
+  changes it (types in a text box, or takes the next choice), `← →` step a choice. Text boxes are shaded
+  (`theme::input`); `~` in the destination is the home folder. The Preview panel (summary, folders,
+  examples) re-plans by itself after each change; a change during a plan stops it and plans again.
+  `a` reviews and runs. The old letter keys `e d p m i` are gone.
 - Core: `yojaka_core::organize` (`template`, `planner`), `exec::transfer`, `exec::organize_run`.
 - Tests: `tests/organize.rs` (planner), `tests/organize_exec.rs` (apply, resume, pairs, refusals; the
   cross-volume test is ignored), template proptest, TUI `organize_screen`, CLI `organize_plans_then_apply...`.
-- Not done: live re-planning while typing; a place picker. (`index-only` was dropped from FR-41 on 2026-11-11.)
+- Not done: re-planning on every key while typing (it re-plans after Enter); a place picker. (`index-only`
+  was dropped from FR-41 on 2026-11-11.)
+- Open (found 2026-11-12): organizing the same folder twice re-offers exact duplicates that share a name.
+  Two identical `IMG_0112.gif` in different source folders become `IMG_0112.gif` and `IMG_0112 (1).gif`;
+  the second plan matches both sources against `IMG_0112.gif` only and offers `IMG_0112 (2).gif`.
 
 ### Look
 

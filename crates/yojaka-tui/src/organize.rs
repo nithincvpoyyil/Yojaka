@@ -1,8 +1,42 @@
-//! State of the Organize screen: the settings, and the plan they produce.
+//! State of the Organize screen: a short form of settings, and the plan they produce. The plan
+//! follows the settings by itself (working it out only reads), so the screen is: choose, look,
+//! review.
 
 use std::path::{Path, PathBuf};
 
 use yojaka_core::organize::{OrganizePlan, PRESETS, Template, Transfer};
+
+/// The rows of the settings form, top to bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    /// A ready-made pattern, or "Custom".
+    Layout,
+    Pattern,
+    Dest,
+    Action,
+    /// What happens to files without GPS.
+    NoGps,
+}
+
+pub const ROWS: [Row; 5] = [
+    Row::Layout,
+    Row::Pattern,
+    Row::Dest,
+    Row::Action,
+    Row::NoGps,
+];
+
+impl Row {
+    pub fn label(self) -> &'static str {
+        match self {
+            Row::Layout => "Layout",
+            Row::Pattern => "Pattern",
+            Row::Dest => "Destination",
+            Row::Action => "Action",
+            Row::NoGps => "Without GPS",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Editing {
@@ -12,13 +46,16 @@ pub enum Editing {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Phase {
-    /// Settings changed (or nothing planned yet): press Enter to plan.
+    /// Nothing planned for the current settings yet.
     #[default]
     Idle,
     Planning,
     Ready,
     Failed(String),
 }
+
+/// The error text of a plan stopped with Esc.
+pub const STOPPED: &str = "Stopped";
 
 /// What the runtime needs to plan.
 #[derive(Debug, Clone)]
@@ -37,12 +74,18 @@ pub struct OrganizeState {
     pub dest: String,
     pub transfer: Transfer,
     pub infer: bool,
+    /// The selected row of the form (index into `ROWS`).
+    pub cursor: usize,
     pub editing: Option<Editing>,
     backup: String,
     pub phase: Phase,
     pub plan: Option<Box<OrganizePlan>>,
     /// Why the template or folder cannot be used, shown under the settings.
     pub problem: Option<String>,
+    /// The settings changed while a plan was being worked out: drop that plan when it comes.
+    stale: bool,
+    /// The stale plan was asked to stop.
+    cancel_sent: bool,
 }
 
 impl OrganizeState {
@@ -60,11 +103,14 @@ impl OrganizeState {
             dest,
             transfer: Transfer::Copy,
             infer: false,
+            cursor: 0,
             editing: None,
             backup: String::new(),
             phase: Phase::Idle,
             plan: None,
             problem: None,
+            stale: false,
+            cancel_sent: false,
         }
     }
 
@@ -84,7 +130,9 @@ impl OrganizeState {
     pub fn invalidate(&mut self) {
         self.plan = None;
         self.problem = None;
-        if self.phase != Phase::Planning {
+        if self.phase == Phase::Planning {
+            self.stale = true;
+        } else {
             self.phase = Phase::Idle;
         }
     }
@@ -93,14 +141,83 @@ impl OrganizeState {
         self.invalidate();
     }
 
-    pub fn next_preset(&mut self) {
-        let i = self.preset.map_or(0, |i| (i + 1) % PRESETS.len());
+    /// A plan came back. One for settings that changed since is dropped (and planned again).
+    pub fn planned(&mut self, result: Result<Box<OrganizePlan>, String>) {
+        if std::mem::take(&mut self.stale) {
+            self.cancel_sent = false;
+            self.phase = Phase::Idle;
+            return;
+        }
+        match result {
+            Ok(p) => {
+                self.plan = Some(p);
+                self.phase = Phase::Ready;
+            }
+            Err(e) => self.phase = Phase::Failed(e),
+        }
+    }
+
+    /// True once when the plan being worked out is out of date and should be stopped.
+    pub fn take_cancel(&mut self) -> bool {
+        let stop = self.phase == Phase::Planning && self.stale && !self.cancel_sent;
+        self.cancel_sent |= stop;
+        stop
+    }
+
+    /// The settings are complete and nothing is planned for them yet.
+    pub fn wants_plan(&self) -> bool {
+        self.phase == Phase::Idle && self.problem.is_none() && self.editing.is_none()
+    }
+
+    pub fn row(&self) -> Row {
+        ROWS[self.cursor.min(ROWS.len() - 1)]
+    }
+
+    pub fn move_cursor(&mut self, delta: isize) {
+        self.cursor = self.cursor.saturating_add_signed(delta).min(ROWS.len() - 1);
+    }
+
+    pub fn jump(&mut self, to_end: bool) {
+        self.cursor = if to_end { ROWS.len() - 1 } else { 0 };
+    }
+
+    /// Enter on the selected row: type in a text box, or take the next choice.
+    pub fn activate(&mut self) {
+        match self.row() {
+            Row::Pattern => self.start_edit(Editing::Template),
+            Row::Dest => self.start_edit(Editing::Dest),
+            _ => {
+                self.change(true);
+            }
+        }
+    }
+
+    /// ← / → on a choice row: the previous / next choice. False on a text row (nothing to do).
+    pub fn change(&mut self, forward: bool) -> bool {
+        match self.row() {
+            Row::Layout => self.step_preset(forward),
+            Row::Action => self.toggle_transfer(),
+            Row::NoGps => self.toggle_infer(),
+            Row::Pattern | Row::Dest => return false,
+        }
+        true
+    }
+
+    /// The next (or previous) ready-made pattern. From a custom pattern: the first (or last).
+    fn step_preset(&mut self, forward: bool) {
+        let n = PRESETS.len();
+        let i = match (self.preset, forward) {
+            (Some(i), true) => (i + 1) % n,
+            (Some(i), false) => (i + n - 1) % n,
+            (None, true) => 0,
+            (None, false) => n - 1,
+        };
         self.preset = Some(i);
         self.template = PRESETS[i].1.to_string();
         self.invalidate();
     }
 
-    pub fn toggle_transfer(&mut self) {
+    fn toggle_transfer(&mut self) {
         self.transfer = match self.transfer {
             Transfer::Copy => Transfer::Move,
             Transfer::Move => Transfer::Copy,
@@ -108,7 +225,7 @@ impl OrganizeState {
         self.invalidate();
     }
 
-    pub fn toggle_infer(&mut self) {
+    fn toggle_infer(&mut self) {
         self.infer = !self.infer;
         self.invalidate();
     }
@@ -144,6 +261,13 @@ impl OrganizeState {
         }
     }
 
+    /// Ctrl-U while typing: empty the box (Esc still brings the old text back).
+    pub fn clear_text(&mut self) {
+        if let Some(e) = self.editing {
+            self.text_mut(e).clear();
+        }
+    }
+
     pub fn accept_edit(&mut self) {
         let Some(e) = self.editing.take() else { return };
         if *self.text(e) != self.backup {
@@ -166,9 +290,9 @@ impl OrganizeState {
         let template = Template::parse(&self.template).map_err(|e| e.to_string())?;
         let dest = self.dest.trim();
         if dest.is_empty() {
-            return Err("Give a destination folder (press d)".into());
+            return Err("Type a destination folder".into());
         }
-        let dest = std::path::absolute(dest).map_err(|e| e.to_string())?;
+        let dest = std::path::absolute(expand_home(dest)).map_err(|e| e.to_string())?;
         Ok(PlanRequest {
             dest,
             template,
@@ -178,11 +302,16 @@ impl OrganizeState {
     }
 
     pub fn preset_label(&self) -> &'static str {
-        self.preset.map_or("custom", |i| PRESETS[i].0)
+        self.preset.map_or("Custom", |i| PRESETS[i].0)
     }
 
-    /// Up to five example moves, picking different kinds of file: a photo, a video, one with a
-    /// place, one without, one inferred. Never more than `n`.
+    /// False when the pattern has no place folders, so the GPS choice changes nothing.
+    pub fn uses_place(&self) -> bool {
+        Template::parse(&self.template).map_or(true, |t| t.uses_place())
+    }
+
+    /// Up to `n` example moves, picking different kinds of file: a photo, a video, one with a
+    /// place, one without, one inferred.
     pub fn examples(&self, n: usize) -> Vec<(String, String, bool)> {
         use yojaka_core::plan::Op;
         let Some(p) = &self.plan else { return vec![] };
@@ -205,6 +334,9 @@ impl OrganizeState {
             )
         };
         for op in &p.plan.ops {
+            if out.len() >= n {
+                break;
+            }
             let (Op::Move {
                 src, dst, inferred, ..
             }
@@ -228,10 +360,84 @@ impl OrganizeState {
                 rel.display().to_string(),
                 *inferred,
             ));
-            if out.len() >= n {
-                break;
-            }
         }
         out
+    }
+}
+
+/// `~` and `~/x` mean the home folder, as in a shell.
+fn expand_home(s: &str) -> PathBuf {
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty());
+    match home {
+        Some(h) if s == "~" => PathBuf::from(h),
+        Some(h) if s.starts_with("~/") => PathBuf::from(h).join(&s[2..]),
+        _ => PathBuf::from(s),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tilde_means_the_home_folder() {
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        assert_eq!(expand_home("~"), home);
+        assert_eq!(expand_home("~/Pictures/x"), home.join("Pictures/x"));
+        assert_eq!(expand_home("/a/~/b"), PathBuf::from("/a/~/b"));
+        assert_eq!(expand_home("~bob/x"), PathBuf::from("~bob/x"));
+    }
+
+    #[test]
+    fn the_cursor_stays_on_the_form() {
+        let mut o = OrganizeState::new(Path::new("/photos"));
+        o.move_cursor(-1);
+        assert_eq!(o.row(), Row::Layout);
+        o.move_cursor(99);
+        assert_eq!(o.row(), Row::NoGps);
+        o.jump(false);
+        assert_eq!(o.cursor, 0);
+    }
+
+    #[test]
+    fn layout_steps_both_ways_and_a_custom_pattern_starts_again() {
+        let mut o = OrganizeState::new(Path::new("/photos"));
+        assert!(o.change(false));
+        assert_eq!(o.preset_label(), PRESETS[PRESETS.len() - 1].0);
+        assert!(o.change(true));
+        assert_eq!(o.preset_label(), "Date");
+        o.template = "{year}/{name}".into();
+        o.preset = None;
+        assert_eq!(o.preset_label(), "Custom");
+        o.change(true);
+        assert_eq!(o.template, PRESETS[0].1);
+    }
+
+    #[test]
+    fn text_rows_have_no_choices() {
+        let mut o = OrganizeState::new(Path::new("/photos"));
+        o.cursor = 1;
+        assert!(!o.change(true));
+        o.activate();
+        assert_eq!(o.editing, Some(Editing::Template));
+        o.clear_text();
+        assert!(o.template.is_empty());
+        o.cancel_edit();
+        assert_eq!(o.template, PRESETS[0].1, "Esc brings the old text back");
+    }
+
+    #[test]
+    fn a_plan_for_old_settings_is_dropped_and_stopped_once() {
+        let mut o = OrganizeState::new(Path::new("/photos"));
+        o.phase = Phase::Planning;
+        assert!(!o.take_cancel());
+        o.cursor = 3;
+        o.activate(); // copy -> move
+        assert!(o.take_cancel());
+        assert!(!o.take_cancel(), "asked to stop only once");
+        o.planned(Err(STOPPED.into()));
+        assert_eq!(o.phase, Phase::Idle);
+        assert!(o.wants_plan());
     }
 }

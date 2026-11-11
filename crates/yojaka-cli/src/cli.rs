@@ -207,9 +207,10 @@ pub enum Cmd {
         path: PathBuf,
         /// Folder the files go to (created if needed)
         dest: PathBuf,
-        /// Folder pattern, e.g. `{year}/{month:02}/{name}` (default from the config file).
-        /// Placeholders: year month day camera make model format ext name stem parent kind
-        /// country country_code state district city
+        /// Folder pattern, e.g. `{year}/{month_name}/{name}` (default from the config file).
+        /// Placeholders: year month month_name day camera make model format ext name stem parent
+        /// kind country country_code state district city. `{month_name}` is Jan to Dec;
+        /// `{month:02}` is 01 to 12
         #[arg(long, conflicts_with = "preset")]
         template: Option<String>,
         /// A ready-made pattern
@@ -243,7 +244,8 @@ pub enum Cmd {
     /// Run a saved plan: moves the listed files to the Trash. Shows a dry run unless --write is given
     Apply {
         file: PathBuf,
-        /// Skip the y/n question for small plans (large plans still need the phrase typed)
+        /// Skip the y/n question of a copy or a small Trash plan (a move, a large Trash plan and a
+        /// permanent delete still need the phrase typed)
         #[arg(long)]
         yes: bool,
         /// Finish a plan that was started and interrupted

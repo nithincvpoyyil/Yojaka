@@ -23,6 +23,8 @@ const MAGENTA: (u8, u8, u8) = (0xfb, 0x94, 0xff);
 const CYAN: (u8, u8, u8) = (0x80, 0xfc, 0xff);
 /// Secondary text: the background lightened towards the selection blue (not in the palette).
 const MUTED: (u8, u8, u8) = (0x7f, 0x9d, 0xb8);
+/// A text box: between the background and the selection blue, so it reads as a field.
+const INPUT: (u8, u8, u8) = (0x1f, 0x46, 0x62);
 
 fn truecolor() -> bool {
     static TRUE: OnceLock<bool> = OnceLock::new();
@@ -114,6 +116,25 @@ pub fn selected() -> Style {
         .fg(c(FOREGROUND))
         .bg(c(SELECTION))
         .add_modifier(Modifier::BOLD)
+}
+/// A text box you can type in (Organize: pattern, destination).
+pub fn input() -> Style {
+    Style::new().fg(c(FOREGROUND)).bg(c(INPUT))
+}
+/// The text box while you type in it.
+pub fn input_editing() -> Style {
+    Style::new()
+        .fg(c(FOREGROUND))
+        .bg(c(SELECTION))
+        .add_modifier(Modifier::BOLD)
+}
+/// The text cursor inside a box.
+pub fn cursor() -> Style {
+    Style::new().fg(c(YELLOW)).bg(c(SELECTION))
+}
+/// A value picked from a list (`‹ Copy ›`).
+pub fn choice() -> Style {
+    Style::new().fg(c(CYAN)).add_modifier(Modifier::BOLD)
 }
 /// The row/node under the cursor in an unfocused pane.
 pub fn selected_dim() -> Style {

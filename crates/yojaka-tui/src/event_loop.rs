@@ -377,9 +377,12 @@ impl Runtime {
 
     /// Works out an organize plan on its own thread. Reads the index; changes no file.
     fn start_plan(&mut self, req: crate::organize::PlanRequest) {
-        self.reap_plan();
-        if self.plan.is_some() {
-            return;
+        // The app asks for a new plan only after the last one reported back, so an old thread
+        // here is at most finishing up: stop it and wait, or the new request would be lost and
+        // the screen would say "working it out" for ever.
+        if let Some((token, h)) = self.plan.take() {
+            token.cancel();
+            let _ = h.join();
         }
         let cancel = CancelToken::new();
         let (engine, sink, tx, token) = (
@@ -405,7 +408,7 @@ impl Runtime {
                     .organize(&root, local, &opts, &sink, &token)
                     .map(Box::new)
                     .map_err(|e| match e {
-                        yojaka_core::YojakaError::Cancelled => "Stopped".to_string(),
+                        yojaka_core::YojakaError::Cancelled => crate::organize::STOPPED.to_string(),
                         other => other.to_string(),
                     });
                 let _ = tx.send(Bg::Planned(result));

@@ -123,11 +123,11 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 
 ### 4.5 Organize (move or copy)
 - **FR-40** Choose a destination root and a **path template**, for example:
-  - `{year}/{month:02}/{name}`
+  - `{year}/{month_name}/{name}` (months named `Jan` to `Dec`; `{month:02}` gives `01` to `12`)
   - `{year}/{camera}/{name}`
   - `{format}/{name}`
-  - `{kind}/{year}/{month:02}/{name}`, which puts photos and videos in separate folders
-  - `{country}/{city}/{year}-{month:02}/{name}`, which sorts by location (FR-44)
+  - `{kind}/{year}/{month_name}/{name}`, which puts photos and videos in separate folders
+  - `{country}/{city}/{year}-{month_name}/{name}`, which sorts by location (FR-44)
 
   The date comes from EXIF (photos) or the container creation date (videos), and falls back to file mtime. Files with no date go to `_undated/`.
 - **FR-41** Choose the operation: **copy** (originals untouched) or **move**. (Index-only was dropped on 2026-11-11: planning already changes nothing until the plan is applied.)
@@ -159,7 +159,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 - **FR-49** Location can be combined with date in any order:
   - `{year}/{country}/{city}` gives year first, then place.
   - `{country}/{city}/{year}` gives place first, then year.
-  The default template stays `{year}/{month:02}/{name}`.
+  The default template is `{year}/{month_name}/{name}`.
 
 ### 4.6 Safety: Plan → Dry-run → Confirm → Execute → Journal
 - **FR-50** Every change is first built as a **Plan**: a list of operations with no side effects. Plans can be saved to a file (`--plan-out plan.json`) and applied later (`yojaka apply plan.json`).
@@ -198,7 +198,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 
 ## 6. Open questions (please answer)
 
-1. ~~**Default organize template:**~~ **DECIDED (2026-10-30):** `{year}/{month:02}/{name}` for photos and videos alike, for example `2023/08/IMG_1234.jpg`. Files with no date go to `_undated/`.
+1. ~~**Default organize template:**~~ **DECIDED (2026-10-30):** `{year}/{month:02}/{name}` for photos and videos alike. Files with no date go to `_undated/`. **CHANGED (2026-11-12):** months are named, so the default is `{year}/{month_name}/{name}`, for example `2023/Aug/IMG_1234.jpg`. The user chose plain `Jan` … `Dec` knowing Finder sorts them by name, not by month.
 2. ~~**Videos:**~~ **DECIDED (2026-10-30):** included in v1. That covers indexing, metadata, exact, likely and name duplicates, organizing, and Live Photo pairing. Similar-video detection comes later.
 3. **Index location:** central (`~/Library/Application Support/yojaka/`, which keeps scanned drives untouched) or next to the data (`<root>/.yojaka/`, which travels with an external drive)? *Proposed: central by default, with a flag to store next to the data.*
 4. **Permanent delete:** should it exist at all, or Trash only?

@@ -320,9 +320,9 @@ Keep rules form a `Vec<KeepRule>` applied in order. Each rule narrows the candid
 
 ### 6.4 Organize planner (FR-40..43)
 - **Template mini-language:**
-  - Placeholders: `{year} {month:02} {day:02} {camera} {make} {model} {format} {ext} {name} {stem} {parent} {kind}` (`{kind}` renders as `Photos` or `Videos`; the labels can be configured).
+  - Placeholders: `{year} {month:02} {month_name} {day:02} {camera} {make} {model} {format} {ext} {name} {stem} {parent} {kind}` (`{kind}` renders as `Photos` or `Videos`; the labels can be configured).
   - Location placeholders: `{country} {country_code} {state} {district} {city}` (see §6.2b). If a placeholder resolves to empty, its path segment is dropped, so there are no `//` or empty folders. A file with no location at all goes to `No Location/`.
-  - Default template: `{year}/{month:02}/{name}` for both kinds. A Live Photo's two halves always land in the same folder.
+  - Default template: `{year}/{month_name}/{name}` for both kinds (`2023/Aug/IMG_1.jpg`; changed from `{month:02}` on 2026-11-12). A Live Photo's two halves always land in the same folder.
   - Literal text is kept as written.
   - Values are sanitized for the filesystem (`/` and `:` become `_`, length is trimmed).
   - A template is parsed once into tokens and rendered for each file.
@@ -415,7 +415,7 @@ yojaka stats [PATH] [--json]
 yojaka dupes [PATH] [--tier exact|likely|name|similar|all] [--similar] [--similar-distance BITS]
              [--keep RULE,...] [--plan-out FILE] [--json]   # only exact groups are marked or planned
 yojaka organize [PATH] --dest DIR --template "{year}/{month:02}" [--copy|--move] [--infer-location] [--plan-out FILE]
-                                     # e.g. --template "{country}/{city}/{year}-{month:02}/{name}"
+                                     # e.g. --template "{country}/{city}/{year}-{month_name}/{name}"
 yojaka plan show FILE [--full-tree]   # dry-run view of a saved plan
 yojaka apply FILE [--yes] [--resume]  # executes; requires --write semantics
 yojaka history
@@ -443,7 +443,7 @@ kinds = ["image", "video"]
 skip_dirs = [".git", "node_modules", ".Trash", "*.photoslibrary"]
 skip_hidden = true
 keep_rules = ["prefer-path:~/Pictures", "highest-resolution", "oldest-taken", "shortest-path"]
-organize_template = "{year}/{month:02}/{name}"   # applies to photos and videos
+organize_template = "{year}/{month_name}/{name}"   # applies to photos and videos
 [location]
 near_km = 25                   # beyond this, {city} becomes "Near <city>"
 far_km = 100                   # beyond this, drop city/district

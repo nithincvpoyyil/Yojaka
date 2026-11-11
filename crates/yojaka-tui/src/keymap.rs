@@ -15,8 +15,9 @@ pub const HELP: &[(&str, &str)] = &[
     ),
     (
         "Shift ← →",
-        "previous / next screen (also ← → outside the Browser)",
+        "previous / next screen (plain ← → on most screens)",
     ),
+    ("T", "pick a screen with ← →, then Enter"),
     ("r  c", "scan again for changes / cancel the running scan"),
     (
         "R",
@@ -60,12 +61,17 @@ pub const HELP: &[(&str, &str)] = &[
         "M",
         "remember the current keep rule as the default next time",
     ),
-    ("", "Organize (writes only after you review)"),
-    ("e  d", "edit the folder pattern / the destination folder"),
-    ("p", "next ready-made pattern"),
-    ("m  i", "copy or move / infer places for files without GPS"),
-    ("Enter", "work out the plan (changes nothing)"),
-    ("a", "review the plan, then run it (needs write mode)"),
+    ("", "Organize (nothing is written before you review it)"),
+    ("j k  ↓ ↑", "choose a setting"),
+    (
+        "Enter",
+        "change it: type in the box, or take the next choice",
+    ),
+    ("← →", "previous / next choice"),
+    ("Enter  Esc", "while typing: keep / undo the edit"),
+    ("Ctrl-U", "while typing: clear the box (~ is your home)"),
+    ("Esc", "stop working out the plan; else pick a screen"),
+    ("a", "review, then run (turns on write mode if you agree)"),
     (
         "P",
         "save the plan to a file (changes no photos; no write mode needed)",
@@ -129,6 +135,9 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
             KeyCode::Esc => Some(Msg::FilterCancel),
             KeyCode::Enter => Some(Msg::FilterAccept),
             KeyCode::Backspace => Some(Msg::Backspace),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(Msg::ClearText)
+            }
             KeyCode::Char(c) if is_plain(key.modifiers) => Some(Msg::Char(c)),
             _ => None,
         };
@@ -184,10 +193,6 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('P') => Msg::SavePlan,
         KeyCode::Char('M') => Msg::Remember,
         KeyCode::Char('E') => Msg::ExportView,
-        KeyCode::Char('e') => Msg::EditTemplate,
-        KeyCode::Char('d') => Msg::EditDest,
-        KeyCode::Char('m') => Msg::ToggleTransfer,
-        KeyCode::Char('i') => Msg::ToggleInfer,
         _ => return None,
     })
 }
@@ -244,6 +249,13 @@ mod tests {
             translate(key(KeyCode::Enter, KeyModifiers::NONE), true, false),
             Some(Msg::FilterAccept)
         ));
+    }
+
+    #[test]
+    fn ctrl_u_clears_only_while_typing() {
+        let k = key(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert!(matches!(translate(k, true, false), Some(Msg::ClearText)));
+        assert!(translate(k, false, false).is_none());
     }
 
     #[test]

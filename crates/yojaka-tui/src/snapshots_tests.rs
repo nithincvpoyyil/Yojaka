@@ -384,7 +384,7 @@ mod saved_choices {
             b.use_config(&config(&[], "{year}/{name}", "copy"));
             b.organize.preset_label()
         };
-        assert_eq!(custom, "custom");
+        assert_eq!(custom, "Custom");
     }
 
     #[test]
@@ -392,7 +392,7 @@ mod saved_choices {
         let mut a = app_at(100, 30);
         a.use_config(&config(&["bogus"], "{nope}/{name}", "teleport"));
         assert_eq!(a.dupes.chain_text(), "oldest-modified,shortest-path");
-        assert_eq!(a.organize.template, "{year}/{month:02}/{name}");
+        assert_eq!(a.organize.template, yojaka_core::organize::PRESETS[0].1);
         assert_eq!(a.organize.transfer, yojaka_core::organize::Transfer::Copy);
         assert!(a.notice.as_ref().unwrap().0.contains("ignored"));
         // The app still works.
@@ -412,12 +412,13 @@ mod saved_choices {
             [Cmd::Remember(Remember::KeepRules(c))] if c == "shortest-path,oldest-modified"
         ));
         a.screen = Screen::Organize;
-        a.update(Msg::ToggleTransfer);
+        a.organize.cursor = 3; // Action: copy -> move
+        a.update(Msg::Enter);
         let cmds = a.update(Msg::Remember);
         assert!(matches!(
             &cmds[..],
             [Cmd::Remember(Remember::Organize { template, mode })]
-                if template == "{year}/{month:02}/{name}" && mode == "move"
+                if template == yojaka_core::organize::PRESETS[0].1 && mode == "move"
         ));
         a.screen = Screen::Browser;
         assert!(a.update(Msg::Remember).is_empty());
@@ -1654,7 +1655,10 @@ mod write_path {
     fn write_mode_is_asked_for_and_can_be_turned_off() {
         let mut a = with_dupes(80, 24);
         a.update(Msg::ToggleWrite);
-        assert!(matches!(a.modal, Some(Modal::EnableWrite)));
+        assert!(matches!(
+            a.modal,
+            Some(Modal::EnableWrite { then_review: false })
+        ));
         assert_eq!(a.mode, Mode::ReadOnly, "still off until confirmed");
         assert!(draw(&a, 80, 24).contains("Turn on write mode?"));
         a.update(Msg::Char('n'));
@@ -1669,11 +1673,26 @@ mod write_path {
     }
 
     #[test]
-    fn nothing_can_be_reviewed_while_read_only() {
+    fn review_in_read_only_mode_asks_for_write_mode_first() {
         let mut a = with_dupes(80, 24);
         let cmds = a.update(Msg::ReviewPlan);
-        assert!(cmds.is_empty() && a.modal.is_none());
-        assert!(a.notice.as_ref().unwrap().0.contains("Write mode is off"));
+        assert!(cmds.is_empty());
+        assert!(matches!(
+            a.modal,
+            Some(Modal::EnableWrite { then_review: true })
+        ));
+        assert_eq!(a.mode, Mode::ReadOnly, "still off until confirmed");
+        assert!(draw(&a, 80, 24).contains("turn on and review"));
+        a.update(Msg::Char('n'));
+        assert!(a.modal.is_none() && a.mode == Mode::ReadOnly);
+
+        a.update(Msg::ReviewPlan);
+        a.update(Msg::Enter);
+        assert_eq!(a.mode, Mode::Write);
+        assert!(
+            matches!(a.modal, Some(Modal::Review(_))),
+            "the review follows"
+        );
     }
 
     #[test]
@@ -1809,7 +1828,7 @@ mod write_path {
             a.mode = Mode::Write;
             a.update(Msg::ReviewPlan);
             let _ = draw(&a, w, h);
-            a.modal = Some(Modal::EnableWrite);
+            a.modal = Some(Modal::EnableWrite { then_review: true });
             let _ = draw(&a, w, h);
             a.modal = Some(Modal::Report(vec![crate::modal::ReportLine {
                 text: "a very long line ".repeat(10),
@@ -1842,7 +1861,7 @@ mod organize_screen {
 
     use super::*;
     use crate::modal::Modal;
-    use crate::organize::Phase;
+    use crate::organize::{Editing, Phase, Row};
     use crate::worker::Bg;
 
     fn organize_app(w: u16, h: u16) -> App {
@@ -1888,123 +1907,254 @@ mod organize_screen {
         })
     }
 
+    /// Moves the form cursor to `row`.
+    fn select(a: &mut App, row: Row) {
+        a.update(Msg::Top);
+        while a.organize.row() != row {
+            a.update(Msg::Down);
+        }
+    }
+
+    /// Lets the first plan finish, so the next change starts a fresh one.
+    fn planned(a: &mut App, n: usize) {
+        a.update(Msg::Tick);
+        a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(n)))));
+        assert_eq!(a.organize.phase, Phase::Ready);
+    }
+
     #[test]
     fn the_screen_shows_the_settings_at_every_size() {
         for (w, h) in [(40, 12), (80, 24), (120, 40)] {
             let a = organize_app(w, h);
             let out = draw(&a, w, h);
             if w >= 80 {
-                assert!(out.contains("{year}/{month:02}/{name}"), "{out}");
-                assert!(out.contains("Yojaka Organized"), "{out}");
+                for text in [
+                    "{year}/{month_name}/{name}",
+                    "Yojaka Organized",
+                    "‹ Date ›",
+                    "‹ Copy ›",
+                    "‹ No Location folder ›",
+                    "Destination",
+                    "▶ Layout",
+                ] {
+                    assert!(out.contains(text), "{text}: {out}");
+                }
+                let footer = out.lines().last().unwrap();
+                assert!(footer.contains("choose") && footer.contains("review & run"));
             }
         }
     }
 
     #[test]
-    fn presets_cycle_and_the_template_can_be_edited_or_the_edit_dropped() {
+    fn arrows_choose_a_row_and_enter_or_left_right_change_it() {
         let mut a = organize_app(100, 30);
-        a.update(Msg::NextRule);
+        a.update(Msg::Enter); // Layout: the next ready-made pattern
         assert!(a.organize.template.contains("{country}"));
         assert_eq!(a.organize.preset_label(), "Place");
+        a.update(Msg::Left);
+        assert_eq!(a.organize.preset_label(), "Date");
+        assert_eq!(a.screen, Screen::Organize, "← → stay on the screen");
 
-        a.update(Msg::EditTemplate);
+        select(&mut a, Row::Action);
+        a.update(Msg::Right);
+        assert_eq!(a.organize.transfer, Transfer::Move);
+        assert!(draw(&a, 100, 30).contains("‹ Move ›"));
+        select(&mut a, Row::NoGps);
+        a.update(Msg::Enter);
+        assert!(a.organize.infer);
+        assert!(
+            draw(&a, 100, 30).contains("not used"),
+            "the date pattern has no place folders"
+        );
+
+        // On a text row ← → do nothing, not even change the screen.
+        select(&mut a, Row::Dest);
+        a.update(Msg::Right);
+        assert_eq!(a.screen, Screen::Organize);
+        assert!(a.organize.editing.is_none());
+    }
+
+    #[test]
+    fn the_pattern_can_be_typed_cleared_or_the_edit_dropped() {
+        let mut a = organize_app(100, 30);
+        select(&mut a, Row::Pattern);
+        a.update(Msg::Enter);
+        assert_eq!(a.organize.editing, Some(Editing::Template));
+        let out = draw(&a, 100, 30);
+        assert!(out.lines().last().unwrap().contains("Ctrl-U"), "{out}");
         type_text(&mut a, "/x");
         a.update(Msg::FilterCancel);
         assert_eq!(
-            a.organize.template, "{country}/{city}/{name}",
+            a.organize.template,
+            yojaka_core::organize::PRESETS[0].1,
             "Esc drops the edit"
         );
 
-        a.update(Msg::EditTemplate);
-        type_text(&mut a, "/extra");
+        a.update(Msg::Enter);
+        a.update(Msg::ClearText);
+        type_text(&mut a, "{year}/{name}");
         a.update(Msg::FilterAccept);
-        assert!(a.organize.template.ends_with("/extra"));
-        assert_eq!(a.organize.preset_label(), "custom");
+        assert_eq!(a.organize.template, "{year}/{name}");
+        assert_eq!(a.organize.preset_label(), "Custom");
     }
 
     #[test]
     fn a_bad_template_is_explained_and_nothing_is_planned() {
         let mut a = organize_app(100, 30);
         a.organize.template = "{nope}/{name}".into();
-        let cmds = a.update(Msg::Enter);
-        assert!(cmds.is_empty());
-        assert!(draw(&a, 100, 30).contains("unknown placeholder"));
+        assert!(a.update(Msg::Tick).is_empty());
+        let out = draw(&a, 100, 30);
+        assert!(out.contains("unknown placeholder"), "{out}");
+        assert!(out.contains("Fix the setting"), "{out}");
+        assert!(
+            a.update(Msg::Tick).is_empty(),
+            "not retried until it changes"
+        );
+
         a.organize.template = "{year}/{name}".into();
         a.organize.dest = String::new();
-        a.update(Msg::Enter);
+        a.organize.invalidate();
+        a.update(Msg::Tick);
         assert!(draw(&a, 100, 30).contains("destination folder"));
     }
 
     #[test]
-    fn enter_plans_and_the_result_shows_examples_and_folders() {
+    fn the_preview_follows_the_settings() {
         let mut a = organize_app(100, 40);
-        let cmds = a.update(Msg::Enter);
+        let cmds = a.update(Msg::Tick);
         assert!(matches!(&cmds[..], [Cmd::PlanOrganize(r)] if r.transfer == Transfer::Copy));
         assert_eq!(a.organize.phase, Phase::Planning);
+        assert!(draw(&a, 100, 40).contains("Working out"));
         assert!(
-            a.update(Msg::Enter).is_empty(),
+            a.update(Msg::Tick).is_empty(),
             "no second plan while one runs"
         );
 
         a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(6)))));
         assert_eq!(a.organize.phase, Phase::Ready);
         let out = draw(&a, 100, 40);
+        assert!(out.contains("6 files (6.0 KB) will be copied"), "{out}");
         assert!(out.contains("IMG_0.jpg"), "{out}");
         assert!(out.contains("2023/08"), "{out}");
-        assert!(out.contains("50% have a place"), "{out}");
         assert!(out.contains("≈"), "the inferred example is marked: {out}");
+
+        // A change plans again by itself.
+        select(&mut a, Row::Action);
+        let cmds = a.update(Msg::Enter);
+        assert!(matches!(&cmds[..], [Cmd::PlanOrganize(r)] if r.transfer == Transfer::Move));
+        assert!(a.organize.plan.is_none());
     }
 
     #[test]
-    fn changing_a_setting_drops_the_old_plan() {
+    fn a_change_while_planning_drops_the_old_plan_and_plans_again() {
         let mut a = organize_app(100, 40);
-        a.update(Msg::Enter);
-        a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(3)))));
-        a.update(Msg::ToggleTransfer);
-        assert!(a.organize.plan.is_none() && a.organize.phase == Phase::Idle);
-        assert_eq!(a.organize.transfer, Transfer::Move);
-        a.update(Msg::ToggleInfer);
-        assert!(a.organize.infer);
+        a.update(Msg::Tick);
+        select(&mut a, Row::Action);
+        let cmds = a.update(Msg::Enter);
+        assert!(matches!(&cmds[..], [Cmd::CancelPlan]), "{cmds:?}");
+        // The plan for the old settings arrives anyway: it is not shown, and a new one starts.
+        let cmds = a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(3)))));
+        assert!(a.organize.plan.is_none());
+        assert!(matches!(&cmds[..], [Cmd::PlanOrganize(r)] if r.transfer == Transfer::Move));
     }
 
     #[test]
-    fn a_failed_plan_says_why() {
+    fn nothing_is_planned_before_a_scan_or_while_one_runs() {
+        let mut a = organize_app(100, 30);
+        a.dashboard.scan.running = true;
+        assert!(a.update(Msg::Tick).is_empty());
+        assert!(draw(&a, 100, 30).contains("Waiting for the scan"));
+        a.dashboard.scan.running = false;
+        assert!(matches!(&a.update(Msg::Tick)[..], [Cmd::PlanOrganize(_)]));
+
+        let mut b = app_at(100, 30);
+        b.dashboard.no_index = true;
+        b.update(Msg::Goto(Screen::Organize));
+        assert!(b.update(Msg::Tick).is_empty());
+        assert!(draw(&b, 100, 30).contains("Scan this folder first"));
+    }
+
+    #[test]
+    fn a_failed_plan_says_why_and_is_not_retried_by_itself() {
         let mut a = organize_app(100, 40);
-        a.update(Msg::Enter);
+        a.update(Msg::Tick);
         a.update(Msg::Bg(Bg::Planned(Err(
             "/System/x is a protected location".into(),
         ))));
         assert!(draw(&a, 100, 40).contains("protected location"));
+        assert!(a.update(Msg::Tick).is_empty());
     }
 
     #[test]
-    fn running_a_plan_needs_write_mode_and_a_review() {
+    fn esc_stops_the_plan_and_a_change_starts_it_again() {
+        let mut a = organize_app(100, 40);
+        a.update(Msg::Tick);
+        assert!(matches!(&a.update(Msg::Back)[..], [Cmd::CancelPlan]));
+        a.update(Msg::Bg(Bg::Planned(Err(crate::organize::STOPPED.into()))));
+        assert!(draw(&a, 100, 40).contains("Change a setting"));
+        assert!(matches!(&a.update(Msg::Enter)[..], [Cmd::PlanOrganize(_)]));
+    }
+
+    #[test]
+    fn esc_hands_the_arrows_to_the_tabs() {
+        let mut a = organize_app(100, 30);
+        planned(&mut a, 1);
+        a.update(Msg::Back);
+        assert!(a.tab_mode);
+        a.update(Msg::Right);
+        assert_eq!(a.screen, Screen::History);
+    }
+
+    #[test]
+    fn review_asks_for_write_mode_then_a_copy_needs_only_a_yes() {
         let mut a = organize_app(100, 40);
         a.update(Msg::ReviewPlan);
-        assert!(a.notice.as_ref().unwrap().0.contains("Write mode is off"));
-        a.update(Msg::ToggleWrite);
-        a.update(Msg::Char('y'));
-        a.update(Msg::ReviewPlan);
-        assert!(a.notice.as_ref().unwrap().0.contains("Enter first"));
-
-        a.update(Msg::Enter);
+        assert!(
+            a.notice.as_ref().unwrap().0.contains("Wait"),
+            "nothing planned yet"
+        );
         a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(4)))));
+
         a.update(Msg::ReviewPlan);
+        assert!(matches!(
+            a.modal,
+            Some(Modal::EnableWrite { then_review: true })
+        ));
+        assert_eq!(a.mode, Mode::ReadOnly);
+        a.update(Msg::Char('y'));
+        assert_eq!(a.mode, Mode::Write);
         assert!(matches!(a.modal, Some(Modal::Review(_))));
         let out = draw(&a, 100, 40);
         assert!(out.contains("Copy 4 files"), "{out}");
         assert!(out.contains("The originals stay"), "{out}");
+        assert!(out.contains("y / Enter"), "a copy asks yes or no: {out}");
         let cmds = a.update(Msg::Char('y'));
         assert!(matches!(&cmds[..], [Cmd::ApplyPlan(p)] if p.file_ops() == 4));
         assert!(draw(&a, 100, 40).contains("Copying files"));
     }
 
     #[test]
+    fn a_move_needs_the_phrase_typed_even_for_two_files() {
+        let mut a = organize_app(100, 40);
+        a.mode = Mode::Write;
+        a.update(Msg::Tick);
+        let mut p = organize_plan(2);
+        p.plan.mode = OpMode::Move;
+        a.update(Msg::Bg(Bg::Planned(Ok(p))));
+        a.update(Msg::ReviewPlan);
+        assert!(draw(&a, 100, 40).contains("Type \"move 2 files\""));
+        assert!(a.update(Msg::Char('y')).is_empty(), "y is text here");
+        assert!(a.update(Msg::Enter).is_empty());
+        a.update(Msg::Backspace);
+        type_text(&mut a, "move 2 files");
+        assert!(matches!(&a.update(Msg::Enter)[..], [Cmd::ApplyPlan(_)]));
+    }
+
+    #[test]
     fn a_plan_with_nothing_to_do_is_not_reviewed() {
         let mut a = organize_app(100, 40);
         a.mode = Mode::Write;
-        a.update(Msg::Enter);
-        a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(0)))));
+        planned(&mut a, 0);
         a.update(Msg::ReviewPlan);
         assert!(a.modal.is_none());
         assert!(draw(&a, 100, 40).contains("already in place"));
@@ -2015,8 +2165,7 @@ mod organize_screen {
         use crate::worker::ExecOutcome;
         let mut a = organize_app(100, 40);
         a.mode = Mode::Write;
-        a.update(Msg::Enter);
-        a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(2)))));
+        planned(&mut a, 2);
         let cmds = a.update(Msg::Bg(Bg::ExecFinished(ExecOutcome::Applied(Box::new(
             yojaka_core::exec::ApplyReport {
                 copied: 2,
@@ -2026,17 +2175,40 @@ mod organize_screen {
         )))));
         assert!(a.organize.plan.is_none());
         assert!(cmds.iter().any(|c| matches!(c, Cmd::StartScan { .. })));
+        assert!(
+            !cmds.iter().any(|c| matches!(c, Cmd::PlanOrganize(_))),
+            "no plan while the scan runs"
+        );
         assert!(draw(&a, 100, 40).contains("2 copied"));
     }
 
     #[test]
-    fn typing_goes_to_the_field_not_to_the_commands() {
+    fn typing_goes_to_the_box_and_a_tilde_is_the_home_folder() {
         let mut a = organize_app(100, 30);
-        a.update(Msg::EditDest);
-        a.update(Msg::Backspace);
-        type_text(&mut a, "q");
+        planned(&mut a, 1);
+        select(&mut a, Row::Dest);
+        a.update(Msg::Enter);
+        a.update(Msg::ClearText);
+        type_text(&mut a, "~/q");
         assert!(!a.should_quit);
-        assert!(a.organize.dest.ends_with('q') || a.organize.dest.ends_with("Organize"));
+        assert_eq!(a.organize.dest, "~/q");
+        let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
+        let cmds = a.update(Msg::FilterAccept);
+        assert!(
+            matches!(&cmds[..], [Cmd::PlanOrganize(r)] if r.dest == home.join("q")),
+            "{cmds:?}"
+        );
+    }
+
+    #[test]
+    fn a_plan_that_finishes_while_you_type_is_kept() {
+        let mut a = organize_app(100, 30);
+        a.update(Msg::Tick);
+        select(&mut a, Row::Dest);
+        a.update(Msg::Enter);
+        a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(2)))));
+        assert_eq!(a.organize.phase, Phase::Ready);
+        assert!(a.organize.editing.is_some());
     }
 
     #[test]
@@ -2044,12 +2216,14 @@ mod organize_screen {
         for (w, h) in [(20, 6), (40, 12), (60, 16), (80, 24)] {
             let mut a = organize_app(w, h);
             let _ = draw(&a, w, h);
-            a.update(Msg::EditTemplate);
+            select(&mut a, Row::Pattern);
             let _ = draw(&a, w, h);
-            a.update(Msg::FilterCancel);
             a.update(Msg::Enter);
             let _ = draw(&a, w, h);
+            a.update(Msg::FilterCancel);
             a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(30)))));
+            let _ = draw(&a, w, h);
+            select(&mut a, Row::NoGps);
             let _ = draw(&a, w, h);
         }
     }

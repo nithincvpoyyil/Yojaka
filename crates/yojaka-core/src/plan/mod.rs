@@ -381,15 +381,12 @@ impl Plan {
         }
     }
 
-    /// Plans this big (or any permanent delete) need the phrase typed, not just a "y".
+    /// Trash plans this big need the phrase typed, not just a "y".
     pub const LARGE_PLAN_FILES: usize = 50;
 
     pub fn is_permanent(&self) -> bool {
         self.mode == OpMode::DeletePermanent
     }
-
-    /// Copies leave the originals alone, so only a very large copy plan asks for typing.
-    pub const LARGE_COPY_FILES: usize = 1000;
 
     /// Files the plan acts on (folders to create and skipped files do not count).
     pub fn file_ops(&self) -> usize {
@@ -416,13 +413,14 @@ impl Plan {
             .count()
     }
 
+    /// A copy leaves the originals alone, so it only asks yes or no. A move or a permanent
+    /// delete always needs the phrase typed; a Trash plan from `LARGE_PLAN_FILES` files.
     pub fn needs_typed_confirmation(&self) -> bool {
-        let limit = if self.mode == OpMode::Copy {
-            Self::LARGE_COPY_FILES
-        } else {
-            Self::LARGE_PLAN_FILES
-        };
-        self.is_permanent() || self.file_ops() >= limit
+        match self.mode {
+            OpMode::Copy => false,
+            OpMode::Move | OpMode::DeletePermanent => true,
+            OpMode::Trash => self.file_ops() >= Self::LARGE_PLAN_FILES,
+        }
     }
 
     /// The words the user types to confirm, e.g. `trash 120 files` / `delete 4 files forever`.
@@ -482,5 +480,46 @@ impl Plan {
         serde_json::from_slice(&bytes).map_err(|e| {
             YojakaError::Internal(format!("{} is not a valid plan: {e}", path.display()))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Fingerprint;
+
+    fn plan(mode: OpMode, files: usize) -> Plan {
+        let mut p = Plan::from_dupes(Path::new("/p"), &[]);
+        p.mode = mode;
+        for i in 0..files {
+            p.ops.push(Op::Trash {
+                id: i as u64,
+                path: format!("/p/{i}.jpg").into(),
+                expect: Fingerprint {
+                    size: 1,
+                    mtime_ns: 0,
+                    hash: None,
+                },
+                reason: DupRef {
+                    group: 1,
+                    kept: "/p/k.jpg".into(),
+                    partner: None,
+                    tier: crate::dupes::Tier::Exact,
+                    kept_expect: None,
+                },
+            });
+        }
+        p
+    }
+
+    #[test]
+    fn a_copy_asks_yes_or_no_and_a_move_always_wants_the_phrase() {
+        assert!(!plan(OpMode::Copy, 5000).needs_typed_confirmation());
+        assert!(plan(OpMode::Move, 1).needs_typed_confirmation());
+        assert_eq!(plan(OpMode::Move, 1).confirm_phrase(), "move 1 file");
+        let small = Plan::LARGE_PLAN_FILES - 1;
+        assert!(!plan(OpMode::Trash, small).needs_typed_confirmation());
+        assert!(plan(OpMode::Trash, Plan::LARGE_PLAN_FILES).needs_typed_confirmation());
+        assert!(plan(OpMode::DeletePermanent, 1).needs_typed_confirmation());
     }
 }

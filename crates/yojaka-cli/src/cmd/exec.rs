@@ -181,10 +181,10 @@ pub fn apply(engine: &Engine, a: &ApplyArgs<'_>) -> anyhow::Result<Exit> {
         return Ok(Exit::Ok);
     }
     println!("\n{}", plan.no_undo_note());
-    if a.yes && plan.is_permanent() {
-        println!("\n--yes does not skip the confirmation for a permanent delete.");
+    if a.yes && plan.needs_typed_confirmation() {
+        println!("\n--yes does not skip typing the confirmation for this plan.");
     }
-    let skip_ask = a.yes && !plan.is_permanent() && !plan.needs_typed_confirmation();
+    let skip_ask = a.yes && !plan.needs_typed_confirmation();
     if !skip_ask {
         let phrase = plan.confirm_phrase();
         let ok = if plan.needs_typed_confirmation() {

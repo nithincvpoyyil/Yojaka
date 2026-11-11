@@ -13,6 +13,15 @@ pub fn thousands(n: u64) -> String {
     out
 }
 
+/// `1 file`, `1,200 files`.
+pub fn files(n: u64) -> String {
+    if n == 1 {
+        "1 file".into()
+    } else {
+        format!("{} files", thousands(n))
+    }
+}
+
 /// Decimal units, like the CLI: `1_500` → `1.5 KB`.
 pub fn bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
