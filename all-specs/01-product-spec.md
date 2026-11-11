@@ -132,7 +132,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   - `{country}/{city}/{year}-{month:02}/{name}`, which sorts by location (FR-44)
 
   The date comes from EXIF (photos) or the container creation date (videos), and falls back to file mtime. Files with no date go to `_undated/`.
-- **FR-41** Choose the operation: **copy** (originals untouched), **move**, or **index-only** (just report).
+- **FR-41** Choose the operation: **copy** (originals untouched) or **move**. (Index-only was dropped on 2026-11-11: planning already changes nothing until the plan is applied.)
 - **FR-42** Resolve name conflicts automatically and never overwrite. Use `name (1).jpg`. If the existing file is an exact duplicate, skip it and report it.
 - **FR-43** **Show the proposed directory tree before any change.** For large plans, show a *glimpse*:
   - The top N folders, with file counts and sizes.

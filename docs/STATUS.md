@@ -18,15 +18,14 @@ Committed. Iterations 5, 6 and 7 followed (below).
 | 2 | Metadata, Live Photos, offline places, `info` / `places` / `export` | Done |
 | 3 | TUI: dashboard, file browser, help, scan control | Done |
 | 4 | Exact duplicates (hashing, `dupes`, Duplicates screen) | Done (`1c698fc`) |
-| 5 | Safe executor, History | Committed (`79ea0b6`), **awaiting the user's manual sign-off on a real folder** (ADR-0006) |
-| 6 | Organize (templates, planner, copy/move, undo, screen, CLI) | Committed (`bb1e12e`), **awaiting sign-off** (ADR-0007) |
-| 7 | More duplicate tiers (likely, name, similar) | **Built 2026-11-10, not committed, awaiting sign-off** (ADR-0008) |
+| 5 | Safe executor, History | Done (`79ea0b6`), signed off by the user 2026-11-11 (ADR-0006) |
+| 6 | Organize (templates, planner, copy/move, undo, screen, CLI) | Done (`bb1e12e`), signed off 2026-11-11 (ADR-0007) |
+| 7 | More duplicate tiers (likely, name, similar) | Done (`99db741`), signed off 2026-11-11 (ADR-0008) |
 | 8 | Hardening, performance, release v1.0 | **Next** |
 | 9-10 | See the plan | Not started |
 
-No git tags exist (`v0.1.0` .. `v0.3.0` not created). Everything up to the GeoNames attribution
-commit (`a1c39a9`) is on `origin/main`; the Iteration 5 and 6 commits are local only. Checks at the
-end of the Iteration 7 session: see "Duplicate tiers" below.
+Everything up to `99db741` (Iteration 7) is on `origin/main`. No git tags exist yet (`v0.1.0` ..
+`v0.7.0` not created). Checks at the end of the Iteration 7 session: see "Duplicate tiers" below.
 
 Full check: `source ~/.cargo/env && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo nextest run --workspace && cargo deny check`.
 New insta snapshots: run with `INSTA_UPDATE=always`, then read the `.snap`. The TUI snapshots under
@@ -168,7 +167,7 @@ The first write-capable release. Off by default: no `--write` means a preview on
 - Core: `yojaka_core::organize` (`template`, `planner`), `exec::transfer`, `exec::organize_run`.
 - Tests: `tests/organize.rs` (planner), `tests/organize_exec.rs` (apply, resume, undo, pairs, refusals; the
   cross-volume test is ignored), template proptest, TUI `organize_screen`, CLI `organize_plans_then_apply...`.
-- Not done: live re-planning while typing; a place picker; `index-only` operation (use `plan show`).
+- Not done: live re-planning while typing; a place picker. (`index-only` was dropped from FR-41 on 2026-11-11.)
 
 ### Look
 
@@ -203,8 +202,6 @@ gitignored. Re-check before the first public release.
 
 ## Open items
 
-- **Iterations 5 and 6** are committed (`79ea0b6`, `bb1e12e`) but not pushed; **Iteration 7** is not committed. All
-  three still need the user's own sign-off on a real folder.
 - Similar tier: every image format is compared since 2026-11-10 (ImageIO for HEIC, AVIF, raw). Not measured on a
   real photo library yet. Colours are not converted to one colour space, so a Display P3 photo and an sRGB copy can miss in strongly
   coloured pictures.
@@ -218,7 +215,7 @@ gitignored. Re-check before the first public release.
   `22:26`). Not looked into.
 - No TUI key writes a plan file yet (only `yojaka dupes --plan-out`).
   Add a `Screen` arm in `view::render` and a state struct like `browser.rs`.
-- Tag `v0.2.0` / `v0.3.0` (and `v0.1.0`) when the user wants.
+- Tag `v0.1.0` .. `v0.7.0` when the user wants.
 - Still missing real samples: iPhone Live Photo pair, iPhone HEVC MOV, Android MP4, GPS-tagged photo. Those
   formats are tested with synthetic `fixturegen` files only. Raw: 7 CC0 files from raw.pixls.us were tried
   (listed in `docs/dupes-accuracy.md`; not kept in the repository).

@@ -242,7 +242,7 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
 - Precision and recall are measured on the fixture's re-encoded and resized variants and recorded in `docs/`.
 - No false positives in the exact tier (regression test).
 
-**Status (2026-11-10): built** (ADR-0008, `docs/dupes-accuracy.md`, `docs/demos/iter-7.md`). Not built: the optional inline thumbnail (a text comparison is shown), The similar tier now compares HEIC, AVIF and raw too (added 2026-11-10 through macOS ImageIO). Awaiting the user's sign-off, like Iterations 5 and 6.
+**Status (2026-11-11): done** (ADR-0008, `docs/dupes-accuracy.md`, `docs/demos/iter-7.md`), committed as `99db741` and signed off by the user, like Iterations 5 and 6. Not built: the optional inline thumbnail (a text comparison is shown). The similar tier also compares HEIC, AVIF and raw (added 2026-11-10 through macOS ImageIO).
 
 ---
 
