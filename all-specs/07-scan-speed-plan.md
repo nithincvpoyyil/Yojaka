@@ -1,6 +1,9 @@
-# 07: Scan speed plan (Iteration 8, Phase 4)
+# 07: Scan speed plan (Iteration 9, Phase 4)
 
-Written 2026-11-11. The user asked for the scan to be made faster as part of Iteration 8 (decision D5 in
+> **Scheduled last in Iteration 9** (user, 2026-11-12): after the dashboard, the real-library tests and the release
+> engineering, before the release candidate (`09-i9-features-release-plan.md`, Phase 4). Nothing here has started.
+
+Written 2026-11-11. The user asked for the scan to be made faster (decision D5 in
 `06-i8-hardening-release-plan.md`). Measure first, then make one change at a time, each with before/after numbers.
 
 ## 1. Where we are

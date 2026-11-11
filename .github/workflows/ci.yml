@@ -18,3 +18,15 @@ jobs:
       - run: cargo deny check
       - run: cargo bench --workspace --no-run
       - run: cargo build --release -p yojaka-cli && ls -lh target/release/yojaka
+  # Fault injection that mounts a small disk image (disk full, cross-volume move). Ignored in the
+  # normal run because they need `hdiutil`; GitHub's macOS runners have it.
+  disk-image:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.99.1" }
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with: { tool: "cargo-nextest" }
+      - run: cargo nextest run --workspace --run-ignored only -E 'test(disk_image) | test(cross_volume)' --profile ci

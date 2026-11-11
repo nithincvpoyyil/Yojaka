@@ -21,8 +21,12 @@ Committed. Iterations 5, 6 and 7 followed (below).
 | 5 | Safe executor, History | Done (`79ea0b6`), signed off by the user 2026-11-11 (ADR-0006) |
 | 6 | Organize (templates, planner, copy/move, undo, screen, CLI) | Done (`bb1e12e`), signed off 2026-11-11 (ADR-0007) |
 | 7 | More duplicate tiers (likely, name, similar) | Done (`99db741`), signed off 2026-11-11 (ADR-0008) |
-| 8 | Hardening, performance, release v1.0 | **Next** |
-| 9-10 | See the plan | Not started |
+| 8 | Hardening: FR audit, saved preferences, fault injection (`06`) | Done 2026-11-11 (`b93a80b`, `0104cbe`, `eb16c83`, Phase 3 commit) |
+| 9 | Features and release v1.0: detailed dashboard, real libraries, release, performance last (`09`) | **Next** (dashboard: waiting for the user's description) |
+| 10 | LLM assist | Not started |
+| 11 | GUI | Not started |
+
+The old Iteration 8 was split on 2026-11-12: hardening stayed in 8, the rest became 9; LLM and GUI moved to 10 and 11.
 
 Everything up to `99db741` (Iteration 7) is on `origin/main`. No git tags exist, and none are planned before `v1.0.0-rc.1` (D1).
 Checks at the end of the Iteration 7 session: see "Duplicate tiers" below.
@@ -204,6 +208,9 @@ gitignored. Re-check before the first public release.
 
 ## Open items
 
+- **Fixed 2026-11-11 (found by the Phase 3 fault tests):** `undo` run after a crash but before `apply --resume`
+  could split a Live Photo pair. `undo` now refuses a run with a half-done step and prints the resume
+  command (ADR-0006 addendum).
 - Similar tier: every image format is compared since 2026-11-10 (ImageIO for HEIC, AVIF, raw). Not measured on a
   real photo library yet. Colours are not converted to one colour space, so a Display P3 photo and an sRGB copy can miss in strongly
   coloured pictures.

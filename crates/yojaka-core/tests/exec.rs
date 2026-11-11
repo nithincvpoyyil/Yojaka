@@ -564,3 +564,167 @@ fn real_trash_round_trip() {
     assert_eq!(std::fs::read(&file).unwrap(), b"real trash round trip");
     assert!(!to.exists());
 }
+
+// ---- Phase 3 fault injection ----
+
+fn only_pair_left(lab: &Lab, ctx: &str) {
+    let left = tree_hash(&lab.root);
+    assert_eq!(left.len(), 2, "{ctx}: one pair stays: {:?}", left.keys());
+    let dirs: std::collections::BTreeSet<_> = left
+        .keys()
+        .map(|p| p.parent().unwrap().to_path_buf())
+        .collect();
+    assert_eq!(dirs.len(), 1, "photo and video stay in the same folder");
+    let exts: std::collections::BTreeSet<_> = left
+        .keys()
+        .map(|p| p.extension().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(exts.len(), 2, "one photo and one video: {exts:?}");
+}
+
+/// Every original content is either still in the tree or in the Trash.
+fn nothing_lost(lab: &Lab, before: &BTreeMap<PathBuf, String>) {
+    let mut have: Vec<String> = tree_hash(&lab.root).into_values().collect();
+    if lab.trash.exists() {
+        have.extend(tree_hash(&lab.trash).into_values());
+    }
+    for (path, hash) in before {
+        assert!(have.contains(hash), "{} is gone", path.display());
+    }
+}
+
+/// A crash between the two halves of a Live Photo must never leave a pair split for good, and
+/// never lose a file. An undo tried before the resume refuses the interrupted step and says
+/// so; the resume then finishes both halves and the undo puts both back.
+#[test]
+fn a_live_photo_pair_is_whole_after_a_crash_at_every_point() {
+    pair_after_crash(&[false]);
+}
+
+/// Found by the Phase 3 fault tests (2026-11-11): an undo run *before* `apply --resume` used to
+/// restore the finished half of a Live Photo and leave the interrupted half for the resume to
+/// finish, splitting the pair. Undo now refuses the whole run until it has been resumed.
+#[test]
+fn an_undo_tried_before_the_resume_is_refused_and_never_splits_a_pair() {
+    pair_after_crash(&[true]);
+}
+
+fn pair_after_crash(early_undo_options: &[bool]) {
+    for crash_at in 1..=2usize {
+        for &undo_too_early in early_undo_options {
+            let (lab, plan) = live_lab();
+            let before = tree_hash(&lab.root);
+            let crashy = CrashAfter {
+                inner: lab.trasher(),
+                left: AtomicUsize::new(crash_at),
+            };
+            let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                apply(
+                    &plan,
+                    &lab.env.paths,
+                    &crashy,
+                    ApplyOptions::default(),
+                    &EventSink::null(),
+                    &CancelToken::new(),
+                )
+            }));
+            assert!(crashed.is_err(), "crash {crash_at}");
+            nothing_lost(&lab, &before);
+
+            let ctx = format!("crash {crash_at}, undo too early {undo_too_early}");
+            if undo_too_early {
+                let tree_then = tree_hash(&lab.root);
+                let trash_then = tree_hash(&lab.trash);
+                let refused = undo(
+                    plan.id,
+                    &lab.env.paths,
+                    &EventSink::null(),
+                    &CancelToken::new(),
+                );
+                match refused {
+                    Err(e @ YojakaError::Interrupted { .. }) => {
+                        assert!(e.to_string().contains("--resume"), "{ctx}: {e}");
+                    }
+                    other => panic!("{ctx}: undo must refuse an interrupted run, got {other:?}"),
+                }
+                assert_eq!(
+                    tree_hash(&lab.root),
+                    tree_then,
+                    "{ctx}: the refusal changed nothing"
+                );
+                assert_eq!(tree_hash(&lab.trash), trash_then, "{ctx}");
+                nothing_lost(&lab, &before);
+            }
+
+            let r = lab
+                .run(
+                    &plan,
+                    ApplyOptions {
+                        resume: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert!(r.is_clean(), "{ctx}: {r:?}");
+            only_pair_left(&lab, &ctx);
+
+            let u = lab.undo(&plan);
+            assert!(u.is_clean(), "{ctx}: {u:?}");
+            assert_eq!(tree_hash(&lab.root), before, "{ctx}");
+        }
+    }
+}
+
+/// Without a journal nothing may run (tech spec §12): a read-only journal folder stops `apply`
+/// before the first file is touched.
+#[test]
+fn a_journal_that_cannot_be_written_stops_everything() {
+    use std::os::unix::fs::PermissionsExt;
+    let lab = Lab::new(2);
+    let before = tree_hash(&lab.root);
+    let plan = lab.plan();
+    lab.env.paths.ensure().unwrap();
+    let dir = lab.env.paths.journal_dir();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let result = lab.run(&plan, ApplyOptions::default());
+
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(result.is_err(), "no journal, no run");
+    assert_eq!(tree_hash(&lab.root), before, "no file was touched");
+    assert!(!lab.trash.exists() || std::fs::read_dir(&lab.trash).unwrap().count() == 0);
+}
+
+/// A file swapped for a symlink between planning and applying is skipped, and the link's target
+/// is left alone.
+#[test]
+fn a_file_replaced_by_a_symlink_is_skipped_and_its_target_is_untouched() {
+    let lab = Lab::new(2);
+    let plan = lab.plan();
+    let victim = plan
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Trash { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let target = lab.root.join("a/unique.jpg");
+    let target_before = std::fs::read(&target).unwrap();
+    std::fs::remove_file(&victim).unwrap();
+    std::os::unix::fs::symlink(&target, &victim).unwrap();
+
+    let report = lab.run(&plan, ApplyOptions::default()).unwrap();
+    assert!(
+        report.skipped.iter().any(|n| n.path == victim),
+        "the swapped file is reported: {report:?}"
+    );
+    assert!(
+        std::fs::symlink_metadata(&victim)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link was not moved"
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), target_before);
+}

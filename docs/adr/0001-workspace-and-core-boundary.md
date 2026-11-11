@@ -3,7 +3,7 @@
 Status: accepted (Iteration 0)
 
 ## Context
-Yojaka starts as a terminal app and is expected to grow a GUI (Iteration 10). Safety rules (journaled writes, Trash only, never overwrite) must hold regardless of which front end drives the engine.
+Yojaka starts as a terminal app and is expected to grow a GUI (Iteration 11; numbered 10 when this was written). Safety rules (journaled writes, Trash only, never overwrite) must hold regardless of which front end drives the engine.
 
 ## Decision
 - `yojaka-core` holds all domain logic and is the only crate that touches the index, files and the journal.

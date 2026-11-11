@@ -447,3 +447,47 @@ fn cross_volume_move_copies_verifies_removes_and_undo_restores() {
         std::panic::resume_unwind(e);
     }
 }
+
+// ---- Phase 3 fault injection ----
+
+/// Organizing into a folder that cannot be written to: no file is half done, nothing is lost, the
+/// originals are untouched, and the run says every file failed.
+#[test]
+fn a_read_only_destination_fails_cleanly_and_touches_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    for transfer in [Transfer::Copy, Transfer::Move] {
+        let lab = Lab::new();
+        let before = tree_hash(&lab.root);
+        std::fs::create_dir_all(&lab.dest).unwrap();
+        let plan = lab.plan("{year}/{name}", transfer);
+        std::fs::set_permissions(&lab.dest, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = apply(
+            &plan,
+            &lab.env.paths,
+            &DirTrash(lab.env.tmp.path().join("trash")),
+            ApplyOptions::default(),
+            &EventSink::null(),
+            &CancelToken::new(),
+        );
+
+        std::fs::set_permissions(&lab.dest, std::fs::Permissions::from_mode(0o755)).unwrap();
+        match result {
+            // Refused as a whole: fine, as long as nothing happened.
+            Err(_) => {}
+            Ok(r) => {
+                assert_eq!(r.copied + r.moved, 0, "{transfer:?}: {r:?}");
+                assert!(!r.failed.is_empty(), "{transfer:?}: failures are reported");
+            }
+        }
+        assert_eq!(
+            tree_hash(&lab.root),
+            before,
+            "{transfer:?}: originals intact"
+        );
+        assert!(
+            tree_hash(&lab.dest).is_empty(),
+            "{transfer:?}: nothing was written into the destination"
+        );
+    }
+}

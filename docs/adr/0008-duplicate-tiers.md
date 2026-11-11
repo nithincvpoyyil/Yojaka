@@ -69,7 +69,7 @@ Measured results are in `docs/dupes-accuracy.md`.
 - The first similar search reads every supported picture in full (about 6 ms per 320×240 fixture
   picture; real photos are larger and slower). Later searches read only new and changed pictures.
 - The BK-tree is exact, but its queries slow down as the library grows. It has not been measured at
-  1M pictures; that belongs to the performance work of Iteration 8.
+  1M pictures; that belongs to the performance work of Iteration 9 (planned for 8 when this was written).
 - Burst shots (same second, same camera) land in the likely tier, and counter collisions
   (`IMG_0001.jpg` from two cameras) in the name tier. That is expected and is why a person reviews.
 - A copy whose pixels were turned (not just flagged), cropped or colour-edited is not found by the

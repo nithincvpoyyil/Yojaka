@@ -1,12 +1,16 @@
-# 06: Iteration 8 plan (hardening, performance, release v1.0)
+# 06: Iteration 8 plan (hardening)
 
 Written 2026-11-11, after I0-I7 were signed off. The goal and acceptance come from `03-iteration-plan.md`
 § Iteration 8. This file breaks them into phases. Do one phase at a time; every phase ends with the full check.
 
-**Acceptance (from the iteration plan):**
-- Every functional requirement FR-1..62 is checked off.
-- Every performance target is met or explained.
+> **Split on 2026-11-12:** Iteration 8 is Phases 0-3 below (done). Phases 4-7 (performance, real-world tests,
+> release engineering, sign-off) moved to Iteration 9: `09-i9-features-release-plan.md`. The decisions in §1
+> still apply there.
+
+**Acceptance (Iteration 8 after the split):**
+- Every functional requirement FR-1..62 is checked off (`docs/fr-checklist.md`).
 - The safety fault-injection suite passes.
+- (Performance targets: moved to Iteration 9.)
 
 ## 0. Ground rules
 
@@ -14,11 +18,11 @@ Written 2026-11-11, after I0-I7 were signed off. The goal and acceptance come fr
 - Full check: `cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo nextest run --workspace && cargo deny check`.
 - Tests and measurements run only on `fixturegen` trees in `out/` (never `/private/tmp`, which is protected),
   with a throw-away `YOJAKA_HOME`. Delete large `out/` trees afterwards.
-- **Real libraries (Phase 5) are run by the user, or by Claude only with the user's go-ahead for that folder,
+- **Real libraries (now Iteration 9, Phase 2) are run by the user, or by Claude only with the user's go-ahead for that folder,
   read-only.** Write operations on real data run only on a copy or a scratch folder.
 - Before v1.0 the schema can still change by editing the original migrations (no fix-up migrations). **From
-  v1.0 on this stops:** any later schema change needs a real migration. So Phase 2 and Phase 4 must finish
-  their schema changes before the tag.
+  v1.0 on this stops:** any later schema change needs a real migration. So every schema change (Phase 2 here,
+  Iteration 9) must be done before the tag.
 - Commit only when the user asks. If the code does not match what this plan says, stop and tell the user.
 
 ## 1. Decisions
@@ -119,115 +123,29 @@ disk-image cross-volume test (`organize_exec.rs:404`). Missing from tech spec §
 7. **Live Photo pair invariant** under every fault above: a pair is never split (assert on the final tree).
 
 Disk-image tests stay `#[ignore]` locally but get their own CI job (`cargo nextest run --run-ignored only -E
-'test(/disk_image/)'`), since GitHub macOS runners allow `hdiutil`. Group the suite as
-`crates/yojaka-core/tests/fault_injection.rs` plus the CLI kill tests in `crates/yojaka-cli/tests/`.
+'test(/disk_image/)'`), since GitHub macOS runners allow `hdiutil`. The suite lives in
+`crates/yojaka-cli/tests/fault_kill.rs` (real kills, read-only destination, disk image) and `crates/yojaka-core/tests/exec.rs` /
+`organize_exec.rs` (in-process faults). **Built 2026-11-11.** It found one bug (undo before resume could split a Live Photo), fixed the same day (ADR-0006 addendum).
 
-## Phase 4: Performance (3 days, plus 4-6 days for the scan speed work)
+## Phases 4-7: moved to Iteration 9
 
-**Scan speed (D5) has its own plan: `07-scan-speed-plan.md`** (stages S0-S6, goals: 1M-entry first scan
-51.9 s → ≤ 15 s, 104k scan + metadata 7.5 s → ≤ 4 s). This phase covers everything else measured in §10.
-Do the 07 plan first, because it changes the numbers below.
+On 2026-11-12 the user split this plan. Iteration 8 is Phases 0-3 above (done). Performance, real-world
+testing, release engineering and sign-off moved to **Iteration 9, `09-i9-features-release-plan.md`**, with
+a feature phase (the detailed dashboard) in front. LLM assist is now Iteration 10, and GUI is Iteration 11.
 
-### 4.1 Tools
+## Status
 
-- `brew install hyperfine samply` (samply instead of `cargo flamegraph`: flamegraph needs `dtrace` as root
-  on macOS; samply does not). Instruments (Time Profiler, Allocations) for memory.
-- Build with the existing `profiling` profile (`--profile profiling`, symbols kept).
+**Done 2026-11-11.**
 
-### 4.2 Measure every tech spec §10 target
+| Phase | Commit |
+|---|---|
+| Phase 0 | `b93a80b` |
+| Phase 1 | `0104cbe` |
+| Phase 2 | `eb16c83` |
+| Phase 3 | fault-injection suite and the undo fix (ADR-0006 addendum) |
 
-Fill a new "Targets" table at the top of `docs/perf.md`: target, measured, met / explained, how measured.
-
-| Target | Today | Work |
-|---|---|---|
-| Walk only, 1M entries < 10 s | Not measured alone (1M first scan 51.9 s) | `07` stage S1. |
-| Scan + metadata 100k < 30 s | 7.5 s | `07` (goal ≤ 4 s). |
-| Rescan 100k < 5 s | 0.5 s + 0.9 s pairing | `07` stage S4. |
-| Exact-dupe pass, 100k / 300 GB, 10% dupes: disk-bound | Only 20k small files measured | `fixturegen --big` (or a flag for file size) on an external SSD, a few hundred GB if space allows, else scale down and explain. Compare read MB/s with `dd` on the same disk. |
-| Peak RSS < 250 MB on a 1M index | 25 MB scan; **similar tier peaked at 500 MB** (full-size JPEG decode, STATUS open item) | Decode JPEG/PNG/etc. through ImageIO with a max size (like HEIC), or `image`'s thumbnail path; bump `LOOK_VERSION`; cap decode concurrency by memory. Re-check `dupes_accuracy`. |
-| TUI frame < 16 ms on 1M rows | 0.2-4.3 ms | Re-measure. |
-
-Also measure, not targets: statistics at 1M (4.0 s), text filter at 1M (1.5 s), similar tier over 100k
-pictures, the BK-tree at 1M pictures (STATUS: not measured), Organize planning at 1M.
-
-### 4.3 Tune
-
-Profile the slowest three, then tune thread counts (performance against efficiency cores; `threads = 0`
-should mean performance cores), SQLite batch sizes, channel bounds and hash read caps. Record each change
-with before/after numbers. Any target still missed gets a written reason in `docs/perf.md` (acceptance says
-"met or explained").
-
-### 4.4 CI
-
-The benchmark smoke test exists (`cargo bench --no-run`). Add a 10k-file scan timed in CI with a generous
-limit, so a large regression fails the build.
-
-## Phase 5: Real-world testing (the user's libraries; 2 days of the user's time)
-
-Each run: release build, a throw-away `YOJAKA_HOME`, read-only first (`scan`, `stats`, `dupes --tier all
---similar`, `organize --plan-out`, `plan show`). Write steps only on a copy or a scratch destination.
-
-| # | Library | What to check |
-|---|---|---|
-| R1 | iPhone export with Live Photos and 4K HEVC videos | Pairing count matches Photos; HEIC/HEVC metadata; video read under 1 MB each (`--debug` log); similar tier on real HEIC (STATUS: never measured); Display P3 against sRGB copies |
-| R2 | External exFAT drive and an HFS+ drive | Walk, hard links (none on exFAT), mtime precision (exFAT has 2 s / 10 ms), cross-volume organize copy and undo to a scratch folder |
-| R3 | iCloud Drive folder with "optimize storage" on | Dataless files listed as cloud-only and **never downloaded** (watch Activity Monitor / `brctl` network; check `SF_DATALESS` before and after) |
-| R4 | More than 1M files (a whole volume or a big backup) | Times and peak RSS against §10; TUI stays smooth; cancel and resume |
-| R5 | Odd Unicode names | NFD from HFS+ against NFC typed names, emoji, RTL, zero-width, very long paths (> 1024 bytes), names with newlines; shown, searched, exported and organized right. Also build a fixturegen tree with these so it becomes an automated test |
-
-Write findings to `docs/real-world-tests.md` with no private paths, names or places (counts and timings only).
-Bugs found become tests on synthetic fixtures. If the user agrees, add the missing real samples (iPhone Live
-Photo pair, HEVC MOV, Android MP4, GPS photo; under 1 MB each) to `tests/data/` (gitignored) for local tests.
-
-Also decide the open question in STATUS: is a scan root that is itself a symlink refused? (Recommended: resolve
-it and scan the target, as the protected-path check already resolves it, and say so in the header.)
-
-## Phase 6: Release engineering (2-3 days)
-
-1. **Version.** Workspace version `1.0.0`; `--version` long form shows the commit; CHANGELOG `[1.0.0]`.
-2. **Build.** `MACOSX_DEPLOYMENT_TARGET = "14.0"` (D8) in `.cargo/config.toml`; check the binary with
-   `otool -l` (`LC_BUILD_VERSION minos 14.0`; it says `11.0` today). Add `macos-14` to CI next to
-   `macos-latest`. The release profile already has LTO, `codegen-units = 1`, `strip`, `panic = "abort"`.
-   Check that the panic hook still restores the terminal with `panic = "abort"` (a test that panics in a
-   child TUI process under a pty).
-3. **Signing: not for v1.0** (D6). The binary stays ad-hoc signed by the linker (`codesign -dv`:
-   `adhoc,linker-signed`). The release notes and README say why a downloaded tarball needs
-   `xattr -d com.apple.quarantine yojaka`. Developer ID signing and notarization stay a later step.
-4. **Release workflow** `.github/workflows/release.yml`, on a `v*` tag: build on `macos-14`, check `minos`
-   and `--version`, `yojaka-<ver>-aarch64-apple-darwin.tar.gz` + `.sha256`, GitHub Release with the CHANGELOG
-   section as notes. Dry-run on a `v1.0.0-rc.1` tag first. Details: `08-homebrew-tap-plan.md` §4.
-5. **Homebrew tap** (D9): **plan `08-homebrew-tap-plan.md`** (tap repo `nithincvpoyyil/homebrew-yojaka`, a
-   binary formula, a test on a clean account, manual bump script for v1.0, automatic later).
-6. **README for users.** What it is, the safety promise, install (brew / tarball), first run, the five
-   screens, the main CLI flows (dupes → plan → apply → undo; organize), Full Disk Access note, privacy (offline,
-   no telemetry, GPS left out of exports), license and GeoNames credit. GIF demos recorded with `vhs`
-   (`brew install vhs`, scripts in `docs/demos/*.tape`) **on fixture trees only**, never real photos.
-7. **Privacy check again just before the tag** (the first check is in Phase 0): the same search over the
-   new commits, and check that the GIFs show fixture paths only.
-8. **Docs.** Fill the missing demo scripts `docs/demos/iter-4.md`..`iter-6.md` and `iter-8.md`; update the
-   tech spec §10 (final targets), §15 (distribution as built), product spec §6 (Q5: macOS 14, the last 4
-   majors); ADR-0010 for the release and Homebrew setup (ADR-0009 is the scan pipeline, plan 07).
-
-## Phase 7: Acceptance and sign-off
-
-- [ ] `docs/fr-checklist.md`: every FR done or changed by a recorded decision.
-- [ ] `docs/perf.md`: every §10 target met or explained, with numbers from the v1.0 build.
-- [ ] Fault-injection suite passes locally and in CI (including the disk-image job).
-- [ ] Real-world runs R1-R5 recorded in `docs/real-world-tests.md`.
-- [ ] Full check clean; release binary under 100 MB (9.2 MB at I7).
-- [ ] Scan speed goals from `07-scan-speed-plan.md` met or explained.
-- [ ] `v1.0.0-rc.1` released through the workflow, installed with brew on a clean account, Gatekeeper does
-      not block it (`08-homebrew-tap-plan.md` "Done when").
-- [ ] `docs/STATUS.md`, `CHANGELOG.md`, iteration plan status updated. The user signs off, then tag `v1.0.0`.
-
-## Order and size
-
-Phase 0 → 1 → 2 → 3 → 4 (07 first) → 5 → 6 (08) → 7. Phases 3 and 4 can swap. Phase 5 needs the user and
-can start any time after Phase 1 (findings may add work to Phases 3-4). Rough size: about 3½ weeks with the
-scan speed work, so much larger than the plan's "M"; the extra comes from the FR gaps, the fault-injection
-suite and plan 07.
-
-## Not in I8
-
-Inline thumbnails, the detailed dashboard, place-to-browser filter, more themes, mouse support, similar
-videos (all in `TODO.md` or later iterations). They stay open after v1.0 unless the user moves them in.
+Acceptance for Iteration 8:
+- `docs/fr-checklist.md` is complete: every FR is done or changed by a recorded decision; FR-52's spec text
+  is left to the user (D2).
+- The fault-injection suite passes, including the disk-image tests.
+- The performance targets moved to Iteration 9 with the rest.

@@ -1,4 +1,4 @@
-# 08: Homebrew tap plan (Iteration 8, Phase 6)
+# 08: Homebrew tap plan (Iteration 9, Phase 3)
 
 Written 2026-11-11. The user wants a Homebrew tap (decision D9 in `06-i8-hardening-release-plan.md`).
 Other decisions this plan builds on:

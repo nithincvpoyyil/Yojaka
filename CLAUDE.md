@@ -6,12 +6,13 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 - `all-specs/what-is-it.md`: the original idea
 - `all-specs/01-product-spec.md`: requirements (FR-xx), open questions
 - `all-specs/02-tech-spec.md`: architecture, crates, data model, pipelines, safety engine
-- `all-specs/03-iteration-plan.md`: iterations I0–I10, with acceptance criteria. **Work one iteration at a time.**
+- `all-specs/03-iteration-plan.md`: iterations I0–I11, with acceptance criteria. **Work one iteration at a time.**
 - `all-specs/04-boilerplate-impl-plan.md`: step-by-step plan for the Iteration 0 skeleton (files, crates, code shapes, CI, done checklist)
 - `all-specs/05-scan-walker-fix-plan.md`: scan hang fix (jwalk → dua-core, honest progress). Done 2026-11-09 (ADR-0005).
-- `all-specs/06-i8-hardening-release-plan.md`: Iteration 8 phases (FR audit, saved preferences, fault injection, performance, real-world tests, release), with the decisions it needs.
-- `all-specs/07-scan-speed-plan.md`: I8 scan speed work (measure, cheap fixes, pipeline overlap, rescans), with goals.
-- `all-specs/08-homebrew-tap-plan.md`: I8 Homebrew tap, release tarball and the unsigned-binary notes.
+- `all-specs/06-i8-hardening-release-plan.md`: Iteration 8 (hardening: FR audit, saved preferences, fault injection), done; its decisions D1-D9 still apply.
+- `all-specs/09-i9-features-release-plan.md`: Iteration 9 (detailed dashboard, real-library tests, release engineering, performance last, sign-off and v1.0.0).
+- `all-specs/07-scan-speed-plan.md`: I9 scan speed work (scheduled last) (measure, cheap fixes, pipeline overlap, rescans), with goals.
+- `all-specs/08-homebrew-tap-plan.md`: I9 Homebrew tap, release tarball and the unsigned-binary notes.
 - `docs/STATUS.md`: where the work stands, keys, decisions and open items. Read it when resuming.
 
 ## Rules

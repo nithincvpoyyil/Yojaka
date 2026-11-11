@@ -23,6 +23,12 @@ pub enum YojakaError {
     NoIndex(PathBuf),
     #[error("internal error: {0}")]
     Internal(String),
+    #[error(
+        "this run was interrupted: {steps} step(s) were started but never finished. Nothing was \
+         changed. Finish the run first with `yojaka --write apply {} --resume`, then undo it",
+        plan_copy.display()
+    )]
+    Interrupted { steps: usize, plan_copy: PathBuf },
     #[error("operation cancelled")]
     Cancelled,
     /// e.g. `("dupes", "Iteration 4")`

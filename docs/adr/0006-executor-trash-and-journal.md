@@ -43,4 +43,24 @@ went and has no restore, so undo would have had to guess a name in `~/.Trash`.
 - Free space: the journal volume needs 64 MiB before a run starts (Trash moves on one volume use none).
   Copy and cross-volume move (Iteration 6) will need a real per-destination check.
 - The SIGKILL acceptance test is simulated in-process (a trasher that panics after moving a file but
-  before the journal entry). A real-process kill test has not been written.
+  before the journal entry). ~~A real-process kill test has not been written.~~ Real-process kill tests
+  exist since Iteration 8 (`crates/yojaka-cli/tests/fault_kill.rs`), slowed down by a debug-only switch
+  (`YOJAKA_TEST_OP_DELAY_MS`) in `Journal::write`.
+
+## Addendum (2026-11-11, Iteration 8): undo refuses an interrupted run
+
+The fault tests found that `undo` run after a crash, **before** `apply --resume`, restored the steps the
+journal recorded as done and refused only the step left half done (begun, never finished). The later
+resume then finished that one step, so a Live Photo could end with one half restored and the other in the
+Trash. Nothing was lost, but the pair was split.
+
+Decision: `undo` checks the journal first. If any `apply` step was begun and never finished, it changes
+nothing and returns `YojakaError::Interrupted`, which says how to finish the run
+(`yojaka --write apply <plan copy> --resume`, using the copy of the plan kept next to the journal). After
+the resume, undo works as before. A run stopped with Ctrl-C is not affected: it stops between files and
+leaves no half-done step. The cost: a crashed run must be finished before it can be undone, even when the
+user only wants it gone. For trash, copy and move that is safe, and the undo then reverses all of it.
+
+Tests: `exec::an_undo_tried_before_the_resume_is_refused_and_never_splits_a_pair` (both crash points),
+`fault_kill::undo_refuses_an_interrupted_run_and_the_printed_resume_command_works` (real kill inside a step,
+then the printed command).

@@ -33,7 +33,9 @@ impl UndoReport {
     }
 }
 
-/// Reverses a plan's journal, newest operation first. Safe to run again after a failure or crash.
+/// Reverses a plan's journal, newest operation first. Safe to run again after a failure or crash
+/// of the undo itself. A run whose `apply` was interrupted mid-step is refused as a whole
+/// ([`YojakaError::Interrupted`]) until it has been finished with `apply --resume`.
 pub fn undo(
     plan_id: Uuid,
     paths: &AppPaths,
@@ -56,6 +58,16 @@ pub fn undo(
         .collect();
 
     let applied = journal::last_states(&lines, Run::Apply);
+    // A crash left a step half done (begun, never finished). Undoing around it could put one half
+    // of a Live Photo back while the resume later finishes the other, so nothing is undone until
+    // the run has been finished with `apply --resume`.
+    let interrupted = applied.iter().filter(|e| e.state == State::Begin).count();
+    if interrupted > 0 {
+        return Err(YojakaError::Interrupted {
+            steps: interrupted,
+            plan_copy: journal::plan_copy_path(paths, plan_id),
+        });
+    }
     let undone: HashSet<u64> = journal::last_states(&lines, Run::Undo)
         .into_iter()
         .filter(|e| e.state == State::Done)

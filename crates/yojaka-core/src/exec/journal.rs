@@ -68,6 +68,21 @@ pub enum Line {
     Entry(Entry),
 }
 
+/// Fault-injection tests slow a run down with `YOJAKA_TEST_OP_DELAY_MS`, so a `kill -9` can land
+/// in the middle of it. Debug builds only: a release build has no such switch.
+#[cfg(debug_assertions)]
+fn test_delay() {
+    if let Some(ms) = std::env::var("YOJAKA_TEST_OP_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn test_delay() {}
+
 pub fn now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
@@ -137,6 +152,7 @@ impl Journal {
     }
 
     fn write(&mut self, line: &Line) -> Result<()> {
+        test_delay();
         let mut bytes = serde_json::to_vec(line)
             .map_err(|e| YojakaError::Internal(format!("journal entry: {e}")))?;
         bytes.push(b'\n');

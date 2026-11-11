@@ -77,7 +77,7 @@ layout. Adding the colour signature brought it to the 91 pairs above with the sa
 | similar, second run | no picture is read |
 
 At that rate a first similar search over 10,000 camera pictures takes roughly 3 minutes on this
-machine. The BK-tree grouping has not been measured on large libraries (Iteration 8).
+machine. The BK-tree grouping has not been measured on large libraries (Iteration 9, performance phase).
 
 ## Limits of this measurement
 

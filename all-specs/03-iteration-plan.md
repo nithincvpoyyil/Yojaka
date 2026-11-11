@@ -9,7 +9,7 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
                                                          │
           I6 Organize ◄─ I5 Safe executor ◄─ I4 Exact dupes (read-only) ◄┘
                │
-               └─► I7 Likely/Name/Similar dupes ─► I8 Hardening+Release ─► I9 LLM ─► I10 GUI
+               └─► I7 Likely/Name/Similar dupes ─► I8 Hardening ─► I9 Features+Release v1.0 ─► I10 LLM ─► I11 GUI
 ```
 
 | Iter | Theme | Size | Writes to user files? |
@@ -22,9 +22,12 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
 | 5 | Safe execution engine (trash, journal, undo) | L | **Yes** |
 | 6 | Organize (move/copy, tree preview) | L | Yes |
 | 7 | More duplicate tiers | M | Yes |
-| 8 | Hardening, performance, release v1.0 | M | — |
-| 9 | LLM assist | L | — |
-| 10 | GUI | — | — |
+| 8 | Hardening (FR audit, saved preferences, fault injection) | M | — |
+| 9 | Features and release v1.0 (dashboard, real libraries, release, performance) | L | — |
+| 10 | LLM assist | L | — |
+| 11 | GUI | — | — |
+
+The old Iteration 8 was split on 2026-11-12: hardening stayed in 8, and the rest became Iteration 9 with a feature phase in front. LLM and GUI moved from 9 and 10 to 10 and 11.
 
 ---
 
@@ -246,18 +249,32 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
 
 ---
 
-## Iteration 8: Hardening, performance and release v1.0 (M)
-- Profile with `cargo flamegraph` and Instruments, then tune the thread counts, batch sizes and read caps.
-- Check every performance target in tech spec §10. Publish `docs/perf.md`.
-- Test on real libraries: an iPhone export with Live Photos and 4K videos, an external exFAT or HFS+ drive, an iCloud Drive folder, more than 1M files, and paths with odd Unicode.
-- Saved preferences (FR-62): remembered templates and keep rules.
-- Release build profile, codesigning and notarization, a GitHub Release, a Homebrew tap, and a user README with GIF demos.
+## Iteration 8: Hardening (M)
+> Detailed plan: `06-i8-hardening-release-plan.md` (Phases 0-3).
 
-**Acceptance:** all functional requirements FR-1..62 are checked off, every performance target is met or explained, and the safety fault-injection suite passes.
+- Check every functional requirement against the code and its tests (`docs/fr-checklist.md`) and close the gaps: filtered export, two more keep rules, saving plans and exports from the app, the `history` time zone.
+- Saved preferences (FR-62): remembered templates, copy / move and keep rules, only on request.
+- Safety fault-injection suite: real `kill -9` during `apply` and `undo`, read-only destination, disk full, an unwritable journal, a file swapped for a symlink, Live Photo pairs at every crash point.
+
+**Acceptance:** all functional requirements FR-1..62 are checked off, and the safety fault-injection suite passes.
+
+**Status (2026-11-12): done** (Phases 0-3, 2026-11-11). The fault tests found one bug (undo before resume could split a Live Photo), fixed the same day (ADR-0006 addendum). Commits `b93a80b`, `0104cbe`, `eb16c83`, plus the Phase 3 commit.
 
 ---
 
-## Iteration 9: LLM assist (L), after v1.0
+## Iteration 9: Features and release v1.0 (L)
+> Detailed plan: `09-i9-features-release-plan.md`. Scan speed: `07-scan-speed-plan.md`. Homebrew tap: `08-homebrew-tap-plan.md`.
+
+- **Detailed dashboard** (the user describes it; mockup first).
+- Test on real libraries: an iPhone export with Live Photos and 4K videos, an external exFAT or HFS+ drive, an iCloud Drive folder, more than 1M files, and paths with odd Unicode.
+- Release engineering: version 1.0.0, minimum macOS 14, a release workflow and GitHub Release (ad-hoc signed; no Developer ID yet), a Homebrew tap, and a user README with GIF demos.
+- Performance, **last**: scan speed (plan 07), then every target in tech spec §10, published in `docs/perf.md`. Profile with samply and Instruments, then tune the thread counts, batch sizes and read caps.
+
+**Acceptance:** the dashboard is signed off; real-world runs are recorded; every performance target is met or explained; the FR checklist and the fault-injection suite still hold; `v1.0.0-rc.1` installs with brew on a clean account; the user signs off and `v1.0.0` is tagged.
+
+---
+
+## Iteration 10: LLM assist (L), after v1.0
 - `yojaka-llm` crate with the `LlmProvider` trait, an **Ollama** provider first (installed locally), then Claude and OpenAI (opt-in), then Apple Foundation Models through a Swift helper.
 - Features, in order:
   1. Folder and event naming suggestions in Organize.
@@ -266,7 +283,7 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
   4. Tags and captions.
 - Privacy gate: local by default; `allow_cloud` plus a confirmation in each session before anything goes to a cloud provider.
 
-## Iteration 10: GUI (later)
+## Iteration 11: GUI (later)
 - Decide between Tauri and SwiftUI (tech spec §14), then build on `yojaka-core` unchanged.
 
 ---

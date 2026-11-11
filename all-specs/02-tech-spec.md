@@ -469,7 +469,7 @@ User choices made in the TUI (template, keep rules) are written back to this fil
 
 ## 10. Performance targets and benchmarking
 
-Reference machine: M-series MacBook with an internal SSD (the development machine is an M4 Pro with 12 cores and 24 GB RAM). These are **initial targets**; Iteration 8 checks and adjusts them.
+Reference machine: M-series MacBook with an internal SSD (the development machine is an M4 Pro with 12 cores and 24 GB RAM). These are **initial targets**; Iteration 9 checks and adjusts them.
 
 | Benchmark | Target |
 |-----------|--------|
@@ -507,7 +507,7 @@ CI runs on GitHub Actions `macos-14` (arm64) or later: `fmt`, `clippy -D warning
 - `tracing` writes to `~/Library/Logs/yojaka/yojaka.log` with daily rotation. Set the level with `YOJAKA_LOG=debug`.
 - A panic hook restores the terminal (leaves the alternate screen and disables raw mode) before printing the panic.
 
-## 13. LLM integration (design only; Iteration 9+)
+## 13. LLM integration (design only; Iteration 10+)
 
 ```rust
 pub trait LlmProvider: Send + Sync {
