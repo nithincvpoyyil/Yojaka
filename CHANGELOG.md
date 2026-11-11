@@ -6,6 +6,13 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ### Iteration 8 (hardening, performance, release v1.0)
 - In progress. Plans: `all-specs/06-i8-hardening-release-plan.md`, `07-scan-speed-plan.md`, `08-homebrew-tap-plan.md`.
+- `yojaka export` can be limited: `--kind image|video`, `--year`, `--find TEXT` (name, camera or place, as in the file browser) and `--folder DIR`.
+- File browser `E` exports the files shown to a new CSV in Yojaka's data folder. Duplicates and Organize `P` save the plan to a file there (`yojaka plan show <file>`); neither needs write mode.
+- Two more keep rules: `largest-file` and `has-exif`.
+- `docs/fr-checklist.md`: each functional requirement against the code and its tests.
+
+### Fixed (Iteration 8)
+- `yojaka history` printed times in UTC while the History screen used local time. Both now show local time.
 
 ### Added (Iteration 7: more duplicate tiers)
 - Three more kinds of duplicate, besides identical files. They are guesses, so they are only listed for review: no rule marks them and the command line never puts them in a plan.

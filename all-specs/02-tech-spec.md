@@ -321,7 +321,7 @@ Keep rules form a `Vec<KeepRule>` applied in order. Each rule narrows the candid
 ### 6.4 Organize planner (FR-40..43)
 - **Template mini-language:**
   - Placeholders: `{year} {month:02} {day:02} {camera} {make} {model} {format} {ext} {name} {stem} {parent} {kind}` (`{kind}` renders as `Photos` or `Videos`; the labels can be configured).
-  - Location placeholders: `{country} {country_code} {state} {district} {city}` (see §6.2b). If a placeholder resolves to empty, its path segment is dropped, so there are no `//` or empty folders. A file with no location at all goes to `_no_location/`.
+  - Location placeholders: `{country} {country_code} {state} {district} {city}` (see §6.2b). If a placeholder resolves to empty, its path segment is dropped, so there are no `//` or empty folders. A file with no location at all goes to `No Location/`.
   - Default template: `{year}/{month:02}/{name}` for both kinds. A Live Photo's two halves always land in the same folder.
   - Literal text is kept as written.
   - Values are sanitized for the filesystem (`/` and `:` become `_`, length is trimmed).
@@ -455,7 +455,7 @@ near_km = 25                   # beyond this, {city} becomes "Near <city>"
 far_km = 100                   # beyond this, drop city/district
 infer = false                  # --infer-location
 infer_window_minutes = 120
-no_location_dir = "_no_location"
+no_location_dir = "No Location"
 language = "en"               # place-name language (ASCII names in v1)
 large_plan_threshold = 1000
 exiftool_fallback = false

@@ -16,20 +16,9 @@ pub fn render(app: &App, f: &mut Frame, area: Rect) {
     render_detail(app, f, l.detail);
 }
 
-/// `2026-11-09 14:03` in the local time zone, falling back to UTC.
+/// `2026-11-09 14:03` in the local time zone (same as `yojaka history`).
 pub fn when(ts: i64) -> String {
-    use time::macros::format_description;
-    let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]");
-    let utc = time::OffsetDateTime::from_unix_timestamp(ts).ok();
-    let local = utc.and_then(|t| {
-        time::UtcOffset::local_offset_at(t)
-            .ok()
-            .map(|o| t.to_offset(o))
-    });
-    local
-        .or(utc)
-        .and_then(|t| t.format(&fmt).ok())
-        .unwrap_or_else(|| ts.to_string())
+    yojaka_core::meta::format_run_time(ts)
 }
 
 fn status_style(s: RunStatus) -> ratatui::style::Style {

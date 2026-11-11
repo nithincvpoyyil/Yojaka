@@ -591,3 +591,53 @@ fn organize_into_a_protected_folder_is_refused() {
         .failure()
         .stderr(predicate::str::contains("protected"));
 }
+
+#[test]
+fn export_can_be_limited_by_kind_text_and_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let export = |extra: &[&str]| -> Vec<serde_json::Value> {
+        let out = yojaka(tmp.path())
+            .args(["export", "--format", "json"])
+            .arg(&tree)
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    let all = export(&[]);
+    assert!(all.len() >= 60);
+    assert_eq!(export(&["--kind", "image"]).len(), all.len());
+    assert!(export(&["--kind", "video"]).is_empty());
+    assert!(export(&["--year", "1800"]).is_empty());
+
+    let first = std::path::PathBuf::from(all[0]["path"].as_str().unwrap());
+    let name = first.file_name().unwrap().to_string_lossy().into_owned();
+    let found = export(&["--find", &name]);
+    assert!(!found.is_empty() && found.len() < all.len());
+    assert!(
+        found
+            .iter()
+            .all(|o| o["path"].as_str().unwrap().contains(&name))
+    );
+
+    let dir = first.parent().unwrap();
+    let in_dir = export(&["--folder", dir.to_str().unwrap()]);
+    assert!(!in_dir.is_empty());
+    assert!(in_dir.iter().all(|o| {
+        o["path"]
+            .as_str()
+            .unwrap()
+            .starts_with(dir.to_str().unwrap())
+    }));
+}

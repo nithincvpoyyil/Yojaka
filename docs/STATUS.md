@@ -44,7 +44,7 @@ automatically in `~/Library` (no user choice, no jargon).
 | `--about` | MIT license and the GeoNames CC BY 4.0 credit. Creates nothing on disk. |
 | `--local-index` | Hidden. For tests and tooling only: keeps the data inside the folder. |
 
-CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`, `export`, `doctor`.
+CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`, `export` (`--kind image|video`, `--year`, `--find TEXT`, `--folder DIR`), `doctor`.
 `dupes` (all tiers; see below), `plan show`, `apply`, `undo`, `history` (Iteration 5; see below). `organize` (Iteration 6; see below).
 
 ### TUI keys (the `?` overlay is generated from `keymap.rs`)
@@ -57,6 +57,7 @@ CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`
   `t` all / photos / videos, `s` sort column, `S` reverse. **Enter on a file opens it with the OS default
   app** (`/usr/bin/open`); iCloud-only files are refused; a vanished file gives a footer message.
 - Scan: `r` rescan (incremental), `R` scan from scratch (asks y/n), `c` or Esc cancel (keeps partial results).
+- File browser `E` exports the files shown to a new CSV in `<data>/exports/`; Duplicates and Organize `P` save the plan to `<data>/plans/` (both work in read-only mode: they write only Yojaka's own folder).
 - Other: `?` help, `D` debug overlay (frame / fetch times), `q` quit, Ctrl-C stops the scan, then quits.
 
 ### Duplicates: exact tier (Iteration 4)
@@ -72,7 +73,7 @@ Finding copies never deletes anything: results are marks and a saved plan file. 
 - A Live Photo pair is one item. A pair only matches another pair with the same image **and** video; a pair never
   matches a lone image. Toggling, rules and the plan always act on both halves.
 - `yojaka dupes PATH [--keep RULES] [--plan-out FILE] [--json]` (tiers: next section). `--keep` chains rules, comma separated: `oldest-taken`, `oldest-modified`, `newest-modified`, `shortest-path`,
-  `prefer-path:DIR`, `highest-resolution`, `longest-duration`, `highest-bitrate`. Default
+  `prefer-path:DIR`, `highest-resolution`, `longest-duration`, `highest-bitrate`, `largest-file`, `has-exif`. Default
   `oldest-modified,shortest-path`; the last tie-break is always the path bytes, then the file id. `--plan-out` never
   overwrites a file (exit 2).
 - TUI screen 3: `f` find (`F` with pictures, `v` tier filter: next section), `j k` move, `Tab` groups / copies, `Space` mark, `Enter` keep only this copy (on a group:
@@ -211,10 +212,6 @@ gitignored. Re-check before the first public release.
   no `--force`. Checked on the 7 samples and 210 files in parallel (0.34 s). The similar tier still ignores raw sizes.
 - The similar tier decodes JPEG / PNG etc. at full size (a 30 MP JPEG is about 90 MB; peak 500 MB seen with 7 at
   once). ImageIO could shrink them while decoding, as for HEIC (would need a `LOOK_VERSION` bump).
-- The CLI `history` shows a different hour than the History screen for the same run (seen 2026-11-10: `11:26` and
-  `22:26`). Not looked into.
-- No TUI key writes a plan file yet (only `yojaka dupes --plan-out`).
-  Add a `Screen` arm in `view::render` and a state struct like `browser.rs`.
 - Still missing real samples: iPhone Live Photo pair, iPhone HEVC MOV, Android MP4, GPS-tagged photo. Those
   formats are tested with synthetic `fixturegen` files only. Raw: 7 CC0 files from raw.pixls.us were tried
   (listed in `docs/dupes-accuracy.md`; not kept in the repository).

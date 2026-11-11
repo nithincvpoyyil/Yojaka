@@ -161,6 +161,18 @@ pub enum Cmd {
         /// Write to this new file instead of stdout (an existing file is never overwritten)
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Only photos or only videos
+        #[arg(long, value_enum, default_value = "all")]
+        kind: KindArg,
+        /// Only files taken in this year
+        #[arg(long)]
+        year: Option<i32>,
+        /// Only files whose name, camera or place contains this text (as `/` in the file browser)
+        #[arg(long, value_name = "TEXT")]
+        find: Option<String>,
+        /// Only files in this folder (inside the scanned one)
+        #[arg(long, value_name = "DIR")]
+        folder: Option<PathBuf>,
     },
     /// Find duplicate files and preview what could be removed (changes nothing)
     Dupes {

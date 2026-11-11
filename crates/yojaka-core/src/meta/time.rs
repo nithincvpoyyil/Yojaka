@@ -1,7 +1,7 @@
 //! Tiny calendar helpers: wall-clock text ↔ unix seconds, with no timezone applied.
 
 /// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's algorithm).
-pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -68,6 +68,30 @@ pub fn format_local(secs: i64) -> String {
     )
 }
 
+/// `2026-11-09 14:03` for a unix timestamp, in the local time zone (UTC when the zone is unknown).
+/// The one formatter for run times, so the command line and the app always agree.
+pub fn format_run_time(ts: i64) -> String {
+    format_run_time_at(
+        ts,
+        time::UtcOffset::local_offset_at(
+            time::OffsetDateTime::from_unix_timestamp(ts)
+                .unwrap_or(time::OffsetDateTime::UNIX_EPOCH),
+        )
+        .ok(),
+    )
+}
+
+/// Like [`format_run_time`] with a fixed offset (`None` = UTC).
+pub fn format_run_time_at(ts: i64, offset: Option<time::UtcOffset>) -> String {
+    use time::macros::format_description;
+    let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]");
+    time::OffsetDateTime::from_unix_timestamp(ts)
+        .ok()
+        .map(|t| t.to_offset(offset.unwrap_or(time::UtcOffset::UTC)))
+        .and_then(|t| t.format(&fmt).ok())
+        .unwrap_or_else(|| ts.to_string())
+}
+
 /// Seconds since 1904-01-01 (QuickTime epoch) → unix seconds. Unset (0) or pre-1970 → `None`.
 pub(crate) fn from_mac_epoch(secs: u64) -> Option<i64> {
     const OFFSET: u64 = 2_082_844_800;
@@ -76,6 +100,17 @@ pub(crate) fn from_mac_epoch(secs: u64) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn run_time_uses_the_given_offset() {
+        let ist = time::UtcOffset::from_hms(5, 30, 0).ok();
+        assert_eq!(super::format_run_time_at(0, None), "1970-01-01 00:00");
+        assert_eq!(super::format_run_time_at(0, ist), "1970-01-01 05:30");
+        assert_eq!(
+            super::format_run_time_at(1_800_000_000, None),
+            "2027-01-15 08:00"
+        );
+    }
+
     use super::*;
 
     #[test]

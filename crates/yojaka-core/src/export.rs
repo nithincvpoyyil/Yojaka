@@ -6,6 +6,7 @@ use std::io::Write;
 use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 
+use crate::browse::{BrowseQuery, Browser};
 use crate::meta::format_local;
 use crate::{Result, YojakaError};
 
@@ -15,9 +16,14 @@ pub enum ExportFormat {
     Json,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ExportOptions {
     pub include_gps: bool,
+    /// The same filter the file browser uses (folder, kind, text on name / camera / place).
+    /// The default exports everything.
+    pub query: BrowseQuery,
+    /// Only files taken in this year (by the recorded date).
+    pub year: Option<i32>,
 }
 
 const COLUMNS: &[&str] = &[
@@ -55,7 +61,7 @@ const SQL: &str = "SELECT f.full_path, f.media_kind, f.format, f.size_bytes, m.w
 m.taken_at_src, m.camera_make, m.camera_model, m.lens, m.orientation, m.duration_ms, m.fps, m.rotation, \
 m.video_codec, m.audio_codec, m.container, m.frames, m.pair_id, m.place_country_code, m.place_country, \
 m.place_state, m.place_city, m.place_dist_km, m.loc_src, f.metadata_status, m.gps_lat, m.gps_lon \
-FROM file f LEFT JOIN meta m ON m.file_id = f.id ORDER BY f.full_path";
+FROM file f LEFT JOIN meta m ON m.file_id = f.id";
 
 /// A spreadsheet treats a cell starting with one of these as a formula. File names and EXIF
 /// strings are untrusted, so such text cells are prefixed with `'`.
@@ -77,11 +83,33 @@ fn csv_cell(v: &Value) -> String {
     }
 }
 
-fn rows(conn: &Connection, opts: ExportOptions) -> Result<Vec<Vec<(&'static str, Value)>>> {
+/// The export query: the browser's filter, plus an optional year, in path order.
+fn filtered_sql(opts: &ExportOptions) -> (String, Vec<rusqlite::types::Value>) {
+    use rusqlite::types::Value as Sql;
+    let (mut where_sql, mut params) = Browser::filter(&opts.query);
+    if let Some(year) = opts.year {
+        // `taken_at` is the recorded wall-clock time as unix seconds, no time zone applied.
+        let lo = crate::meta::days_from_civil(i64::from(year), 1, 1) * 86_400;
+        let hi = crate::meta::days_from_civil(i64::from(year) + 1, 1, 1) * 86_400;
+        params.push(Sql::Integer(lo));
+        params.push(Sql::Integer(hi));
+        let n = params.len();
+        let clause = format!("m.taken_at >= ?{} AND m.taken_at < ?{n}", n - 1);
+        where_sql = if where_sql.is_empty() {
+            format!(" WHERE {clause}")
+        } else {
+            format!("{where_sql} AND {clause}")
+        };
+    }
+    (format!("{SQL}{where_sql} ORDER BY f.full_path"), params)
+}
+
+fn rows(conn: &Connection, opts: &ExportOptions) -> Result<Vec<Vec<(&'static str, Value)>>> {
     use std::os::unix::ffi::OsStrExt;
-    let mut stmt = conn.prepare(SQL)?;
+    let (sql, params) = filtered_sql(opts);
+    let mut stmt = conn.prepare(&sql)?;
     let mut out = Vec::new();
-    let mut q = stmt.query([])?;
+    let mut q = stmt.query(rusqlite::params_from_iter(params))?;
     while let Some(r) = q.next()? {
         let path: Vec<u8> = r.get(0)?;
         let opt_s = |i: usize| -> rusqlite::Result<Value> {
@@ -151,7 +179,7 @@ pub fn export(
     out: &mut dyn Write,
 ) -> Result<u64> {
     let io = |e: std::io::Error| YojakaError::Internal(format!("write failed: {e}"));
-    let rows = rows(conn, opts)?;
+    let rows = rows(conn, &opts)?;
     match format {
         ExportFormat::Csv => {
             let mut header: Vec<&str> = COLUMNS.to_vec();

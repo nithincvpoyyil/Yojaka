@@ -373,7 +373,7 @@ impl Browser {
     }
 
     /// `WHERE` clause (with a leading space) plus its parameters, numbered as pushed.
-    fn filter(q: &BrowseQuery) -> (String, Vec<Value>) {
+    pub(crate) fn filter(q: &BrowseQuery) -> (String, Vec<Value>) {
         let mut clauses: Vec<String> = vec![];
         let mut params: Vec<Value> = vec![];
         if let Some(folder) = &q.folder {

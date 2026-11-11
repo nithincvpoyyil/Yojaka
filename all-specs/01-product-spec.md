@@ -71,12 +71,10 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 - **FR-15** Show live progress (files found, files processed, files per second, current folder). Allow cancel with `Esc`/`Ctrl-C`. Keep partial results.
 
 ### 4.3 Metadata
-- **FR-20** Extract the following per file:
+- **FR-20** Extract the following per file (colour type, bit depth and PNG text chunks were dropped on 2026-11-11: nothing uses them, and PNG text can hold personal text):
   - Dimensions.
   - Format and MIME type.
-  - Color type and bit depth where cheap to get.
   - EXIF: date taken (`DateTimeOriginal`), camera make and model, lens, orientation, GPS present yes/no (coordinates stored, not shown by default).
-  - PNG text chunks.
   - GIF frame count (animated or not).
 - **FR-20a** Extract the following per video:
   - Duration.
@@ -148,7 +146,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   - Distance to that town (km)
 - **FR-45** Location placeholders for templates: `{country}`, `{country_code}`, `{state}`, `{district}`, `{city}`.
   - **Precision guard:** if the nearest town is more than 25 km away (configurable), `{city}` becomes `Near <city>`. If it is more than 100 km away, for example at sea or in a remote area, only `{country}` or `{state}` is used, where those are known.
-  - Files with no location go to `_no_location/` (the folder name can be changed).
+  - Files with no location go to `No Location/` (the folder name can be changed).
 - **FR-46** **Inferred location (opt-in, `--infer-location`):** a file without GPS borrows the place of a geotagged file when:
   - It was taken by the **same camera or phone**, **and**
   - It was taken within **±2 hours** (configurable) of the geotagged file.
@@ -167,7 +165,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 - **FR-50** Every change is first built as a **Plan**: a list of operations with no side effects. Plans can be saved to a file (`--plan-out plan.json`) and applied later (`yojaka apply plan.json`).
 - **FR-51** The **dry-run / before-after view** shows:
   - Totals: N moves, N trashes, N copies, bytes affected, space reclaimed.
-  - The before tree next to the after tree.
+  - The folders affected, as one tree with file counts and sizes: where files are removed from (duplicates) or where they will go (organize).
   - Any warnings: cross-volume moves, low free space, files changed since the scan.
 - **FR-52** Confirmation:
   - The user must confirm explicitly.

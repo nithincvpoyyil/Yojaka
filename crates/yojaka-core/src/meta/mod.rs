@@ -19,7 +19,9 @@ use crate::geo::GeoPoint;
 use crate::model::Format;
 
 pub use pass::{FileReport, MetaOptions, MetaSummary, extract_path, report, run};
-pub use time::{format_local, parse_exif_datetime};
+pub use time::{
+    days_from_civil, format_local, format_run_time, format_run_time_at, parse_exif_datetime,
+};
 
 pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek> ReadSeek for T {}

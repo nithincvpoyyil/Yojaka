@@ -296,6 +296,24 @@ fn dashboard_error_for_a_protected_folder() {
 // ---- Browser -----------------------------------------------------------------------------
 
 #[test]
+fn e_exports_the_files_the_browser_shows() {
+    let mut a = app_at(100, 30);
+    a.dashboard_stats(stats());
+    a.update(Msg::Goto(Screen::Browser));
+    a.update(Msg::CycleKind);
+    let cmds = a.update(Msg::ExportView);
+    match &cmds[..] {
+        [Cmd::ExportView(q)] => {
+            assert_eq!(q.kind, yojaka_core::browse::KindFilter::Photos);
+        }
+        other => panic!("expected one export command, got {other:?}"),
+    }
+    // On another screen the key does nothing.
+    a.update(Msg::Goto(Screen::History));
+    assert!(a.update(Msg::ExportView).is_empty());
+}
+
+#[test]
 fn browser_with_rows_and_details() {
     for (w, h) in SIZES {
         let mut a = loaded_browser(w, h);
@@ -1546,6 +1564,18 @@ mod write_path {
         let cmds = a.update(Msg::ReviewPlan);
         assert!(cmds.is_empty() && a.modal.is_none());
         assert!(a.notice.as_ref().unwrap().0.contains("Write mode is off"));
+    }
+
+    #[test]
+    fn a_plan_can_be_saved_in_read_only_mode_without_a_review() {
+        let mut a = with_dupes(100, 40);
+        assert_eq!(a.mode, Mode::ReadOnly);
+        // Nothing is marked yet by the copy-rule: mark one, then save.
+        let marked = a.dupes.marked_files();
+        assert!(marked > 0, "the fixture marks some copies");
+        let cmds = a.update(Msg::SavePlan);
+        assert!(matches!(&cmds[..], [Cmd::SavePlan(p)] if p.ops.len() == marked));
+        assert!(a.modal.is_none(), "saving never opens the review box");
     }
 
     #[test]

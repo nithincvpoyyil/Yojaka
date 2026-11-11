@@ -409,14 +409,7 @@ pub fn history(engine: &Engine, json: bool) -> anyhow::Result<Exit> {
     Ok(Exit::Ok)
 }
 
-/// `2026-11-09 14:03` (UTC).
+/// `2026-11-09 14:03` in the local time zone (same as the History screen).
 fn when(ts: i64) -> String {
-    use time::macros::format_description;
-    time::OffsetDateTime::from_unix_timestamp(ts)
-        .ok()
-        .and_then(|t| {
-            t.format(format_description!("[year]-[month]-[day] [hour]:[minute]"))
-                .ok()
-        })
-        .unwrap_or_else(|| ts.to_string())
+    yojaka_core::meta::format_run_time(ts)
 }

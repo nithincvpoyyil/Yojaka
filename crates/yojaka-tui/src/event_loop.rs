@@ -80,12 +80,84 @@ impl Runtime {
                 }
                 Cmd::LoadHistory => self.load_history(),
                 Cmd::PlanOrganize(req) => self.start_plan(*req),
+                Cmd::SavePlan(plan) => self.save_plan(&plan),
+                Cmd::ExportView(query) => self.export_view(*query),
                 Cmd::CancelPlan => {
                     if let Some((token, _)) = &self.plan {
                         token.cancel();
                     }
                 }
             }
+        }
+    }
+
+    /// Writes the plan to a new file in the data folder. Never overwrites, touches no photos.
+    fn save_plan(&self, plan: &yojaka_core::plan::Plan) {
+        let dir = self.engine.paths.plans_dir();
+        let name = format!(
+            "plan-{}.json",
+            &uuid::Uuid::now_v7().simple().to_string()[..12]
+        );
+        let file = dir.join(&name);
+        let result = std::fs::create_dir_all(&dir)
+            .map_err(|e| e.to_string())
+            .and_then(|()| plan.save(&file).map_err(|e| e.to_string()));
+        let msg = match result {
+            Ok(()) => format!(
+                "Saved the plan to {}  (yojaka plan show <file>)",
+                file.display()
+            ),
+            Err(e) => format!("Could not save the plan: {e}"),
+        };
+        let _ = self.bg_tx.send(Bg::Notice(msg));
+    }
+
+    /// Writes the files the browser shows to a new CSV in the data folder (GPS left out).
+    fn export_view(&self, query: yojaka_core::browse::BrowseQuery) {
+        let (engine, tx) = (self.engine.clone(), self.bg_tx.clone());
+        let (root, local) = (self.root.clone(), self.local_index);
+        let spawned = std::thread::Builder::new()
+            .name("export".into())
+            .spawn(move || {
+                let dir = engine.paths.exports_dir();
+                let file = dir.join(format!(
+                    "export-{}.csv",
+                    &uuid::Uuid::now_v7().simple().to_string()[..12]
+                ));
+                let result = (|| -> Result<u64, String> {
+                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                    let f = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&file)
+                        .map_err(|e| e.to_string())?;
+                    let mut w = std::io::BufWriter::new(f);
+                    let opts = yojaka_core::export::ExportOptions {
+                        query,
+                        ..Default::default()
+                    };
+                    let n = engine
+                        .export(
+                            &root,
+                            local,
+                            yojaka_core::export::ExportFormat::Csv,
+                            opts,
+                            &mut w,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    std::io::Write::flush(&mut w).map_err(|e| e.to_string())?;
+                    Ok(n)
+                })();
+                let msg = match result {
+                    Ok(n) => format!("Exported {n} files to {}", file.display()),
+                    Err(e) => format!("Could not export: {e}"),
+                };
+                let _ = tx.send(Bg::Notice(msg));
+            });
+        if let Err(e) = spawned {
+            let _ = self
+                .bg_tx
+                .send(Bg::Notice(format!("Could not export: {e}")));
         }
     }
 

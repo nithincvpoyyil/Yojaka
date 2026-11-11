@@ -24,11 +24,15 @@ pub enum KeepRule {
     HighestResolution,
     LongestDuration,
     HighestBitrate,
+    /// Biggest file on disk.
+    LargestFile,
+    /// Files that carry EXIF (a date taken or a camera) win over files that do not.
+    HasExif,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "unknown keep rule `{0}` (try oldest-taken, oldest-modified, newest-modified, shortest-path, prefer-path:DIR, highest-resolution, longest-duration, highest-bitrate)"
+    "unknown keep rule `{0}` (try oldest-taken, oldest-modified, newest-modified, shortest-path, prefer-path:DIR, highest-resolution, longest-duration, highest-bitrate, largest-file, has-exif)"
 )]
 pub struct ParseKeepRuleError(pub String);
 
@@ -51,6 +55,8 @@ impl FromStr for KeepRule {
             "highest-resolution" => Self::HighestResolution,
             "longest-duration" => Self::LongestDuration,
             "highest-bitrate" => Self::HighestBitrate,
+            "largest-file" => Self::LargestFile,
+            "has-exif" => Self::HasExif,
             _ => return Err(ParseKeepRuleError(s.to_owned())),
         })
     }
@@ -127,6 +133,15 @@ pub fn pick_keeper(items: &[DupItem], rules: &[KeepRule]) -> usize {
                     m.primary().bitrate.map(std::cmp::Reverse)
                 });
             }
+            KeepRule::LargestFile => {
+                narrow_by(items, &mut cands, |m| {
+                    Some(std::cmp::Reverse(m.primary().size))
+                });
+            }
+            KeepRule::HasExif => narrow_by(items, &mut cands, |m| {
+                let f = m.primary();
+                Some(u8::from(f.taken_at.is_none() && f.camera.is_none()))
+            }),
         }
     }
     cands
@@ -201,6 +216,27 @@ mod tests {
         // A preferred folder that matches nothing changes nothing.
         let rules = parse_rules(&["prefer-path:/zzz", "newest-modified"]).unwrap();
         assert_eq!(pick_keeper(&items, &rules), 2);
+    }
+
+    #[test]
+    fn largest_file_and_has_exif_pick_the_right_copy() {
+        let mut items = vec![
+            item(1, "/a/1.jpg", 1),
+            item(2, "/a/2.jpg", 1),
+            item(3, "/a/3.jpg", 1),
+        ];
+        items[0].files[0].size = 10;
+        items[1].files[0].size = 30;
+        items[2].files[0].size = 20;
+        let rules = parse_rules(&["largest-file"]).unwrap();
+        assert_eq!(pick_keeper(&items, &rules), 1);
+
+        items[2].files[0].camera = Some("X100".into());
+        let rules = parse_rules(&["has-exif", "largest-file"]).unwrap();
+        assert_eq!(pick_keeper(&items, &rules), 2);
+        // Nobody has EXIF: the rule changes nothing and the next one decides.
+        items[2].files[0].camera = None;
+        assert_eq!(pick_keeper(&items, &rules), 1);
     }
 
     #[test]

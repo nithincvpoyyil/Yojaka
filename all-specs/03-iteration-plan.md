@@ -197,7 +197,7 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
 **Covers:** FR-40..43, FR-45, FR-46, FR-49, FR-55.
 
 - Template parser and renderer, sanitization, date fallbacks, and `_undated`.
-- Location placeholders, the precision guard (`Near <city>`, segments dropped when empty), and `_no_location`.
+- Location placeholders, the precision guard (`Near <city>`, segments dropped when empty), and `No Location`.
 - Opt-in location inference (same camera, within ±2 h), marked `≈`.
 - Template presets: Date, Place, Place+Date, Kind+Date.
 - Planner:
@@ -219,7 +219,7 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
 - Property tests confirm no overwrite, that every source file ends up in exactly one place, and that Live Photo halves always land in the same folder.
 - A cross-volume test using an `hdiutil` disk image passes.
 - The glimpse for 100k files fits in 40 lines and can be expanded in the TUI.
-- A `{country}/{city}/{year}` plan on the fixture puts every geotagged file in the expected folder and every file without location in `_no_location/`.
+- A `{country}/{city}/{year}` plan on the fixture puts every geotagged file in the expected folder and every file without location in `No Location/`.
 - Inferred files are marked as inferred, and inference never overrides real GPS.
 
 ---

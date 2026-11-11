@@ -293,7 +293,10 @@ fn export_leaves_out_gps_unless_asked() {
             &root,
             false,
             fmt,
-            ExportOptions { include_gps: gps },
+            ExportOptions {
+                include_gps: gps,
+                ..ExportOptions::default()
+            },
             &mut out,
         )
         .unwrap();
@@ -400,4 +403,72 @@ fn stats_snapshot() {
         "metadata_errors": s.metadata_errors,
     });
     insta::assert_yaml_snapshot!(view);
+}
+
+#[test]
+fn export_can_be_limited_by_kind_year_and_text() {
+    use yojaka_core::browse::{BrowseQuery, KindFilter};
+    let env = TestEnv::with_spec(spec(15));
+    let e = engine(&env);
+    scan(&e, &env, true);
+    let root = env.tree.clone().unwrap();
+    let json = |opts: ExportOptions| -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        e.export(&root, false, ExportFormat::Json, opts, &mut out)
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&out)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    let all = json(ExportOptions::default());
+
+    let videos = json(ExportOptions {
+        query: BrowseQuery {
+            kind: KindFilter::Videos,
+            ..BrowseQuery::default()
+        },
+        ..ExportOptions::default()
+    });
+    assert!(!videos.is_empty() && videos.len() < all.len());
+    assert!(videos.iter().all(|o| o["kind"] == "video"));
+
+    // Years: every row with a date lands in exactly one year, and rows outside it are left out.
+    let year_of = |o: &serde_json::Value| -> Option<i32> {
+        o["taken_at"].as_str().map(|t| t[..4].parse().unwrap())
+    };
+    let some_year = all.iter().find_map(year_of).expect("a dated file");
+    let in_year = json(ExportOptions {
+        year: Some(some_year),
+        ..ExportOptions::default()
+    });
+    let expected = all.iter().filter(|o| year_of(o) == Some(some_year)).count();
+    assert_eq!(in_year.len(), expected);
+    assert!(in_year.iter().all(|o| year_of(o) == Some(some_year)));
+
+    // Text matches like the browser's find box, and combines with the other filters.
+    let first_name = std::path::Path::new(all[0]["path"].as_str().unwrap())
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let found = json(ExportOptions {
+        query: BrowseQuery {
+            text: first_name.clone(),
+            ..BrowseQuery::default()
+        },
+        ..ExportOptions::default()
+    });
+    assert!(!found.is_empty());
+    assert!(
+        found
+            .iter()
+            .all(|o| o["path"].as_str().unwrap().contains(&first_name))
+    );
+    let none = json(ExportOptions {
+        year: Some(1800),
+        ..ExportOptions::default()
+    });
+    assert!(none.is_empty());
 }

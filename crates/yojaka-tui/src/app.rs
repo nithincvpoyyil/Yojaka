@@ -106,6 +106,10 @@ pub enum Msg {
     ToggleWrite,
     /// `a` (Duplicates): review the marked copies before moving them to the Trash.
     ReviewPlan,
+    /// `P` (Duplicates, Organize): save the current plan as a file in Yojaka's data folder.
+    SavePlan,
+    /// `E` (File browser): export the files shown as a CSV file in Yojaka's data folder.
+    ExportView,
     /// `u` (History): put back the files of the selected run.
     UndoRun,
     /// `e` (Organize): edit the folder pattern.
@@ -156,6 +160,10 @@ pub enum Cmd {
     /// Work out an organize plan (reads the index and the destination's names, changes nothing).
     PlanOrganize(Box<PlanRequest>),
     CancelPlan,
+    /// Write a plan to a new file (never overwrites; changes no photos).
+    SavePlan(Box<yojaka_core::plan::Plan>),
+    /// Write the files the browser shows to a new CSV file.
+    ExportView(Box<yojaka_core::browse::BrowseQuery>),
     ApplyPlan(Box<yojaka_core::plan::Plan>),
     /// Put back everything a journaled run moved.
     UndoRun(uuid::Uuid),
@@ -743,6 +751,40 @@ impl App {
         vec![]
     }
 
+    /// `P` on the Duplicates screen: save the plan for the marked copies. Works in read-only mode.
+    fn save_dupes_plan(&mut self) -> Vec<Cmd> {
+        if self.dashboard.scan.running || self.dupes.searching() {
+            self.say("Wait for the scan or search to finish first".into());
+            return vec![];
+        }
+        let plan = yojaka_core::plan::Plan::from_dupes(&self.root, &self.dupes.groups);
+        if plan.ops.is_empty() {
+            self.say("Nothing is marked for removal".into());
+            return vec![];
+        }
+        vec![Cmd::SavePlan(Box::new(plan))]
+    }
+
+    /// `P` on the Organize screen: save the plan that Enter made. Works in read-only mode.
+    fn save_organize_plan(&mut self) -> Vec<Cmd> {
+        match self
+            .organize
+            .plan
+            .as_ref()
+            .filter(|_| self.organize.phase == OrgPhase::Ready)
+        {
+            Some(p) if p.plan.file_ops() > 0 => vec![Cmd::SavePlan(Box::new(p.plan.clone()))],
+            Some(_) => {
+                self.say("Nothing to do: every file is already in place".into());
+                vec![]
+            }
+            None => {
+                self.say("Press Enter first to plan".into());
+                vec![]
+            }
+        }
+    }
+
     /// `u` on the History screen.
     fn ask_undo(&mut self) -> Vec<Cmd> {
         if self.mode != Mode::Write {
@@ -896,6 +938,8 @@ impl App {
                 | Msg::CycleTier
                 | Msg::NextRule
                 | Msg::ReviewPlan
+                | Msg::SavePlan
+                | Msg::ExportView
                 | Msg::UndoRun
                 | Msg::EditTemplate
                 | Msg::EditDest
@@ -1035,8 +1079,18 @@ impl App {
             Msg::Enter if self.screen == Screen::Organize => self.plan_organize(),
             Msg::ReviewPlan if self.screen == Screen::Organize => self.review_organize(),
             Msg::ReviewPlan if self.screen == Screen::Duplicates => self.review_plan(),
+            Msg::SavePlan if self.screen == Screen::Organize => self.save_organize_plan(),
+            Msg::SavePlan if self.screen == Screen::Duplicates => self.save_dupes_plan(),
+            Msg::ExportView if self.screen == Screen::Browser => {
+                if self.dashboard.no_index {
+                    self.say("Scan this folder first".into());
+                    vec![]
+                } else {
+                    vec![Cmd::ExportView(Box::new(self.browser.query.clone()))]
+                }
+            }
             Msg::UndoRun if self.screen == Screen::History => self.ask_undo(),
-            Msg::ReviewPlan | Msg::UndoRun => {
+            Msg::ReviewPlan | Msg::UndoRun | Msg::SavePlan | Msg::ExportView => {
                 self.dirty = false;
                 vec![]
             }

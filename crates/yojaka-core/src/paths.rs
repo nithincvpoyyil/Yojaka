@@ -60,6 +60,14 @@ impl AppPaths {
     pub fn journal_dir(&self) -> PathBuf {
         self.data.join("journal")
     }
+    /// Plans saved from the app (`P`). Inside Yojaka's own data folder, so read-only mode may write here.
+    pub fn plans_dir(&self) -> PathBuf {
+        self.data.join("plans")
+    }
+    /// Exports made from the app (`E`). Same reason as [`Self::plans_dir`].
+    pub fn exports_dir(&self) -> PathBuf {
+        self.data.join("exports")
+    }
     pub fn log_file(&self) -> PathBuf {
         self.logs.join("yojaka.log")
     }
