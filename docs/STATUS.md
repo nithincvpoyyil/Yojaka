@@ -24,8 +24,8 @@ Committed. Iterations 5, 6 and 7 followed (below).
 | 8 | Hardening, performance, release v1.0 | **Next** |
 | 9-10 | See the plan | Not started |
 
-Everything up to `99db741` (Iteration 7) is on `origin/main`. No git tags exist yet (`v0.1.0` ..
-`v0.7.0` not created). Checks at the end of the Iteration 7 session: see "Duplicate tiers" below.
+Everything up to `99db741` (Iteration 7) is on `origin/main`. No git tags exist, and none are planned before `v1.0.0-rc.1` (D1).
+Checks at the end of the Iteration 7 session: see "Duplicate tiers" below.
 
 Full check: `source ~/.cargo/env && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo nextest run --workspace && cargo deny check`.
 New insta snapshots: run with `INSTA_UPDATE=always`, then read the `.snap`. The TUI snapshots under
@@ -215,7 +215,6 @@ gitignored. Re-check before the first public release.
   `22:26`). Not looked into.
 - No TUI key writes a plan file yet (only `yojaka dupes --plan-out`).
   Add a `Screen` arm in `view::render` and a state struct like `browser.rs`.
-- Tag `v0.1.0` .. `v0.7.0` when the user wants.
 - Still missing real samples: iPhone Live Photo pair, iPhone HEVC MOV, Android MP4, GPS-tagged photo. Those
   formats are tested with synthetic `fixturegen` files only. Raw: 7 CC0 files from raw.pixls.us were tried
   (listed in `docs/dupes-accuracy.md`; not kept in the repository).

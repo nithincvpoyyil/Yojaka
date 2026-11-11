@@ -15,7 +15,7 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-repository = ""
+repository = "https://github.com/nithincvpoyyil/Yojaka"
 publish = false
 
 [workspace.dependencies]

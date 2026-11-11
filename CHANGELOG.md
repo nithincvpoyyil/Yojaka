@@ -4,6 +4,9 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Iteration 8 (hardening, performance, release v1.0)
+- In progress. Plans: `all-specs/06-i8-hardening-release-plan.md`, `07-scan-speed-plan.md`, `08-homebrew-tap-plan.md`.
+
 ### Added (Iteration 7: more duplicate tiers)
 - Three more kinds of duplicate, besides identical files. They are guesses, so they are only listed for review: no rule marks them and the command line never puts them in a plan.
   - **likely**: photos with the same date taken, camera and size in pixels; videos with the same recorded date and size in pixels whose lengths differ by at most a second. Catches re-saved and re-exported copies.
