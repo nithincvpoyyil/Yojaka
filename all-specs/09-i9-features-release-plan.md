@@ -78,7 +78,7 @@ Each run: release build, a throw-away `YOJAKA_HOME`, read-only first (`scan`, `s
 | # | Library | What to check |
 |---|---|---|
 | R1 | iPhone export with Live Photos and 4K HEVC videos | Pairing count matches Photos; HEIC/HEVC metadata; under 1 MB read per video (`--debug` log); similar tier on real HEIC (never measured); Display P3 against sRGB copies |
-| R2 | External exFAT drive and an HFS+ drive | Walk; hard links (none on exFAT); mtime precision (exFAT has 2 s / 10 ms); cross-volume organize copy and undo to a scratch folder |
+| R2 | External exFAT drive and an HFS+ drive | Walk; hard links (none on exFAT); mtime precision (exFAT has 2 s / 10 ms); cross-volume organize copy to a scratch folder |
 | R3 | iCloud Drive folder with "optimize storage" on | Dataless files listed as cloud-only and **never downloaded** (watch the network in Activity Monitor or with `brctl`; check `SF_DATALESS` before and after) |
 | R4 | More than 1M files (a whole volume or a big backup) | Times and peak RSS against §10; TUI stays smooth; cancel and resume |
 | R5 | Odd Unicode names | NFD from HFS+ against NFC typed names, emoji, RTL, zero-width, very long paths (over 1024 bytes), names with newlines; each must be shown, searched, exported and organized correctly. Also build a fixturegen tree with these so it becomes an automated test |
@@ -117,7 +117,7 @@ it and scan the target, as the protected-path check already resolves it, and say
    - What it is, and the safety promise
    - Install (brew or tarball) and first run
    - The five screens
-   - The main CLI flows: dupes → plan → apply → undo, and organize
+   - The main CLI flows: dupes → plan → apply, and organize
    - A Full Disk Access note
    - Privacy: offline, no telemetry, GPS left out of exports
    - License and the GeoNames credit

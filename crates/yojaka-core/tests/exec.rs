@@ -8,9 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::TestEnv;
 use yojaka_core::dupes::parse_rules;
-use yojaka_core::exec::{
-    self, ApplyOptions, DirTrash, RunStatus, Trasher, apply, history, undo::undo,
-};
+use yojaka_core::exec::{self, ApplyOptions, DirTrash, RunStatus, Trasher, apply, history};
 use yojaka_core::model::Fingerprint;
 use yojaka_core::plan::{DupRef, Op, Plan};
 use yojaka_core::scan::ScanOptions;
@@ -119,20 +117,10 @@ impl Lab {
             &CancelToken::new(),
         )
     }
-
-    fn undo(&self, plan: &Plan) -> exec::UndoReport {
-        undo(
-            plan.id,
-            &self.env.paths,
-            &EventSink::null(),
-            &CancelToken::new(),
-        )
-        .unwrap()
-    }
 }
 
 #[test]
-fn scan_dupes_apply_undo_gives_back_the_identical_tree() {
+fn scan_dupes_apply_trashes_the_extra_copies_and_keeps_one() {
     let lab = Lab::new(5);
     let before = tree_hash(&lab.root);
     let plan = lab.plan();
@@ -151,17 +139,6 @@ fn scan_dupes_apply_undo_gives_back_the_identical_tree() {
         assert!(after.contains_key(Path::new(&format!("a/p{g}.jpg"))));
     }
     assert_eq!(std::fs::read_dir(&lab.trash).unwrap().count(), 10);
-
-    let u = lab.undo(&plan);
-    assert!(u.is_clean(), "{u:?}");
-    assert_eq!(u.restored, 10);
-    assert_eq!(tree_hash(&lab.root), before);
-    assert_eq!(std::fs::read_dir(&lab.trash).unwrap().count(), 0);
-
-    // Undo again: nothing left to do.
-    let again = lab.undo(&plan);
-    assert_eq!(again.restored, 0);
-    assert_eq!(again.already_undone, 10);
 }
 
 #[test]
@@ -269,14 +246,11 @@ fn live_lab() -> (Lab, Plan) {
 }
 
 #[test]
-fn a_live_photo_pair_is_trashed_and_restored_together() {
+fn a_live_photo_pair_is_trashed_together() {
     let (lab, plan) = live_lab();
-    let before = tree_hash(&lab.root);
     let report = lab.run(&plan, ApplyOptions::default()).unwrap();
     assert_eq!(report.trashed, 2);
     assert_eq!(tree_hash(&lab.root).len(), 2);
-    lab.undo(&plan);
-    assert_eq!(tree_hash(&lab.root), before);
 }
 
 #[test]
@@ -321,7 +295,7 @@ impl Trasher for CrashAfter {
 }
 
 #[test]
-fn a_crash_mid_apply_resumes_and_undo_restores_everything() {
+fn a_crash_mid_apply_resumes_and_finishes_everything() {
     let lab = Lab::new(4);
     let before = tree_hash(&lab.root);
     let plan = lab.plan();
@@ -365,15 +339,6 @@ fn a_crash_mid_apply_resumes_and_undo_restores_everything() {
         history::summarize(&lab.env.paths, plan.id).unwrap().status,
         RunStatus::Applied
     );
-
-    let u = lab.undo(&plan);
-    assert!(u.is_clean(), "{u:?}");
-    assert_eq!(u.restored, 8);
-    assert_eq!(tree_hash(&lab.root), before);
-    assert_eq!(
-        history::summarize(&lab.env.paths, plan.id).unwrap().status,
-        RunStatus::Undone
-    );
 }
 
 #[test]
@@ -403,27 +368,6 @@ fn cancelling_stops_cleanly_and_resume_finishes() {
         )
         .unwrap();
     assert_eq!(r.trashed, 6);
-}
-
-#[test]
-fn undo_never_overwrites_a_file_that_has_appeared_since() {
-    let lab = Lab::new(1);
-    let plan = lab.plan();
-    lab.run(&plan, ApplyOptions::default()).unwrap();
-    let victim = plan
-        .ops
-        .iter()
-        .find_map(|o| match o {
-            Op::Trash { path, .. } => Some(path.clone()),
-            _ => None,
-        })
-        .unwrap();
-    std::fs::write(&victim, b"new file in the way").unwrap();
-    let u = lab.undo(&plan);
-    assert_eq!(u.restored, 1);
-    assert_eq!(u.failed.len(), 1);
-    assert_eq!(std::fs::read(&victim).unwrap(), b"new file in the way");
-    assert_eq!(std::fs::read_dir(&lab.trash).unwrap().count(), 1);
 }
 
 #[test]
@@ -489,7 +433,7 @@ fn bad_plans_are_refused_before_anything_runs() {
 }
 
 #[test]
-fn permanent_delete_removes_the_file_and_cannot_be_undone() {
+fn permanent_delete_removes_the_file_without_using_the_trash() {
     let lab = Lab::new(1);
     let mut plan = lab.plan();
     plan.mode = yojaka_core::plan::OpMode::DeletePermanent;
@@ -522,9 +466,6 @@ fn permanent_delete_removes_the_file_and_cannot_be_undone() {
         .unwrap();
     assert_eq!(r.deleted, 2);
     assert!(!lab.trash.exists());
-    let u = lab.undo(&plan);
-    assert_eq!(u.restored, 0);
-    assert_eq!(u.not_undoable.len(), 2);
 }
 
 #[test]
@@ -594,24 +535,15 @@ fn nothing_lost(lab: &Lab, before: &BTreeMap<PathBuf, String>) {
 }
 
 /// A crash between the two halves of a Live Photo must never leave a pair split for good, and
-/// never lose a file. An undo tried before the resume refuses the interrupted step and says
-/// so; the resume then finishes both halves and the undo puts both back.
+/// never lose a file. The resume then finishes both halves.
 #[test]
 fn a_live_photo_pair_is_whole_after_a_crash_at_every_point() {
-    pair_after_crash(&[false]);
+    pair_after_crash();
 }
 
-/// Found by the Phase 3 fault tests (2026-11-11): an undo run *before* `apply --resume` used to
-/// restore the finished half of a Live Photo and leave the interrupted half for the resume to
-/// finish, splitting the pair. Undo now refuses the whole run until it has been resumed.
-#[test]
-fn an_undo_tried_before_the_resume_is_refused_and_never_splits_a_pair() {
-    pair_after_crash(&[true]);
-}
-
-fn pair_after_crash(early_undo_options: &[bool]) {
+fn pair_after_crash() {
     for crash_at in 1..=2usize {
-        for &undo_too_early in early_undo_options {
+        {
             let (lab, plan) = live_lab();
             let before = tree_hash(&lab.root);
             let crashy = CrashAfter {
@@ -631,30 +563,7 @@ fn pair_after_crash(early_undo_options: &[bool]) {
             assert!(crashed.is_err(), "crash {crash_at}");
             nothing_lost(&lab, &before);
 
-            let ctx = format!("crash {crash_at}, undo too early {undo_too_early}");
-            if undo_too_early {
-                let tree_then = tree_hash(&lab.root);
-                let trash_then = tree_hash(&lab.trash);
-                let refused = undo(
-                    plan.id,
-                    &lab.env.paths,
-                    &EventSink::null(),
-                    &CancelToken::new(),
-                );
-                match refused {
-                    Err(e @ YojakaError::Interrupted { .. }) => {
-                        assert!(e.to_string().contains("--resume"), "{ctx}: {e}");
-                    }
-                    other => panic!("{ctx}: undo must refuse an interrupted run, got {other:?}"),
-                }
-                assert_eq!(
-                    tree_hash(&lab.root),
-                    tree_then,
-                    "{ctx}: the refusal changed nothing"
-                );
-                assert_eq!(tree_hash(&lab.trash), trash_then, "{ctx}");
-                nothing_lost(&lab, &before);
-            }
+            let ctx = format!("crash {crash_at}");
 
             let r = lab
                 .run(
@@ -667,10 +576,6 @@ fn pair_after_crash(early_undo_options: &[bool]) {
                 .unwrap();
             assert!(r.is_clean(), "{ctx}: {r:?}");
             only_pair_left(&lab, &ctx);
-
-            let u = lab.undo(&plan);
-            assert!(u.is_clean(), "{ctx}: {u:?}");
-            assert_eq!(tree_hash(&lab.root), before, "{ctx}");
         }
     }
 }

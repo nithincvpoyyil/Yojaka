@@ -371,6 +371,16 @@ impl Plan {
         self
     }
 
+    /// One line telling the user this run cannot be undone by Yojaka. Shown before they confirm,
+    /// and on the History screen. Yojaka has no undo: the user decides, then it is done.
+    pub fn no_undo_note(&self) -> &'static str {
+        match self.mode {
+            OpMode::DeletePermanent => "This deletes for good. Yojaka has no undo.",
+            OpMode::Trash => "Yojaka has no undo. Files can be put back from the Trash in Finder.",
+            OpMode::Move | OpMode::Copy => "Yojaka has no undo. Check the plan before you confirm.",
+        }
+    }
+
     /// Plans this big (or any permanent delete) need the phrase typed, not just a "y".
     pub const LARGE_PLAN_FILES: usize = 50;
 

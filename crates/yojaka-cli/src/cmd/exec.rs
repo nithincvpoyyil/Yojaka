@@ -1,4 +1,4 @@
-//! `plan show`, `apply`, `undo` and `history`.
+//! `plan show`, `apply` and `history`.
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -180,6 +180,7 @@ pub fn apply(engine: &Engine, a: &ApplyArgs<'_>) -> anyhow::Result<Exit> {
         println!("\nDry run: nothing was changed. Add --write to apply this plan.");
         return Ok(Exit::Ok);
     }
+    println!("\n{}", plan.no_undo_note());
     if a.yes && plan.is_permanent() {
         println!("\n--yes does not skip the confirmation for a permanent delete.");
     }
@@ -270,8 +271,6 @@ pub fn apply(engine: &Engine, a: &ApplyArgs<'_>) -> anyhow::Result<Exit> {
             "Stopped. Finish it with: yojaka apply {} --resume --write",
             a.file.display()
         );
-    } else if report.deleted == 0 {
-        println!("Undo it with: yojaka undo {} --write", plan.id);
     }
     Ok(if report.is_clean() {
         Exit::Ok
@@ -293,87 +292,6 @@ fn phrase_question(plan: &Plan) -> String {
     )
 }
 
-pub fn undo(
-    engine: &Engine,
-    plan_id: Option<&str>,
-    last: bool,
-    write: bool,
-) -> anyhow::Result<Exit> {
-    let run = match (plan_id, last) {
-        (Some(id), _) => hist::find(&engine.paths, id)?,
-        (None, true) => match hist::list(&engine.paths)?.into_iter().next() {
-            Some(r) => r,
-            None => {
-                eprintln!("error: nothing has been run yet");
-                return Ok(Exit::Error);
-            }
-        },
-        (None, false) => {
-            eprintln!("error: give a run id (see `yojaka history`) or --last");
-            return Ok(Exit::Usage);
-        }
-    };
-    println!(
-        "Run {}: {} of {} files, {} to put back from {}",
-        run.plan_id,
-        run.done,
-        run.ops,
-        bytes(run.bytes),
-        run.root.display()
-    );
-    if !write {
-        println!("Preview only: nothing was changed. Add --write to put the files back.");
-        return Ok(Exit::Ok);
-    }
-    let cancel = cancel_on_ctrl_c()?;
-    let (sink, rx) = EventSink::channel(1024);
-    let bar = spinner("restoring");
-    bar.set_length(run.done as u64);
-    let result = std::thread::scope(|s| {
-        let worker = s.spawn(|| {
-            let sink = sink;
-            exec::undo(run.plan_id, &engine.paths, &sink, &cancel)
-        });
-        for ev in rx.iter() {
-            if let CoreEvent::Progress {
-                task: TaskKind::Undo,
-                done,
-                ..
-            } = ev
-            {
-                bar.set_position(done);
-            }
-        }
-        worker
-            .join()
-            .unwrap_or_else(|_| Err(YojakaError::Internal("undo panicked".into())))
-    });
-    bar.finish_and_clear();
-    let report = match result {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return Ok(Exit::Error);
-        }
-    };
-    println!(
-        "{} files put back ({}).",
-        report.restored,
-        bytes(report.bytes)
-    );
-    if report.already_undone > 0 {
-        println!("{} had been put back before.", report.already_undone);
-    }
-    for n in report.not_undoable.iter().chain(&report.failed) {
-        println!("not restored {}: {}", n.path.display(), n.reason);
-    }
-    Ok(if report.is_clean() {
-        Exit::Ok
-    } else {
-        Exit::Partial
-    })
-}
-
 pub fn history(engine: &Engine, json: bool) -> anyhow::Result<Exit> {
     let runs = hist::list(&engine.paths)?;
     if json {
@@ -383,7 +301,7 @@ pub fn history(engine: &Engine, json: bool) -> anyhow::Result<Exit> {
                 serde_json::json!({
                     "plan_id": r.plan_id, "started": r.started, "root": r.root,
                     "ops": r.ops, "done": r.done, "skipped": r.skipped, "failed": r.failed,
-                    "undone": r.undone, "bytes": r.bytes, "status": r.status.label(),
+                    "bytes": r.bytes, "status": r.status.label(),
                 })
             })
             .collect();
@@ -394,6 +312,7 @@ pub fn history(engine: &Engine, json: bool) -> anyhow::Result<Exit> {
         println!("Nothing has been run yet.");
         return Ok(Exit::Ok);
     }
+    println!("Yojaka has no undo: a move or a copy is final.\n");
     for r in runs {
         println!(
             "{}  {}  {:>13}  {} of {} files  {}  {}",

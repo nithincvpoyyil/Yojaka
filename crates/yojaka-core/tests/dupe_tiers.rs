@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use common::TestEnv;
 use yojaka_core::dupes::{DupGroup, DupOptions, DupReport, Tier, parse_rules};
-use yojaka_core::exec::{ApplyOptions, DirTrash, apply, undo::undo};
+use yojaka_core::exec::{ApplyOptions, DirTrash, apply};
 use yojaka_core::plan::{Op, Plan};
 use yojaka_core::scan::ScanOptions;
 use yojaka_core::{CancelToken, Engine, EventSink, IssueKind};
@@ -927,13 +927,6 @@ fn a_reviewed_likely_group_is_trashed_and_can_be_put_back() {
     assert_eq!(report.trashed, 1, "{:?}", report.skipped);
     assert!(!root.join("b/IMG_9_small.jpg").exists());
     assert!(root.join("a/IMG_9.jpg").exists());
-
-    let back = undo(plan.id, &env.paths, &sink, &cancel).unwrap();
-    assert_eq!(back.restored, 1);
-    assert_eq!(
-        std::fs::read(root.join("b/IMG_9_small.jpg")).unwrap(),
-        jpeg_bytes(2, 3000)
-    );
 }
 
 #[test]

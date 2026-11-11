@@ -14,7 +14,7 @@ passed at the end of Phase 1. All other rows were checked against the code in th
 |---|---|---|---|---|
 | 1 | `yojaka [PATH]` opens the TUI, default current dir, volumes allowed | done † | `cli.rs`, `main.rs` | CLI + TUI tests |
 | 2 | Read-only by default; write mode needs `--write` or `W` plus a confirmation | done † | `app.rs` (`Mode`, `EnableWrite`), `cmd/exec.rs` | `write_mode_is_asked_for_and_can_be_turned_off`, `nothing_can_be_reviewed_while_read_only` |
-| 3 | Every TUI feature has a CLI command | done | `cli.rs`: scan, stats, info, places, export, dupes, organize, plan show, apply, undo, history, doctor | `crates/yojaka-cli/tests/cli.rs` |
+| 3 | Every TUI feature has a CLI command | done | `cli.rs`: scan, stats, info, places, export, dupes, organize, plan show, apply, history, doctor | `crates/yojaka-cli/tests/cli.rs` |
 | 10 | Parallel walk, detect by extension and magic bytes, kind per file | done † | `scan/mod.rs`, `detect.rs` (`SNIFF_LEN`) | `tests/scan.rs`, detect unit tests |
 | 11 | Image, RAW and video formats; `--kind` | done † | `model.rs`, `detect.rs`, `meta/*` | `tests/metadata.rs`, `tests/dupe_tiers.rs` (raw) |
 | 12 | Persistent SQLite index | done † | `index/`, `migrations/` | `tests/scan.rs` |
@@ -30,9 +30,9 @@ passed at the end of Phase 1. All other rows were checked against the code in th
 | 30 | Duplicate tiers exact / likely / name / similar | done † | `dupes/` | `tests/dupes.rs`, `tests/dupe_tiers.rs`, `docs/dupes-accuracy.md` |
 | 31 | Keep rules, chainable: oldest date taken, oldest mtime, shortest path, preferred folder, highest resolution, longest duration / bitrate, **largest file, has EXIF** | done (Phase 1) | `dupes/keep.rs` | `largest_file_and_has_exif_pick_the_right_copy`, `rules_chain_in_order` |
 | 32 | Review groups, mark keep / delete, bulk rule, space reclaimed | done † | `tui/dupes.rs`, `screens/duplicates.rs` | TUI duplicates tests |
-| 33 | Delete = Trash; permanent needs `--permanent` and a typed phrase | done † | `exec/trash.rs`, `cmd/exec.rs` | `permanent_delete_removes_the_file_and_cannot_be_undone`, `real_trash_round_trip` (ignored; touches the real Trash) |
+| 33 | Delete = Trash; permanent needs `--permanent` and a typed phrase | done † | `exec/trash.rs`, `cmd/exec.rs` | `permanent_delete_removes_the_file_without_using_the_trash`, `real_trash_round_trip` (ignored; touches the real Trash) |
 | 40 | Destination and path template; date from EXIF, container or mtime; `_undated` | done † | `organize/template.rs`, `planner.rs` | `tests/organize.rs`, template proptest |
-| 41 | Copy or move (index-only dropped 2026-11-11, decision D3) | changed | spec FR-41 edited | `copy_leaves_the_originals...`, `move_then_undo...` |
+| 41 | Copy or move (index-only dropped 2026-11-11, decision D3) | changed | spec FR-41 edited | `copy_leaves_the_originals...`, `move_puts_every_file_at_its_new_place` |
 | 42 | Never overwrite; `name (1).jpg`; exact duplicate at the destination skipped and reported | done † | `organize/planner.rs`, `exec/transfer.rs` | `tests/organize.rs`, `a_file_changed_after_planning_is_skipped_and_never_overwrites_anything` |
 | 43 | Proposed tree before any change, glimpse with collapsed nodes | done † | `plan/tree.rs`, Organize screen | `plan/tree.rs` tests, TUI organize tests |
 | 44 | Offline GPS to country / state / district / city / distance | done † | `geo/` (embedded GeoNames) | `geo/tests.rs` |
@@ -45,8 +45,8 @@ passed at the end of Phase 1. All other rows were checked against the code in th
 | 51 | Dry-run: totals, before / after, warnings | changed | `plan/tree.rs`, Review box, `plan show` | Totals, bytes, warnings (cross-volume, look-alike removals, changed files) and one folder tree with counts: removals for dedupe, destination for organize. One tree, not before and after side by side; spec FR-51 edited to say so, 2026-11-11 |
 | 52 | Large plans need a typed phrase | changed (D2) | `plan/mod.rs` (`LARGE_PLAN_FILES` 50, `LARGE_COPY_FILES` 1,000) | `a_large_plan_needs_its_phrase_typed`. **Code is right per ADR-0006/0007; the spec text (1,000 for all) and the unused config key `organize.large_plan_threshold` are for the user to tidy later** |
 | 53 | Re-validate before each operation | done † | `exec/` | `a_file_changed_after_planning_is_skipped_and_reported`, `an_edit_that_keeps_size_and_mtime_is_still_caught_by_the_hash` |
-| 54 | Journal before and after each op; `undo` | done † | `exec/journal.rs`, `exec/undo.rs` | `scan_dupes_apply_undo_gives_back_the_identical_tree`, `undo_never_overwrites...` |
-| 55 | Cross-volume: copy, verify hash, then remove source | done † | `exec/transfer.rs` | `cross_volume_move_copies_verifies_removes_and_undo_restores` (needs `hdiutil`, ignored; gets a CI job in Phase 3) |
+| 54 | Journal before and after each op; resume (undo dropped 2026-11-12, ADR-0009) | changed † | `exec/journal.rs` | `scan_dupes_apply_trashes_the_extra_copies_and_keeps_one`, `a_killed_*_run_resumes_and_finishes` |
+| 55 | Cross-volume: copy, verify hash, then remove source | done † | `exec/transfer.rs` | `cross_volume_move_copies_verifies_and_removes` (needs `hdiutil`, ignored; gets a CI job in Phase 3) |
 | 56 | Free-space check before running | done for Organize | `exec/organize_run.rs:125` | Organize copy and move. Trash plans free space, so no check. **No test refuses on a full disk yet: Phase 3 item 4** |
 | 60 | Always responsive, heavy work off the UI thread | done † | `tui/worker.rs`, `event_loop.rs` | `rendering_a_full_browser_frame_is_far_below_16_ms`; numbers in `docs/perf.md` |
 | 61 | Status bar, `?` help overlay, vim and arrow keys | done † | `keymap.rs` (`HELP` is the one list) | `vim_and_arrow_keys_agree`, help tests |

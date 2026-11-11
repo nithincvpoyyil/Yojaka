@@ -115,7 +115,7 @@ pub fn move_file(src: &Path, dst: &Path, op: u64, size: u64, mtime_ns: i64) -> R
     }
 }
 
-/// Undo of a move: puts `dst` back at `src` (never over an existing file).
+/// Puts a moved file back (when its Live Photo partner failed): puts `dst` back at `src` (never over an existing file).
 pub fn move_back(dst: &Path, src: &Path, op: u64, size: u64, mtime_ns: i64) -> Result<()> {
     if let Some(parent) = src.parent() {
         std::fs::create_dir_all(parent).map_err(|e| YojakaError::io(parent, e))?;

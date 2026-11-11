@@ -19,7 +19,6 @@ use crate::worker::{self, Bg, DupOutcome, ExecOutcome, Request};
 /// What the `exec` thread does.
 enum Job {
     Apply(Box<yojaka_core::plan::Plan>),
-    Undo(uuid::Uuid),
 }
 
 const TICK: Duration = Duration::from_millis(250);
@@ -72,7 +71,6 @@ impl Runtime {
                 }
                 Cmd::OpenFile(path) => self.open_file(path),
                 Cmd::ApplyPlan(plan) => self.start_exec(Job::Apply(plan)),
-                Cmd::UndoRun(id) => self.start_exec(Job::Undo(id)),
                 Cmd::CancelExec => {
                     if let Some((token, _)) = &self.exec {
                         token.cancel();
@@ -358,13 +356,6 @@ impl Runtime {
                             &token,
                         ) {
                             Ok(r) => ExecOutcome::Applied(Box::new(r)),
-                            Err(e) => ExecOutcome::Failed(e.to_string()),
-                        }
-                    }
-                    Job::Undo(id) => {
-                        tracing::info!(plan = %id, "undo started");
-                        match exec::undo(id, &engine.paths, &sink, &token) {
-                            Ok(r) => ExecOutcome::Undone(Box::new(r)),
                             Err(e) => ExecOutcome::Failed(e.to_string()),
                         }
                     }

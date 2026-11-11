@@ -1,8 +1,8 @@
-//! Fault injection with the real program: `kill -9` in the middle of `apply` and of `undo`.
+//! Fault injection with the real program: `kill -9` in the middle of `apply`.
 //!
 //! Each run is slowed down with `YOJAKA_TEST_OP_DELAY_MS` (a debug-build switch in the journal) so
-//! the kill lands between journal lines. Afterwards `apply --resume` must finish the plan, and
-//! `undo` must give back a tree whose content is exactly the original.
+//! the kill lands between journal lines. Afterwards `apply --resume` must finish the plan with
+//! nothing lost and no half-written file.
 #![allow(clippy::unwrap_used)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -174,7 +174,7 @@ impl Lab {
             .collect()
     }
 
-    /// Journal lines that record a finished *file* operation of `run` (`apply` or `undo`).
+    /// Journal lines that record a finished *file* operation of `run` (`apply`).
     fn done_lines(&self, run: &str) -> usize {
         let ids = self.file_op_ids();
         std::fs::read_to_string(self.journal()).map_or(0, |t| {
@@ -184,48 +184,6 @@ impl Lab {
                 .filter(|l| l["op"].as_u64().is_some_and(|id| ids.contains(&id)))
                 .count()
         })
-    }
-
-    /// True when the journal's last line is the "begin" of a file operation: a kill now leaves a
-    /// step half done.
-    fn inside_a_step(&self, run: &str) -> bool {
-        let ids = self.file_op_ids();
-        std::fs::read_to_string(self.journal()).is_ok_and(|t| {
-            t.lines()
-                .rev()
-                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-                .find(|l| l["t"] == "entry")
-                .is_some_and(|l| {
-                    l["run"] == run
-                        && l["state"] == "begin"
-                        && l["op"].as_u64().is_some_and(|id| ids.contains(&id))
-                })
-        })
-    }
-
-    /// Like [`Self::kill_after`], but waits for a moment inside a step, so the journal is left
-    /// with a step that was begun and never finished.
-    fn kill_inside_a_step(&self, mut child: Child, run: &str, at_least: usize) {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            assert!(
-                Instant::now() < deadline,
-                "never caught the run inside a step"
-            );
-            if let Some(status) = child.try_wait().unwrap() {
-                panic!("the run ended ({status}) before it could be killed");
-            }
-            if self.done_lines(run) >= at_least && self.inside_a_step(run) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        child.kill().unwrap();
-        child.wait().unwrap();
-        assert!(
-            self.inside_a_step(run),
-            "the kill must leave a half-done step"
-        );
     }
 
     fn phrase(&self, kind: Kind) -> String {
@@ -303,8 +261,8 @@ enum Kind {
     Move,
 }
 
-/// Kill `apply` part-way, resume it, then undo it; the source tree must be what it was.
-fn kill_apply_then_resume_then_undo(kind: Kind) {
+/// Kill `apply` part-way, then resume it; nothing may be lost or half written.
+fn kill_apply_then_resume(kind: Kind) {
     let lab = Lab::new();
     lab.make_plan(kind);
     let n = lab.file_ops();
@@ -373,137 +331,21 @@ fn kill_apply_then_resume_then_undo(kind: Kind) {
         .arg("history")
         .assert()
         .stdout(predicates::str::contains("applied"));
-
-    yojaka(lab.home.path())
-        .arg("--write")
-        .arg("--trash-dir")
-        .arg(&lab.trash)
-        .args(["undo", "--last"])
-        .assert()
-        .success();
-    assert_eq!(
-        files(&lab.tree),
-        before,
-        "undo gives back the original tree"
-    );
-    assert!(files(&lab.dest).is_empty(), "undo leaves no copies behind");
-    assert!(stray_temp_files(&lab.dest).is_empty());
 }
 
 #[test]
-fn a_killed_trash_run_resumes_and_undo_restores_the_tree() {
-    kill_apply_then_resume_then_undo(Kind::Trash);
+fn a_killed_trash_run_resumes_and_finishes() {
+    kill_apply_then_resume(Kind::Trash);
 }
 
 #[test]
-fn a_killed_copy_run_resumes_and_undo_removes_exactly_the_copies() {
-    kill_apply_then_resume_then_undo(Kind::Copy);
+fn a_killed_copy_run_resumes_and_finishes() {
+    kill_apply_then_resume(Kind::Copy);
 }
 
 #[test]
-fn a_killed_move_run_resumes_and_undo_moves_everything_back() {
-    kill_apply_then_resume_then_undo(Kind::Move);
-}
-
-/// After a killed `apply`, `undo` refuses until the run is finished, says how, and changes
-/// nothing; the command it prints works.
-#[test]
-fn undo_refuses_an_interrupted_run_and_the_printed_resume_command_works() {
-    let lab = Lab::new();
-    lab.make_plan(Kind::Move);
-    let n = lab.file_ops();
-    let before = files(&lab.tree);
-    let args = lab.apply_args(false);
-    let child = lab.spawn_slow(Kind::Move, &args);
-    lab.kill_inside_a_step(child, "apply", 3);
-    assert!(lab.done_lines("apply") < n);
-    let mid_tree = files(&lab.tree);
-    let mid_dest = files(&lab.dest);
-
-    let out = yojaka(lab.home.path())
-        .args(["--write", "undo", "--last"])
-        .output()
-        .unwrap();
-    let said = String::from_utf8_lossy(&out.stderr).to_string();
-    assert_eq!(out.status.code(), Some(1), "{said}");
-    assert!(
-        said.contains("interrupted") && said.contains("--resume"),
-        "{said}"
-    );
-    assert_eq!(files(&lab.tree), mid_tree, "the refusal changed nothing");
-    assert_eq!(files(&lab.dest), mid_dest);
-
-    // The printed command: `yojaka --write apply <plan copy> --resume`.
-    let plan_copy = said
-        .split("`yojaka --write apply ")
-        .nth(1)
-        .and_then(|rest| rest.split(" --resume`").next())
-        .map(PathBuf::from)
-        .unwrap();
-    assert!(plan_copy.is_file(), "{}", plan_copy.display());
-    yojaka(lab.home.path())
-        .arg("--write")
-        .arg("apply")
-        .arg(&plan_copy)
-        .args(["--resume", "--yes"])
-        .write_stdin(format!("{}\n", lab.phrase(Kind::Move)))
-        .assert()
-        .success();
-    yojaka(lab.home.path())
-        .args(["--write", "undo", "--last"])
-        .assert()
-        .success();
-    assert_eq!(files(&lab.tree), before);
-    assert!(files(&lab.dest).is_empty());
-}
-
-/// Kill `undo` part-way; running `undo` again must finish the job.
-fn kill_undo_then_undo_again(kind: Kind) {
-    let lab = Lab::new();
-    lab.make_plan(kind);
-    let n = lab.file_ops();
-    let before = files(&lab.tree);
-
-    let apply = lab.apply_args(false);
-    yojaka(lab.home.path())
-        .arg("--write")
-        .arg("--trash-dir")
-        .arg(&lab.trash)
-        .args(&apply)
-        .write_stdin(format!("{}\n", lab.phrase(kind)))
-        .assert()
-        .success();
-    let applied = files(&lab.tree);
-    assert_ne!(applied, before);
-
-    let undo_args = [OsStr::new("undo"), OsStr::new("--last")];
-    let child = lab.spawn_slow(kind, &undo_args);
-    lab.kill_after(child, "undo", 3, n);
-    // Part-way: some files are back, some are not, none is lost.
-    let mid = files(&lab.tree);
-    assert_ne!(mid, applied);
-    assert_ne!(mid, before);
-
-    yojaka(lab.home.path())
-        .arg("--write")
-        .arg("--trash-dir")
-        .arg(&lab.trash)
-        .args(["undo", "--last"])
-        .assert()
-        .success();
-    assert_eq!(files(&lab.tree), before, "the second undo finishes the job");
-    assert!(files(&lab.dest).is_empty());
-    assert!(stray_temp_files(&lab.dest).is_empty());
-}
-
-#[test]
-fn a_killed_undo_of_a_trash_run_is_finished_by_the_next_undo() {
-    kill_undo_then_undo_again(Kind::Trash);
-}
-
-#[test]
-fn a_killed_undo_of_a_move_run_is_finished_by_the_next_undo() {
-    kill_undo_then_undo_again(Kind::Move);
+fn a_killed_move_run_resumes_and_finishes() {
+    kill_apply_then_resume(Kind::Move);
 }
 
 /// Organizing into a read-only folder: the command fails, says so, and changes nothing.
@@ -655,7 +497,7 @@ fn disk_image_without_room_refuses_before_anything_runs() {
 
 /// The disk fills up while the copy runs: each file that did not fit leaves no partial file, the
 /// run reports a partial failure, the originals are untouched, and once there is room again
-/// `--resume` finishes the plan and `undo` removes exactly the copies.
+/// `--resume` finishes the plan.
 #[test]
 #[ignore = "mounts a disk image"]
 fn disk_image_that_fills_during_the_run_leaves_no_partial_file() {
@@ -703,7 +545,7 @@ fn disk_image_that_fills_during_the_run_leaves_no_partial_file() {
         );
     }
 
-    // Room again: resume finishes, undo removes exactly the copies.
+    // Room again: resume finishes.
     std::fs::remove_file(&filler).unwrap();
     let resume = lab.apply_args(true);
     yojaka(lab.home.path())
@@ -713,11 +555,5 @@ fn disk_image_that_fills_during_the_run_leaves_no_partial_file() {
         .assert()
         .success();
     assert_eq!(files(&lab.dest).len(), n);
-    assert_eq!(files(&lab.tree), before);
-    yojaka(lab.home.path())
-        .args(["--write", "undo", "--last"])
-        .assert()
-        .success();
-    assert!(files(&lab.dest).is_empty());
     assert_eq!(files(&lab.tree), before);
 }

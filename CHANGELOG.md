@@ -4,6 +4,9 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Removed (Iteration 9)
+- **Undo.** `yojaka undo`, the History screen's `u` key and the core undo code are gone (ADR-0009). A move or a copy is the user's decision and is final; Yojaka warns about it before you confirm (`yojaka apply`, the review box, the write-mode question, History and the help overlay). Deduplicated files still go to the Trash, so they can be put back in Finder. History now lists only `applied` and `incomplete` runs.
+
 ### Iteration 8 (hardening)
 - Plan: `all-specs/06-i8-hardening-release-plan.md`. Performance, real-library tests and the release moved to Iteration 9 (`09-i9-features-release-plan.md`).
 - `yojaka export` can be limited: `--kind image|video`, `--year`, `--find TEXT` (name, camera or place, as in the file browser) and `--folder DIR`.
@@ -12,13 +15,12 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 - `docs/fr-checklist.md`: each functional requirement against the code and its tests.
 - Remembered choices. `yojaka dupes --keep RULES --remember` and `yojaka organize ... --remember` save the keep rules, or the folder pattern and copy / move, in `config.toml`; in the app `M` on Duplicates or Organize does the same. They are the starting choices next time (`yojaka dupes` without `--keep`, `yojaka organize` without a pattern, and the app's first keep rule and Organize settings). Nothing is saved unless you ask. A saved value that cannot be used (a mistyped rule or pattern) is ignored with a warning and the default is used. `--copy` overrides a saved `move`. New config key `organize.mode` (`copy` or `move`).
 
-- Fault-injection tests (Phase 3): the real program is killed with `kill -9` in the middle of `apply` and of `undo` (trash, copy and move plans) and must resume, undo and give back the identical tree; read-only destination, unwritable journal, a file swapped for a symlink, Live Photo pairs at every crash point, and (on a small disk image, run in CI) a disk that is too full or fills up during the run.
+- Fault-injection tests (Phase 3): the real program is killed with `kill -9` in the middle of `apply` (trash, copy and move plans) and must resume with nothing lost and no half-written file; read-only destination, unwritable journal, a file swapped for a symlink, Live Photo pairs at every crash point, and (on a small disk image, run in CI) a disk that is too full or fills up during the run.
 
 ### Changed (Iteration 8)
 - The default keep rules in `config.toml` are now `oldest-modified, shortest-path`, the same as the built-in default (the file used to say `oldest`, and the app ignored it). `dupes.keep_rules` is now read.
 
 ### Fixed (Iteration 8)
-- After a crash in the middle of a run, `yojaka undo` used before `yojaka apply --resume` could put back one half of a Live Photo while the resume later moved the other half to the Trash. `undo` now refuses such a run, changes nothing, and prints the command that finishes it; undo it afterwards as usual. A run stopped with Ctrl-C is not affected.
 - `yojaka history` printed times in UTC while the History screen used local time. Both now show local time.
 
 ### Added (Iteration 7: more duplicate tiers)

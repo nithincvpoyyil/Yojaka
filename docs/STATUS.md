@@ -19,7 +19,7 @@ Committed. Iterations 5, 6 and 7 followed (below).
 | 3 | TUI: dashboard, file browser, help, scan control | Done |
 | 4 | Exact duplicates (hashing, `dupes`, Duplicates screen) | Done (`1c698fc`) |
 | 5 | Safe executor, History | Done (`79ea0b6`), signed off by the user 2026-11-11 (ADR-0006) |
-| 6 | Organize (templates, planner, copy/move, undo, screen, CLI) | Done (`bb1e12e`), signed off 2026-11-11 (ADR-0007) |
+| 6 | Organize (templates, planner, copy/move, screen, CLI) | Done (`bb1e12e`), signed off 2026-11-11 (ADR-0007) |
 | 7 | More duplicate tiers (likely, name, similar) | Done (`99db741`), signed off 2026-11-11 (ADR-0008) |
 | 8 | Hardening: FR audit, saved preferences, fault injection (`06`) | Done 2026-11-11 (`b93a80b`, `0104cbe`, `eb16c83`, Phase 3 commit) |
 | 9 | Features and release v1.0: detailed dashboard, real libraries, release, performance last (`09`) | **Next** (dashboard: waiting for the user's description) |
@@ -49,7 +49,7 @@ automatically in `~/Library` (no user choice, no jargon).
 | `--local-index` | Hidden. For tests and tooling only: keeps the data inside the folder. |
 
 CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`, `export` (`--kind image|video`, `--year`, `--find TEXT`, `--folder DIR`), `doctor`.
-`dupes` (all tiers; see below), `plan show`, `apply`, `undo`, `history` (Iteration 5; see below). `organize` (Iteration 6; see below).
+`dupes` (all tiers; see below), `plan show`, `apply`, `history` (Iteration 5; see below). `organize` (Iteration 6; see below).
 
 ### TUI keys (the `?` overlay is generated from `keymap.rs`)
 
@@ -131,7 +131,7 @@ marked by hand. Measured precision and recall: `docs/dupes-accuracy.md`.
   `similar.rs`, `tiers.rs`, `sys/imageio.rs`, CLI `dupes_lists_look_alikes...`, TUI `look_alike_*`,
   `reviewing_a_plan_with_look_alikes_says_so`. End of session (2026-11-11, after HEIC / AVIF / raw and raw
   metadata): 371 tests passed (4 skipped); `cargo fmt`, clippy `-D warnings` and `cargo deny` clean. Release binary 9.2 MB.
-- Driven by hand in the real app (pty): find, filter, mark a likely group, review, apply to a scratch Trash, undo.
+- Driven by hand in the real app (pty): find, filter, mark a likely group, review, apply to a scratch Trash.
 - Not done: inline thumbnails (optional in the plan); similar videos; a measurement on real photos (real iPhone HEIC
   especially); the BK-tree at 1M pictures. Opt-in raw test: `YOJAKA_RAW_SAMPLES=<dir of X.NEF + X.JPG>
   cargo nextest run -p yojaka-core --run-ignored only -E 'test(raw_photos)'`.
@@ -143,20 +143,19 @@ marked by hand. Measured precision and recall: `docs/dupes-accuracy.md`.
 The first write-capable release. Off by default: no `--write` means a preview only.
 
 - `yojaka dupes PATH --plan-out plan.json` -> `yojaka plan show plan.json [--full-tree]` -> `yojaka apply plan.json`
-  (dry run) -> `yojaka --write apply plan.json` -> `yojaka history` -> `yojaka --write undo --last`
-  (or an id, or the start of one). `--write` is a global flag, so it goes before the subcommand or anywhere.
+  (dry run) -> `yojaka --write apply plan.json` -> `yojaka history`. There is no undo (ADR-0009). `--write` is a global flag, so it goes before the subcommand or anywhere.
 - `apply` re-checks every file (size, mtime, BLAKE3) and the copy that stays, then moves it to the Trash and
   records the exact Trash path in the journal. Changed files are skipped and listed. A Live Photo pair is
   skipped or moved as one. 50 or more files need `trash N files` typed; fewer need `y` (`--yes` skips that).
 - `apply --resume` finishes an interrupted plan. Applying a plan twice is refused.
 - `apply --permanent --write` deletes for good (typed phrase `delete N files forever`, even with `--yes`);
-  `undo` reports those as not restorable. Not available in the TUI.
+  Not available in the TUI.
 - Journal and plan copy: `<data>/journal/<plan-id>.jsonl` and `.plan.json`.
 - TUI: `W` turns write mode on (asks) or off; on Duplicates `a` opens the Review box (summary, folders
   losing files, typed phrase for large plans); a run shows progress (Ctrl-C stops after the current file),
   then a report, then rescans. Screen 5 History lists runs; `u` puts the selected run back.
 - Hidden `--trash-dir DIR` makes tests use a folder as the Trash.
-- Core: `yojaka_core::exec` (`apply`, `undo`, `history`, `journal`, `trash`), `plan::tree` (`DirTree`
+- Core: `yojaka_core::exec` (`apply`, `history`, `journal`, `trash`), `plan::tree` (`DirTree`
   glimpse, `Plan::removal_tree`). Tests: `crates/yojaka-core/tests/exec.rs` (12 + 1 ignored real-Trash test),
   CLI pipeline tests in `crates/yojaka-cli/tests/cli.rs`, TUI tests in `snapshots_tests.rs::write_path`.
 - Not done: a real-process SIGKILL test (simulated in-process instead), copy / move ops (Iteration 6), a
@@ -165,13 +164,13 @@ The first write-capable release. Off by default: no `--write` means a preview on
 ### Organize (Iteration 6, ADR-0007)
 
 - `yojaka organize PATH DEST [--template T | --preset date|place|place-date|kind-date] [--move] [--infer-location]
-  [--plan-out FILE] [--full-tree]` plans only (copy is the default). Run the plan with `yojaka --write apply FILE`;
-  `undo` reverses it. Placeholders: `year month day camera make model format ext name stem parent kind country
+  [--plan-out FILE] [--full-tree]` plans only (copy is the default). Run the plan with `yojaka --write apply FILE`.
+  Placeholders: `year month day camera make model format ext name stem parent kind country
   country_code state district city`; `{month:02}` pads. See the ADR for the folder-dropping rules.
 - TUI screen 4: `e` pattern, `d` folder, `p` next preset, `m` copy/move, `i` infer places, Enter plans (changes
   nothing), `a` reviews and runs (needs `W`). Examples and a folder overview come from the plan.
 - Core: `yojaka_core::organize` (`template`, `planner`), `exec::transfer`, `exec::organize_run`.
-- Tests: `tests/organize.rs` (planner), `tests/organize_exec.rs` (apply, resume, undo, pairs, refusals; the
+- Tests: `tests/organize.rs` (planner), `tests/organize_exec.rs` (apply, resume, pairs, refusals; the
   cross-volume test is ignored), template proptest, TUI `organize_screen`, CLI `organize_plans_then_apply...`.
 - Not done: live re-planning while typing; a place picker. (`index-only` was dropped from FR-41 on 2026-11-11.)
 
@@ -208,9 +207,9 @@ gitignored. Re-check before the first public release.
 
 ## Open items
 
-- **Fixed 2026-11-11 (found by the Phase 3 fault tests):** `undo` run after a crash but before `apply --resume`
-  could split a Live Photo pair. `undo` now refuses a run with a half-done step and prints the resume
-  command (ADR-0006 addendum).
+- **Undo removed 2026-11-12 (ADR-0009):** `yojaka undo`, the History `u` key and the core undo code are gone.
+  A move or a copy is the user's decision; every apply, the History screen and the help overlay say so.
+  The Phase 3 undo-before-resume fix (ADR-0006 addendum) went with it.
 - Similar tier: every image format is compared since 2026-11-10 (ImageIO for HEIC, AVIF, raw). Not measured on a
   real photo library yet. Colours are not converted to one colour space, so a Display P3 photo and an sRGB copy can miss in strongly
   coloured pictures.

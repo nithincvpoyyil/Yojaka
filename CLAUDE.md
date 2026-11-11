@@ -16,7 +16,7 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 - `docs/STATUS.md`: where the work stands, keys, decisions and open items. Read it when resuming.
 
 ## Rules
-- **Safety first.** Never write to the user's files outside the Plan → Dry-run → Confirm → Execute (journaled) path. Read-only is the default. Delete means move to the Trash. Never overwrite a file.
+- **Safety first.** Never write to the user's files outside the Plan → Dry-run → Confirm → Execute (journaled) path. Read-only is the default. Delete means move to the Trash. Never overwrite a file. There is no undo (ADR-0009): warn before every apply instead.
 - `yojaka-core` holds all domain logic and must not depend on ratatui or crossterm.
 - Never log to stdout or stderr while the TUI is running. Use `tracing`, which writes to a file.
 - Per-file errors are collected, never fatal.

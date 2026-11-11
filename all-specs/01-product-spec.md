@@ -13,7 +13,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 |---|------|-------------------|
 | G1 | **Fast**: uses all cores (multi-threaded pipeline) | 100k media files scanned and indexed with metadata in < 30 s on an M-series SSD (see tech spec §10) |
 | G2 | **Memory-efficient** | Peak RSS < 250 MB for a 1M-file tree; memory does not grow with library size (streaming + on-disk index) |
-| G3 | **Safe**: nothing changes without a dry-run and explicit confirmation | Read-only by default; every change is planned, previewed, journaled and undoable |
+| G3 | **Safe**: nothing changes without a dry-run and explicit confirmation | Read-only by default; every change is planned, previewed and journaled, and Yojaka says plainly that it has no undo |
 | G4 | **Clear feedback**: the user always sees what is happening | Live progress, cancel at any time, before/after views |
 | G5 | **Lean**: one small native binary, no runtime dependencies | Single static binary; release binary < 100 MB (measured in `docs/perf.md`) |
 | G6 | **Ready for growth**: GUI and LLM features can be added later without a rewrite | The core logic lives in a library crate with no UI code |
@@ -36,7 +36,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 | S1 | "Show me what's in this drive": open Yojaka in a folder and get counts, total size, a format breakdown (most-used formats first), date range and cameras. |
 | S2 | "Find my duplicates": see duplicate groups, choose which copy to keep (manually or with a rule), and bulk-delete the rest safely. |
 | S3 | "Organize this mess": choose a layout such as `YYYY/MM/` or **by place** (`India/Goa/2023-08/`), see the proposed folder tree, and move or copy files into it. |
-| S4 | "Undo that": revert the last operation completely. |
+| S4 | ~~"Undo that": revert the last operation completely.~~ Dropped 2026-11-12 (ADR-0009): a move or a copy is the user's decision, and Yojaka warns about it. |
 | S5 | "Just tell me, don't touch anything": read-only analysis and export (CSV/JSON). This is the default mode. |
 
 ## 4. Functional requirements
@@ -46,7 +46,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 - **FR-2** Two operating modes:
   - **Read-only** (default): scan, index, analyze and export. No filesystem writes outside Yojaka's own data folder.
   - **Write** (`--write` flag, or switching in the TUI with a confirmation): allows delete, move and copy operations. Even in write mode, every change goes through Plan → Dry-run → Confirm (FR-30).
-- **FR-3** Every TUI feature also has a non-interactive CLI subcommand (`scan`, `stats`, `dupes`, `organize`, `apply`, `undo`, `export`). This allows scripting and automated tests.
+- **FR-3** Every TUI feature also has a non-interactive CLI subcommand (`scan`, `stats`, `dupes`, `organize`, `apply`, `history`, `export`). This allows scripting and automated tests.
 
 ### 4.2 Scan and index
 - **FR-10** Walk the target recursively in parallel and detect image **and video** files by extension **and** by magic bytes, so renamed or extension-less media files are found. Each file is tagged with a media kind: `image` or `video`.
@@ -119,7 +119,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   - Largest file.
   - Has EXIF.
 - **FR-32** In the TUI, review groups and mark keep/delete per file. Bulk-apply a rule to all groups. Show the space that will be reclaimed.
-- **FR-33** Delete means **move to the macOS Trash** by default, which can be undone. Permanent delete requires `--permanent` and typing a confirmation phrase.
+- **FR-33** Delete means **move to the macOS Trash** by default, so the user can put the file back in Finder. Permanent delete requires `--permanent` and typing a confirmation phrase.
 
 ### 4.5 Organize (move or copy)
 - **FR-40** Choose a destination root and a **path template**, for example:
@@ -161,7 +161,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   - `{country}/{city}/{year}` gives place first, then year.
   The default template stays `{year}/{month:02}/{name}`.
 
-### 4.6 Safety: Plan → Dry-run → Confirm → Execute → Journal → Undo
+### 4.6 Safety: Plan → Dry-run → Confirm → Execute → Journal
 - **FR-50** Every change is first built as a **Plan**: a list of operations with no side effects. Plans can be saved to a file (`--plan-out plan.json`) and applied later (`yojaka apply plan.json`).
 - **FR-51** The **dry-run / before-after view** shows:
   - Totals: N moves, N trashes, N copies, bytes affected, space reclaimed.
@@ -171,7 +171,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   - The user must confirm explicitly.
   - Large or destructive plans (more than 1,000 files, or any permanent delete) need the user to type a phrase.
 - **FR-53** **Re-validate before each operation.** If a file's size or mtime changed since the scan, skip it and report it.
-- **FR-54** Every executed operation is written to an append-only **journal** before and after it runs. `yojaka undo [op-id]` reverts a whole operation: it moves files back and restores them from the Trash.
+- **FR-54** Every executed operation is written to an append-only **journal** before and after it runs, so an interrupted run can be resumed. There is **no undo** (ADR-0009): Yojaka warns before every apply that a move or a copy is final, and the History screen only lists what was run.
 - **FR-55** Cross-volume moves use copy → verify hash → remove source. The source is never removed before the copy is verified.
 - **FR-56** Check free space before running. Refuse to start if the destination doesn't have enough space.
 
@@ -191,7 +191,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 | Platform | macOS 14+ **[ASSUMPTION]**, Apple Silicon (`aarch64-apple-darwin`) only |
 | Performance | See tech spec §10 targets. Benchmarks are tracked in CI. |
 | Memory | Streaming pipeline with bounded channels. The index lives on disk. The UI pages through data from the index instead of loading everything. |
-| Reliability | Never lose data. Crash-safe journal. A killed process can always be resumed or undone. |
+| Reliability | Never lose data. Crash-safe journal. A killed process can always be resumed. |
 | Privacy | Fully offline. No telemetry. Future LLM features use local models by default; cloud models are opt-in only. |
 | System safety | Never operates on macOS system or app-support folders, with no override (FR-14a). |
 | Footprint | Single binary. Data stored in `~/Library/Application Support/yojaka/`. Logs in `~/Library/Logs/yojaka/`. |

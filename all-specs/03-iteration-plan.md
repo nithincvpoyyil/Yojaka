@@ -19,7 +19,7 @@ I0 Foundation ─► I1 Scan+Index ─► I2 Metadata+Stats ─► I3 TUI shell
 | 2 | Metadata and stats | M | No |
 | 3 | TUI shell | M | No |
 | 4 | Exact duplicates (review only) | M | No |
-| 5 | Safe execution engine (trash, journal, undo) | L | **Yes** |
+| 5 | Safe execution engine (trash, journal; undo dropped 2026-11-12, ADR-0009) | L | **Yes** |
 | 6 | Organize (move/copy, tree preview) | L | Yes |
 | 7 | More duplicate tiers | M | Yes |
 | 8 | Hardening (FR audit, saved preferences, fault injection) | M | — |
@@ -183,12 +183,12 @@ The old Iteration 8 was split on 2026-11-12: hardening stayed in 8, and the rest
   - Trash support. Permanent delete only behind `--permanent` plus a typed confirmation phrase.
   - Free-space checks.
   - Resume with `--resume`.
-- `yojaka apply`, `yojaka undo`, and `yojaka history`, plus the **History** screen.
+- `yojaka apply` and `yojaka history`, plus the **History** screen.
 - Write mode: `--write`, or a toggle in the TUI with a confirmation. The badge turns amber.
 
 **Acceptance:**
-- Integration test: scan → dupes → apply → verify → undo leaves a tree whose hash is identical to the original.
-- Fault-injection test: SIGKILL during apply, then `--resume` completes, and `undo` fully restores the tree.
+- Integration test: scan → dupes → apply → verify. (Undo was dropped 2026-11-12, ADR-0009.)
+- Fault-injection test: SIGKILL during apply, then `--resume` completes with nothing lost.
 - A file modified between planning and applying is skipped and reported.
 - If one half of a Live Photo fails validation, both halves are skipped.
 - Manual test on a real folder, with the user's own sign-off.
@@ -254,11 +254,11 @@ The old Iteration 8 was split on 2026-11-12: hardening stayed in 8, and the rest
 
 - Check every functional requirement against the code and its tests (`docs/fr-checklist.md`) and close the gaps: filtered export, two more keep rules, saving plans and exports from the app, the `history` time zone.
 - Saved preferences (FR-62): remembered templates, copy / move and keep rules, only on request.
-- Safety fault-injection suite: real `kill -9` during `apply` and `undo`, read-only destination, disk full, an unwritable journal, a file swapped for a symlink, Live Photo pairs at every crash point.
+- Safety fault-injection suite: real `kill -9` during `apply`, read-only destination, disk full, an unwritable journal, a file swapped for a symlink, Live Photo pairs at every crash point.
 
 **Acceptance:** all functional requirements FR-1..62 are checked off, and the safety fault-injection suite passes.
 
-**Status (2026-11-12): done** (Phases 0-3, 2026-11-11). The fault tests found one bug (undo before resume could split a Live Photo), fixed the same day (ADR-0006 addendum). Commits `b93a80b`, `0104cbe`, `eb16c83`, plus the Phase 3 commit.
+**Status (2026-11-12): done** (Phases 0-3, 2026-11-11). The fault tests found one bug (undo before resume could split a Live Photo), fixed the same day; undo itself was removed on 2026-11-12 (ADR-0009). Commits `b93a80b`, `0104cbe`, `eb16c83`, plus the Phase 3 commit.
 
 ---
 
@@ -295,7 +295,7 @@ The old Iteration 8 was split on 2026-11-12: hardening stayed in 8, and the rest
 | Splitting a Live Photo pair (photo kept, video deleted, or the other way round) | Pairs treated as one item everywhere; property-test invariant |
 | Slow video metadata (`moov` at end of file) | Seek-based box walker; a counting-reader test keeps bytes read under 1 MB |
 | Wrong or odd place names (sea, borders, remote areas) | Precision guard (`Near X`, drop city beyond 100 km); geo test set; inferred locations are always marked `≈` |
-| Data loss bug | Read-only until I5; trash by default; journal and undo; fingerprint re-validation; property and fault-injection tests; never overwrite |
+| Data loss bug | Read-only until I5; trash by default; journal and a no-undo warning; fingerprint re-validation; property and fault-injection tests; never overwrite |
 | HEIC/RAW metadata coverage gaps in pure-Rust crates | `--exiftool-fallback`; track coverage per format in tests |
 | iCloud dataless files triggering mass downloads | `SF_DATALESS` check before any open; covered by tests |
 | Corrupting a Photos library | `.photoslibrary` skipped by default; shown as a warning if the user includes it |

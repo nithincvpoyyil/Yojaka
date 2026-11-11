@@ -359,7 +359,7 @@ pub enum CoreEvent {
     TaskFinished { task: TaskKind, outcome: TaskOutcome },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskKind { Scan, Metadata, Geocode, Hash, Plan, Execute, Undo }
+pub enum TaskKind { Scan, Metadata, Geocode, Hash, Plan, Execute }  // Undo was removed in I9 (ADR-0009)
 #[derive(Debug, Clone)]
 pub enum TaskOutcome { Complete, Partial, Cancelled, Failed(String) }
 
@@ -496,7 +496,7 @@ pub use events::{CoreEvent, EventSink, TaskKind, TaskOutcome};
 pub use paths::AppPaths;
 
 /// Facade used by every UI (TUI, CLI, future GUI). Methods are added per iteration:
-/// scan (I1), stats (I1/I2), dupes (I4), plan/apply/undo (I5), organize (I6).
+/// scan (I1), stats (I1/I2), dupes (I4), plan/apply (I5), organize (I6).
 #[derive(Debug)]
 pub struct Engine { pub paths: AppPaths, pub config: Config }
 impl Engine {
@@ -645,7 +645,7 @@ pub enum Cmd {
     Organize { path, dest, template, copy: bool, r#move: bool, infer_location: bool, plan_out }, // I6
     Plan { #[command(subcommand)] sub: PlanCmd },                 // I5: show FILE [--full-tree]
     Apply { file, yes: bool, resume: bool },                      // I5
-    Undo { plan_id: Option<String>, last: bool },                 // I5
+    // `Undo` was removed in I9 (ADR-0009)
     History,                                                      // I5
     Doctor,                                                       // I0
 }

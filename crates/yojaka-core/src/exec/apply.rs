@@ -24,7 +24,7 @@ const MIN_FREE_FOR_JOURNAL: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ApplyOptions {
-    /// Allow `Delete` ops (no Trash, no undo). The caller must have asked the user to confirm.
+    /// Allow `Delete` ops (no Trash). The caller must have asked the user to confirm.
     pub permanent: bool,
     /// Continue a plan whose journal already exists.
     pub resume: bool,
@@ -381,7 +381,7 @@ impl Runner<'_> {
                     let detail = if it.permanent || found.is_some() {
                         "recovered after an interruption".to_string()
                     } else {
-                        "recovered after an interruption; the Trash location is unknown, so undo cannot restore it".to_string()
+                        "recovered after an interruption; the Trash location is unknown".to_string()
                     };
                     jr.append(Run::Apply, it.id, State::Done, Some(detail), found)?;
                     self.count_done(it);
@@ -467,7 +467,7 @@ impl Runner<'_> {
                                 "put back because its Live Photo partner failed".into(),
                             );
                         } else {
-                            // Could not undo it; leave the `done` entry so undo still knows.
+                            // Could not put it back; leave the `done` entry.
                             self.count_done(done);
                         }
                     }

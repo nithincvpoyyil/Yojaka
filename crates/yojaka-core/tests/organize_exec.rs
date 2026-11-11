@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use common::TestEnv;
 use fixturegen::Spec;
 use yojaka_core::Config;
-use yojaka_core::exec::{self, ApplyOptions, DirTrash, apply, history, undo::undo};
+use yojaka_core::exec::{self, ApplyOptions, DirTrash, apply, history};
 use yojaka_core::organize::{OrganizeOptions, Template, Transfer};
 use yojaka_core::plan::{Op, Plan};
 use yojaka_core::scan::ScanOptions;
@@ -50,6 +50,7 @@ fn tree_hash(root: &Path) -> BTreeMap<PathBuf, String> {
 }
 
 /// Every directory under `root` (so a left-over empty folder shows up).
+#[allow(dead_code)]
 fn dirs(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -129,20 +130,10 @@ impl Lab {
         )
         .unwrap()
     }
-
-    fn undo(&self, plan: &Plan) -> exec::UndoReport {
-        undo(
-            plan.id,
-            &self.env.paths,
-            &EventSink::null(),
-            &CancelToken::new(),
-        )
-        .unwrap()
-    }
 }
 
 #[test]
-fn copy_leaves_the_originals_and_undo_removes_exactly_the_copies() {
+fn copy_leaves_the_originals_and_writes_matching_copies() {
     let lab = Lab::new();
     let before = tree_hash(&lab.root);
     let plan = lab.plan("{year}/{month:02}/{name}", Transfer::Copy);
@@ -160,23 +151,12 @@ fn copy_leaves_the_originals_and_undo_removes_exactly_the_copies() {
         }
     }
     assert_eq!(n, r.copied);
-
-    let u = lab.undo(&plan);
-    assert!(u.is_clean(), "{u:?}");
-    assert_eq!(u.restored, n);
-    assert!(
-        !lab.dest.exists() || dirs(&lab.dest).is_empty(),
-        "no folders left over"
-    );
-    assert!(tree_hash(&lab.dest).is_empty());
-    assert_eq!(tree_hash(&lab.root), before);
 }
 
 #[test]
-fn move_then_undo_gives_back_the_identical_tree() {
+fn move_puts_every_file_at_its_new_place() {
     let lab = Lab::new();
     let before = tree_hash(&lab.root);
-    let dirs_before = dirs(&lab.root);
     let plan = lab.plan("{kind}/{year}/{name}", Transfer::Move);
     let r = lab.run(&plan, ApplyOptions::default());
     assert!(r.failed.is_empty() && r.skipped.is_empty(), "{r:?}");
@@ -189,18 +169,10 @@ fn move_then_undo_gives_back_the_identical_tree() {
             assert!(!src.exists() && dst.exists());
         }
     }
-    let u = lab.undo(&plan);
-    assert!(u.is_clean(), "{u:?}");
-    assert_eq!(tree_hash(&lab.root), before);
-    assert_eq!(dirs(&lab.root), dirs_before);
-    assert!(tree_hash(&lab.dest).is_empty());
-    assert!(
-        dirs(&lab.dest).is_empty(),
-        "the folders that were made are gone"
-    );
+    assert_eq!(tree_hash(&lab.root).len() + moved.len(), before.len());
     assert_eq!(
         history::summarize(&lab.env.paths, plan.id).unwrap().status,
-        history::RunStatus::Undone
+        history::RunStatus::Applied
     );
 }
 
@@ -277,7 +249,7 @@ fn live_photo_halves_are_moved_together_or_not_at_all() {
 }
 
 #[test]
-fn an_interrupted_move_resumes_and_undo_still_restores_everything() {
+fn an_interrupted_move_resumes_and_finishes_every_file() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let lab = Lab::new();
     let before = tree_hash(&lab.root);
@@ -327,32 +299,10 @@ fn an_interrupted_move_resumes_and_undo_still_restores_everything() {
     );
     assert!(r2.failed.is_empty() && r2.skipped.is_empty(), "{r2:?}");
     assert_eq!(r.moved + r2.moved, tree_hash(&lab.dest).len());
-
-    let u = lab.undo(&plan);
-    assert!(u.is_clean(), "{u:?}");
-    assert_eq!(tree_hash(&lab.root), before);
-}
-
-#[test]
-fn undo_keeps_a_copy_when_the_original_is_gone_and_a_changed_copy() {
-    let lab = Lab::new();
-    let plan = lab.plan("{name}", Transfer::Copy);
-    lab.run(&plan, ApplyOptions::default());
-    let mut it = plan.ops.iter().filter_map(|o| match o {
-        Op::Copy { src, dst, .. } => Some((src.clone(), dst.clone())),
-        _ => None,
-    });
-    let (gone_src, gone_copy) = it.next().unwrap();
-    let (_, edited_copy) = it.next().unwrap();
-    std::fs::remove_file(&gone_src).unwrap();
-    std::fs::write(&edited_copy, b"edited copy").unwrap();
-    let u = lab.undo(&plan);
-    assert_eq!(u.failed.len(), 2, "{u:?}");
-    assert!(
-        gone_copy.exists(),
-        "the last copy of a file is never removed"
+    assert_eq!(
+        tree_hash(&lab.root).len() + tree_hash(&lab.dest).len(),
+        before.len()
     );
-    assert!(edited_copy.exists());
 }
 
 #[test]
@@ -402,7 +352,7 @@ fn bad_organize_plans_are_refused_before_anything_runs() {
 /// `cargo nextest run -p yojaka-core --run-ignored only -E 'test(cross_volume)'`.
 #[test]
 #[ignore = "mounts a disk image"]
-fn cross_volume_move_copies_verifies_removes_and_undo_restores() {
+fn cross_volume_move_copies_verifies_and_removes() {
     use std::process::Command;
     let mut lab = Lab::new();
     let img = lab.env.tmp.path().join("yojaka-xvol.dmg");
@@ -436,9 +386,6 @@ fn cross_volume_move_copies_verifies_removes_and_undo_restores() {
         let r = lab.run(&plan, ApplyOptions::default());
         assert!(r.failed.is_empty(), "{r:?}");
         assert!(r.moved > 0 && tree_hash(&lab.root).len() < before.len());
-        let u = lab.undo(&plan);
-        assert!(u.is_clean(), "{u:?}");
-        assert_eq!(tree_hash(&lab.root), before);
     }));
     let _ = Command::new("hdiutil")
         .args(["detach", &device, "-force"])

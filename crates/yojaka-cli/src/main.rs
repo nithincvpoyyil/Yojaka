@@ -204,9 +204,6 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
                 trash_dir: cli.trash_dir.as_deref(),
             },
         ),
-        Some(Cmd::Undo { plan_id, last }) => {
-            cmd::exec::undo(&engine, plan_id.as_deref(), *last, cli.write)
-        }
         Some(Cmd::History { json }) => cmd::exec::history(&engine, *json),
         Some(Cmd::Organize {
             path,

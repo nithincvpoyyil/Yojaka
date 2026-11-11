@@ -11,7 +11,7 @@ use yojaka_core::{CoreEvent, TaskKind};
 use crate::browser::{BrowserState, Focus};
 use crate::dupes::{DupesState, Pane, Toggled};
 use crate::fmt;
-use crate::history::{self, HistoryState};
+use crate::history::HistoryState;
 use crate::modal::{self, Modal, Review, RunView};
 use crate::organize::{Editing, OrganizeState, Phase as OrgPhase, PlanRequest};
 use crate::worker::{Bg, DupOutcome, ExecOutcome, Request, Response};
@@ -112,8 +112,6 @@ pub enum Msg {
     ExportView,
     /// `M` (Duplicates, Organize): remember the current choices in the config file.
     Remember,
-    /// `u` (History): put back the files of the selected run.
-    UndoRun,
     /// `e` (Organize): edit the folder pattern.
     EditTemplate,
     /// `d` (Organize): edit the destination folder.
@@ -169,8 +167,6 @@ pub enum Cmd {
     /// Write the files the browser shows to a new CSV file.
     ExportView(Box<yojaka_core::browse::BrowseQuery>),
     ApplyPlan(Box<yojaka_core::plan::Plan>),
-    /// Put back everything a journaled run moved.
-    UndoRun(uuid::Uuid),
     CancelExec,
     LoadHistory,
 }
@@ -812,26 +808,6 @@ impl App {
         }
     }
 
-    /// `u` on the History screen.
-    fn ask_undo(&mut self) -> Vec<Cmd> {
-        if self.mode != Mode::Write {
-            self.say("Write mode is off. Press W to turn it on".into());
-            return vec![];
-        }
-        if self.dashboard.scan.running {
-            self.say("Wait for the scan to finish first".into());
-            return vec![];
-        }
-        match self.history.current() {
-            Some(run) if history::can_undo(run) => {
-                self.modal = Some(Modal::Undo(Box::new(run.clone())));
-            }
-            Some(_) => self.say("Nothing left to put back for that run".into()),
-            None => self.dirty = false,
-        }
-        vec![]
-    }
-
     /// Keys while a question, review or progress box is open.
     fn modal_key(&mut self, msg: Msg) -> Vec<Cmd> {
         let Some(modal) = self.modal.take() else {
@@ -860,23 +836,6 @@ impl App {
                     self.dirty = false;
                 }
                 vec![]
-            }
-            Modal::Undo(run) => {
-                if yes || matches!(msg, Msg::Enter) {
-                    self.modal = Some(Modal::Running(RunView {
-                        label: "Putting files back",
-                        done: 0,
-                        total: Some(run.done as u64),
-                        cancelling: false,
-                    }));
-                    vec![Cmd::UndoRun(run.plan_id)]
-                } else {
-                    if !no {
-                        self.modal = Some(Modal::Undo(run));
-                        self.dirty = false;
-                    }
-                    vec![]
-                }
             }
             Modal::Review(mut rv) => {
                 let typing = rv.needs_typing();
@@ -968,7 +927,6 @@ impl App {
                 | Msg::SavePlan
                 | Msg::Remember
                 | Msg::ExportView
-                | Msg::UndoRun
                 | Msg::EditTemplate
                 | Msg::EditDest
                 | Msg::ToggleTransfer
@@ -1127,8 +1085,7 @@ impl App {
                     vec![Cmd::ExportView(Box::new(self.browser.query.clone()))]
                 }
             }
-            Msg::UndoRun if self.screen == Screen::History => self.ask_undo(),
-            Msg::ReviewPlan | Msg::UndoRun | Msg::SavePlan | Msg::Remember | Msg::ExportView => {
+            Msg::ReviewPlan | Msg::SavePlan | Msg::Remember | Msg::ExportView => {
                 self.dirty = false;
                 vec![]
             }
@@ -1278,10 +1235,10 @@ impl App {
     }
 
     fn on_core(&mut self, ev: CoreEvent) -> Vec<Cmd> {
-        // Applying or undoing a plan reports through the same channel; it has its own box.
+        // Applying a plan reports through the same channel; it has its own box.
         match &ev {
             CoreEvent::Progress {
-                task: TaskKind::Execute | TaskKind::Undo,
+                task: TaskKind::Execute,
                 done,
                 total,
                 ..
@@ -1293,11 +1250,11 @@ impl App {
                 return vec![];
             }
             CoreEvent::TaskStarted {
-                task: TaskKind::Execute | TaskKind::Undo,
+                task: TaskKind::Execute,
                 ..
             } => return vec![],
             CoreEvent::TaskFinished {
-                task: TaskKind::Execute | TaskKind::Undo,
+                task: TaskKind::Execute,
                 ..
             } => {
                 self.dirty = false;
@@ -1456,7 +1413,6 @@ impl App {
             Bg::ExecFinished(outcome) => {
                 let lines = match outcome {
                     ExecOutcome::Applied(r) => modal::apply_report(&r),
-                    ExecOutcome::Undone(r) => modal::undo_report(&r),
                     ExecOutcome::Failed(e) => vec![modal::ReportLine {
                         text: format!("Nothing more was changed: {e}"),
                         bad: true,

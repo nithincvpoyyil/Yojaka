@@ -253,14 +253,6 @@ pub enum Cmd {
         #[arg(long)]
         permanent: bool,
     },
-    /// Put back the files a run moved to the Trash. Shows a preview unless --write is given
-    Undo {
-        /// Run id (or the start of it) from `yojaka history`
-        plan_id: Option<String>,
-        /// The most recent run
-        #[arg(long)]
-        last: bool,
-    },
     /// List what has been run, newest first
     History {
         #[arg(long)]

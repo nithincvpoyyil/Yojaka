@@ -1,6 +1,6 @@
 //! State of the History screen: past runs, newest first, and the selected one.
 
-use yojaka_core::exec::{RunStatus, RunSummary};
+use yojaka_core::exec::RunSummary;
 
 #[derive(Debug, Default)]
 pub struct HistoryState {
@@ -38,9 +38,4 @@ impl HistoryState {
     pub fn jump(&mut self, bottom: bool) {
         self.move_by(if bottom { i64::MAX / 2 } else { i64::MIN / 2 });
     }
-}
-
-/// Can `u` do anything for this run?
-pub fn can_undo(run: &RunSummary) -> bool {
-    run.done > run.undone && run.status != RunStatus::Undone
 }

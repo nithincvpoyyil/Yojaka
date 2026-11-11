@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use yojaka_core::exec::{RunStatus, RunSummary};
 
-use crate::app::{App, Mode};
+use crate::app::App;
 use crate::view::history_layout;
 use crate::{fmt, theme};
 
@@ -25,7 +25,6 @@ fn status_style(s: RunStatus) -> ratatui::style::Style {
     match s {
         RunStatus::Applied => theme::good(),
         RunStatus::Incomplete => theme::error(),
-        RunStatus::PartlyUndone | RunStatus::Undone => theme::dim(),
     }
 }
 
@@ -97,31 +96,26 @@ fn render_detail(app: &App, f: &mut Frame, area: Rect) {
     let Some(r) = app.history.current() else {
         return;
     };
-    f.render_widget(Paragraph::new(detail_lines(r, app.mode)), inner);
+    f.render_widget(Paragraph::new(detail_lines(r)), inner);
 }
 
-fn detail_lines(r: &RunSummary, mode: Mode) -> Vec<Line<'static>> {
+fn detail_lines(r: &RunSummary) -> Vec<Line<'static>> {
     let mut v = vec![
         Line::raw(format!("Folder: {}", r.root.display())),
         Line::raw(format!(
-            "{} of {} steps done · {} left alone · {} failed · {} put back",
-            r.done, r.ops, r.skipped, r.failed, r.undone
+            "{} of {} steps done · {} left alone · {} failed",
+            r.done, r.ops, r.skipped, r.failed
         )),
         Line::styled(format!("Run {}", r.plan_id), theme::dim()),
+        Line::styled(
+            "Yojaka has no undo: a move or a copy is final.",
+            theme::dim(),
+        ),
     ];
     if r.status == RunStatus::Incomplete {
         v.push(Line::styled(
             "Stopped before the end. Finish it with `yojaka apply <plan> --resume --write`.",
             theme::error(),
-        ));
-    } else if crate::history::can_undo(r) {
-        v.push(Line::styled(
-            if mode == Mode::Write {
-                "u  put the files back"
-            } else {
-                "W turns write mode on, then u puts the files back"
-            },
-            theme::accent(),
         ));
     }
     v

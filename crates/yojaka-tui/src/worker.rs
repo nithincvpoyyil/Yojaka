@@ -84,7 +84,7 @@ pub enum Bg {
     Worker(Response),
     ScanFinished(Result<yojaka_core::scan::ScanSummary, String>),
     DupesFinished(DupOutcome),
-    /// A reviewed plan finished (or was stopped), or an undo did.
+    /// A reviewed plan finished (or was stopped).
     ExecFinished(ExecOutcome),
     /// An organize plan is ready (or could not be made).
     Planned(Result<Box<yojaka_core::organize::OrganizePlan>, String>),
@@ -94,11 +94,10 @@ pub enum Bg {
     Notice(String),
 }
 
-/// How applying a plan, or undoing a run, ended.
+/// How applying a plan ended.
 #[derive(Debug)]
 pub enum ExecOutcome {
     Applied(Box<yojaka_core::exec::ApplyReport>),
-    Undone(Box<yojaka_core::exec::UndoReport>),
     Failed(String),
 }
 

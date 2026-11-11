@@ -1,8 +1,8 @@
 //! Moving files to the Trash, and putting them back.
 //!
-//! macOS gives no "restore" call, so the journal records where each file ended up and undo moves
-//! it back itself. [`SystemTrash`] is the real Trash; [`DirTrash`] is a folder standing in for it
-//! (tests, so they never fill the user's Trash).
+//! macOS gives no "restore" call, so the journal records where each file ended up and a failed
+//! pair is put back by moving it itself. [`SystemTrash`] is the real Trash; [`DirTrash`] is a
+//! folder standing in for it (tests, so they never fill the user's Trash).
 
 use std::path::{Path, PathBuf};
 

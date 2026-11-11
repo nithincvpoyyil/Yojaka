@@ -1634,7 +1634,7 @@ mod write_path {
         a
     }
 
-    fn run_summary(done: usize, undone: usize, status: RunStatus) -> RunSummary {
+    fn run_summary(done: usize, status: RunStatus) -> RunSummary {
         RunSummary {
             plan_id: uuid::Uuid::now_v7(),
             started: 1_800_000_000,
@@ -1645,7 +1645,6 @@ mod write_path {
             done,
             skipped: 0,
             failed: 0,
-            undone,
             bytes: 12_000_000,
             status,
         }
@@ -1782,45 +1781,25 @@ mod write_path {
     }
 
     #[test]
-    fn history_loads_on_entry_lists_runs_and_undo_needs_write_mode() {
+    fn history_loads_on_entry_lists_runs_and_says_there_is_no_undo() {
         let mut a = app_at(100, 40);
         let cmds = a.update(Msg::Goto(Screen::History));
         assert!(matches!(&cmds[..], [Cmd::LoadHistory]));
         assert!(draw(&a, 100, 40).contains("Loading"));
         a.update(Msg::Bg(Bg::History(vec![
-            run_summary(10, 0, RunStatus::Applied),
-            run_summary(4, 4, RunStatus::Undone),
+            run_summary(10, RunStatus::Applied),
+            run_summary(4, RunStatus::Incomplete),
         ])));
         let out = draw(&a, 100, 40);
-        assert!(out.contains("applied") && out.contains("undone"), "{out}");
+        assert!(
+            out.contains("applied") && out.contains("incomplete"),
+            "{out}"
+        );
+        assert!(out.contains("no undo"), "{out}");
 
         a.update(Msg::Down);
         assert_eq!(a.history.selected, 1);
         a.update(Msg::Up);
-        a.update(Msg::UndoRun);
-        assert!(a.modal.is_none(), "read-only: no undo");
-        assert!(a.notice.as_ref().unwrap().0.contains("Write mode is off"));
-
-        a.update(Msg::ToggleWrite);
-        a.update(Msg::Char('y'));
-        a.update(Msg::UndoRun);
-        assert!(matches!(a.modal, Some(Modal::Undo(_))));
-        let cmds = a.update(Msg::Char('y'));
-        assert!(matches!(&cmds[..], [Cmd::UndoRun(_)]));
-    }
-
-    #[test]
-    fn a_run_that_is_fully_undone_cannot_be_undone_again() {
-        let mut a = app_at(100, 40);
-        a.mode = Mode::Write;
-        a.screen = Screen::History;
-        a.update(Msg::Bg(Bg::History(vec![run_summary(
-            4,
-            4,
-            RunStatus::Undone,
-        )])));
-        a.update(Msg::UndoRun);
-        assert!(a.modal.is_none());
     }
 
     #[test]
@@ -1842,7 +1821,6 @@ mod write_path {
             let _ = draw(&a, w, h);
             a.update(Msg::Bg(Bg::History(vec![run_summary(
                 3,
-                0,
                 RunStatus::Incomplete,
             )])));
             let _ = draw(&a, w, h);
@@ -1854,8 +1832,6 @@ mod write_path {
         let lines = crate::screens::help::lines_for(Screen::Duplicates);
         assert!(lines.iter().any(|(k, _)| *k == "W"));
         assert!(lines.iter().any(|(k, _)| *k == "a"));
-        let hist = crate::screens::help::lines_for(Screen::History);
-        assert!(hist.iter().any(|(k, _)| *k == "u"));
     }
 }
 

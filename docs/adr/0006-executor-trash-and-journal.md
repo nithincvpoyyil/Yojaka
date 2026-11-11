@@ -1,6 +1,6 @@
 # ADR-0006: Executor, Trash and journal
 
-Status: accepted (Iteration 5)
+Status: accepted (Iteration 5). The undo parts were removed by ADR-0009 (2026-11-12).
 
 ## Context
 Iteration 5 is the first release that changes the user's files. The tech spec said to use the `trash`
@@ -16,8 +16,8 @@ went and has no restore, so undo would have had to guess a name in `~/.Trash`.
   exists, so nothing is replaced and no `unsafe` (`renamex_np`) is needed. It works within one volume,
   which is where the Trash and the file are.
 - **Journal** is `journal/<plan-id>.jsonl` (header line, then `begin` / `done` / `failed` / `skipped`
-  per op, tagged `apply` or `undo`) plus `<plan-id>.plan.json`, a copy of the plan, so undo and resume
-  do not depend on the user keeping the plan file. Every line is flushed (`sync_data`) before the file
+  per op, tagged `apply`; it also had `undo` entries until ADR-0009) plus `<plan-id>.plan.json`, a copy of the plan, so resume
+  does not depend on the user keeping the plan file. Every line is flushed (`sync_data`) before the file
   is touched. A last line cut by a crash is ignored when reading.
 - **Validation** happens just before each op: still a regular file, not iCloud-only, same size and
   mtime, same full BLAKE3 hash, still inside the plan folder after resolving symlinks, not protected,
@@ -27,17 +27,17 @@ went and has no restore, so undo would have had to guess a name in `~/.Trash`.
   (it was the pair's primary file, which cannot be checked against a video).
 - **Resume** skips ops with a `done` entry. An op with `begin` and no `done` whose file is gone is
   recovered by looking for the file in the Trash (name, size, mtime); if that fails the journal says
-  undo cannot restore it automatically.
+  the location is unknown.
 - **Plan checks before anything runs** (`check_plan`): dedupe plans only, paths under the plan root with
   no `..`, nothing protected, no file both removed and kept, `Delete` ops only with `--permanent`.
 - **Permanent delete** exists only in the CLI (`apply --permanent`), always asks for a typed phrase
-  (`--yes` does not skip it), and is not offered in the TUI. It cannot be undone and undo says so.
+  (`--yes` does not skip it), and is not offered in the TUI. It cannot be undone.
 - **Typed confirmation** for 50 or more files (`Plan::LARGE_PLAN_FILES`) or any permanent delete.
-- **Write mode** is off by default. CLI: `--write` (without it `apply` and `undo` only preview). TUI: `W`
+- **Write mode** is off by default. CLI: `--write` (without it `apply` only previews). TUI: `W`
   asks first. Execution is single-threaded: the cost is the disk, and ordering makes the journal simple.
 
 ## Consequences
-- Undo is exact and repeatable. Running it twice restores once.
+- There is no undo (ADR-0009). Deduplicated files are in the Trash and can be put back in Finder.
 - Reading `~/.Trash` for crash recovery may need Full Disk Access; without it that one recovery step
   reports "location unknown" instead of failing the run.
 - Free space: the journal volume needs 64 MiB before a run starts (Trash moves on one volume use none).
@@ -47,7 +47,9 @@ went and has no restore, so undo would have had to guess a name in `~/.Trash`.
   exist since Iteration 8 (`crates/yojaka-cli/tests/fault_kill.rs`), slowed down by a debug-only switch
   (`YOJAKA_TEST_OP_DELAY_MS`) in `Journal::write`.
 
-## Addendum (2026-11-11, Iteration 8): undo refuses an interrupted run
+## Addendum (2026-11-11, Iteration 8): undo refuses an interrupted run (obsolete)
+
+Obsolete since 2026-11-12: undo was removed (ADR-0009), so none of this applies any more. Kept as history.
 
 The fault tests found that `undo` run after a crash, **before** `apply --resume`, restored the steps the
 journal recorded as done and refused only the step left half done (begun, never finished). The later

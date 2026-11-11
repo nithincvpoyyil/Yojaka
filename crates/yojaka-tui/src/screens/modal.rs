@@ -17,26 +17,10 @@ pub fn render(f: &mut Frame, body: Rect, modal: &Modal) {
             "Turn on write mode?",
             vec![
                 Line::raw("Write mode lets Yojaka move files to the Trash, but only after you"),
-                Line::raw("have reviewed a plan. Nothing is ever deleted for good from here,"),
-                Line::raw("and every run can be put back from the History screen."),
+                Line::raw("have reviewed a plan. Nothing is ever deleted for good from here."),
+                Line::raw("Yojaka has no undo: a move or a copy is your decision, and final."),
                 Line::raw(""),
                 Line::styled("y / Enter  turn on      n / Esc  cancel", theme::accent()),
-            ],
-            64,
-        ),
-        Modal::Undo(run) => popup(
-            f,
-            body,
-            "Put the files back?",
-            vec![
-                Line::raw(format!(
-                    "{} files ({}) go back where they were.",
-                    fmt::thousands(run.done.saturating_sub(run.undone) as u64),
-                    fmt::bytes(run.bytes)
-                )),
-                Line::raw("A file is never put over one that is already there."),
-                Line::raw(""),
-                Line::styled("y / Enter  put back      n / Esc  cancel", theme::accent()),
             ],
             64,
         ),

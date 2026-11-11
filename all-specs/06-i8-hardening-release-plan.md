@@ -105,11 +105,10 @@ disk-image cross-volume test (`organize_exec.rs:404`). Missing from tech spec §
 
 1. **Real SIGKILL.** A test spawns the real binary (`assert_cmd` path) on a fixture: `yojaka --write apply
    plan.json --yes --trash-dir ...`, waits until the journal has N "done" lines (poll the `.jsonl` file),
-   then `kill -9`. Then `apply --resume` must finish, and `undo` must give back a tree whose hash equals the
-   original. Run it for trash, copy, move and cross-folder move plans. To make the kill land mid-run without
+   then `kill -9`. Then `apply --resume` must finish with nothing lost. Run it for trash, copy, move and cross-folder move plans. To make the kill land mid-run without
    sleeps in the product, add a hidden test-only env var (`YOJAKA_TEST_OP_DELAY_MS`) read only in debug
    builds (`cfg(debug_assertions)`), or use enough files that the run takes over a second.
-2. **Kill during undo.** Same, killing `undo`; a second `undo` finishes the job.
+2. ~~**Kill during undo.**~~ Dropped with undo (ADR-0009).
 3. **Read-only destination.** Organize into a folder with mode `0o555`: nothing is half-done; the plan
    reports every file as failed; the exit code is 3; the source is untouched.
 4. **Disk full.** A 50 MB APFS image (`hdiutil create -size 50m -fs APFS`), organize-copy 80 MB into it: the
@@ -125,7 +124,7 @@ disk-image cross-volume test (`organize_exec.rs:404`). Missing from tech spec §
 Disk-image tests stay `#[ignore]` locally but get their own CI job (`cargo nextest run --run-ignored only -E
 'test(/disk_image/)'`), since GitHub macOS runners allow `hdiutil`. The suite lives in
 `crates/yojaka-cli/tests/fault_kill.rs` (real kills, read-only destination, disk image) and `crates/yojaka-core/tests/exec.rs` /
-`organize_exec.rs` (in-process faults). **Built 2026-11-11.** It found one bug (undo before resume could split a Live Photo), fixed the same day (ADR-0006 addendum).
+`organize_exec.rs` (in-process faults). **Built 2026-11-11.** It found one bug (undo before resume could split a Live Photo), fixed the same day; undo was removed on 2026-11-12 (ADR-0009).
 
 ## Phases 4-7: moved to Iteration 9
 
@@ -142,7 +141,7 @@ a feature phase (the detailed dashboard) in front. LLM assist is now Iteration 1
 | Phase 0 | `b93a80b` |
 | Phase 1 | `0104cbe` |
 | Phase 2 | `eb16c83` |
-| Phase 3 | fault-injection suite and the undo fix (ADR-0006 addendum) |
+| Phase 3 | fault-injection suite (the undo fix is moot since ADR-0009) |
 
 Acceptance for Iteration 8:
 - `docs/fr-checklist.md` is complete: every FR is done or changed by a recorded decision; FR-52's spec text

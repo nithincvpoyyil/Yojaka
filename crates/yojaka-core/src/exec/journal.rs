@@ -1,7 +1,7 @@
 //! The journal: one JSON line per step, written before and after every operation.
 //!
 //! `journal/<plan-id>.jsonl` holds the history; `journal/<plan-id>.plan.json` is a copy of the
-//! plan, so undo and resume do not depend on the user keeping the plan file.
+//! plan, so resume does not depend on the user keeping the plan file.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,6 @@ use crate::{AppPaths, Result, YojakaError};
 #[serde(rename_all = "snake_case")]
 pub enum Run {
     Apply,
-    Undo,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,14 +36,14 @@ pub struct Entry {
     pub state: State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-    /// For a trashed file: where it is now. Undo puts it back from here.
+    /// For a trashed file: where it is now. Recorded so a failed pair can be put back during the run.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         with = "opt_path_serde"
     )]
     pub trashed_to: Option<PathBuf>,
-    /// Copies and cross-volume moves: the content hash that was verified. Undo checks it.
+    /// Copies and cross-volume moves: the content hash that was verified.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hash: Option<ContentHash>,
 }
@@ -115,7 +114,7 @@ impl Journal {
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::AlreadyExists {
                     YojakaError::Internal(format!(
-                        "plan {} has already been applied; use --resume to finish it or `yojaka undo` to reverse it",
+                        "plan {} has already been applied; use --resume to finish it",
                         plan.id
                     ))
                 } else {
@@ -137,7 +136,7 @@ impl Journal {
         Ok(j)
     }
 
-    /// Re-opens the journal of a plan that was started before (resume, undo).
+    /// Re-opens the journal of a plan that was started before (resume).
     pub fn open(paths: &AppPaths, plan_id: Uuid) -> Result<Self> {
         let path = journal_path(paths, plan_id);
         let file = std::fs::OpenOptions::new()

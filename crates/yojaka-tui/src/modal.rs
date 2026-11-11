@@ -1,7 +1,7 @@
 //! Pop-up questions and progress for the write path: turn on write mode, review a plan, put a
 //! run back, watch it run, read the result. One at a time; while one is open it owns the keys.
 
-use yojaka_core::exec::{ApplyReport, RunSummary, UndoReport};
+use yojaka_core::exec::ApplyReport;
 use yojaka_core::plan::Plan;
 use yojaka_core::plan::tree::GlimpseLine;
 
@@ -13,7 +13,6 @@ pub enum Modal {
     EnableWrite,
     Review(Box<Review>),
     /// "Put back the files of this run?"
-    Undo(Box<RunSummary>),
     Running(RunView),
     Report(Vec<ReportLine>),
 }
@@ -149,27 +148,10 @@ pub fn apply_report(r: &ApplyReport) -> Vec<ReportLine> {
         ));
         problems(&mut out, "failed", &r.failed);
     }
-    out.push(line("Undo it any time from the History screen (5).", false));
-    out
-}
-
-pub fn undo_report(r: &UndoReport) -> Vec<ReportLine> {
-    let mut out = vec![line(
-        format!(
-            "{} files put back ({}).",
-            fmt::thousands(r.restored as u64),
-            fmt::bytes(r.bytes)
-        ),
+    out.push(line(
+        "Yojaka has no undo. The History screen only lists what was run.",
         false,
-    )];
-    if r.already_undone > 0 {
-        out.push(line(
-            format!("{} had been put back before.", r.already_undone),
-            false,
-        ));
-    }
-    problems(&mut out, "not restored", &r.not_undoable);
-    problems(&mut out, "not restored", &r.failed);
+    ));
     out
 }
 

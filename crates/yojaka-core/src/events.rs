@@ -30,7 +30,6 @@ pub enum TaskKind {
     Hash,
     Plan,
     Execute,
-    Undo,
 }
 
 #[derive(Debug, Clone)]

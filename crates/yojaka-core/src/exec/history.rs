@@ -14,8 +14,6 @@ pub enum RunStatus {
     Applied,
     /// Stopped before the end; `apply --resume` finishes it.
     Incomplete,
-    PartlyUndone,
-    Undone,
 }
 
 impl RunStatus {
@@ -23,8 +21,6 @@ impl RunStatus {
         match self {
             Self::Applied => "applied",
             Self::Incomplete => "incomplete",
-            Self::PartlyUndone => "partly undone",
-            Self::Undone => "undone",
         }
     }
 }
@@ -40,8 +36,7 @@ pub struct RunSummary {
     pub done: usize,
     pub skipped: usize,
     pub failed: usize,
-    pub undone: usize,
-    /// Bytes of the files that were removed and not yet put back.
+    /// Bytes of the files that were moved, copied or removed.
     pub bytes: u64,
     pub status: RunStatus,
 }
@@ -58,17 +53,11 @@ pub fn summarize(paths: &AppPaths, plan_id: Uuid) -> Result<RunSummary> {
         .ok_or_else(|| YojakaError::Internal(format!("journal {plan_id} has no header")))?;
     let applied = journal::last_states(&lines, Run::Apply);
     let count = |s: State| applied.iter().filter(|e| e.state == s).count();
-    let undone_ops: std::collections::HashSet<u64> = journal::last_states(&lines, Run::Undo)
-        .into_iter()
-        .filter(|e| e.state == State::Done)
-        .map(|e| e.op)
-        .collect();
     let done_ops: Vec<u64> = applied
         .iter()
         .filter(|e| e.state == State::Done)
         .map(|e| e.op)
         .collect();
-    let undone = done_ops.iter().filter(|o| undone_ops.contains(o)).count();
 
     let bytes = match journal::load_plan(paths, plan_id) {
         Ok(plan) => plan
@@ -79,7 +68,7 @@ pub fn summarize(paths: &AppPaths, plan_id: Uuid) -> Result<RunSummary> {
                 | Op::Delete { id, expect, .. }
                 | Op::Move { id, expect, .. }
                 | Op::Copy { id, expect, .. }
-                    if done_ops.contains(id) && !undone_ops.contains(id) =>
+                    if done_ops.contains(id) =>
                 {
                     Some(expect.size)
                 }
@@ -94,11 +83,7 @@ pub fn summarize(paths: &AppPaths, plan_id: Uuid) -> Result<RunSummary> {
         count(State::Skipped),
         count(State::Failed),
     );
-    let status = if done > 0 && undone == done {
-        RunStatus::Undone
-    } else if undone > 0 {
-        RunStatus::PartlyUndone
-    } else if done + skipped + failed < header.ops {
+    let status = if done + skipped + failed < header.ops {
         RunStatus::Incomplete
     } else {
         RunStatus::Applied
@@ -113,7 +98,6 @@ pub fn summarize(paths: &AppPaths, plan_id: Uuid) -> Result<RunSummary> {
         done,
         skipped,
         failed,
-        undone,
         bytes,
         status,
     })

@@ -25,7 +25,7 @@ Companion to `01-product-spec.md`. FR-xx references point to that document.
 | Perceptual hash | Own 64-bit difference hash and colour signature over upright pixels decoded by `image` (JPEG, PNG, GIF, WebP, TIFF, BMP) and macOS ImageIO through `objc2-image-io` (HEIC, AVIF; raw photos through the camera's embedded preview), own BK-tree | Similar tier, photos only, opt-in (ADR-0008). `image_hasher` was not needed. |
 | Index storage | `rusqlite` (`bundled` feature), WAL mode | Embedded, queryable, low memory, crash-safe |
 | Serialization | `serde`, `serde_json` | Plans, journal, config, export |
-| Trash | `trash` crate (macOS backend) | Reversible delete (FR-33) |
+| Trash | `trash` crate (macOS backend) | Delete to the Trash (FR-33) |
 | Config | `toml` + `directories` | `~/Library/Application Support/yojaka/config.toml` |
 | Errors | `thiserror` (core), `anyhow` (bin) | Typed errors in the library |
 | Logging | `tracing` + `tracing-appender` → file | **Never log to stdout while the TUI is running** |
@@ -54,7 +54,7 @@ yojaka/
 │   │       ├── dupes/        # tiers, grouping, keep rules
 │   │       ├── organize/     # path templates, planner
 │   │       ├── plan/         # Plan model, validation, dry-run summary, tree diff
-│   │       ├── exec/         # executor, journal, undo
+│   │       ├── exec/         # executor, journal
 │   │       ├── events.rs     # progress/event types sent to the UI
 │   │       └── cancel.rs     # CancelToken
 │   ├── yojaka-tui/           # ratatui app: screens, widgets, key handling
@@ -368,7 +368,7 @@ pub struct Fingerprint { size: u64, mtime_ns: i64, hash: Option<[u8; 32]> }
 - The TUI widget expands lazily. The CLI prints the glimpse, and `--full-tree` prints everything.
 - **Before/after view:** two panes, or a unified diff with `+` for new folders and `−` for emptied ones.
 
-### 6.7 Executor, journal, undo (FR-52..56)
+### 6.7 Executor and journal (FR-52..56)
 - **Journal:** `~/Library/Application Support/yojaka/journal/<plan-id>.jsonl`. Each line is `{op_id, state: "begin"|"done"|"failed"|"skipped", detail, ts}`, and the file is fsynced every N entries plus at the end.
 - **Per-op sequence:**
   1. Re-stat the source and compare it with `expect`. On mismatch, record `skipped(changed)`.
@@ -380,12 +380,7 @@ pub struct Fingerprint { size: u64, mtime_ns: i64, hash: Option<[u8; 32]> }
      - **Trash:** `trash::delete`, recording the resulting Trash location where possible.
   4. Write `done` to the journal.
 - **Parallelism:** independent ops run on a small pool (4–8 threads; I/O-bound). `MkDir` ops run first in order.
-- **Undo:** read the journal in reverse and invert each `done` op:
-  - Move becomes the reverse move.
-  - Copy becomes deleting the copy, only if its hash still matches.
-  - Trash becomes restoring from the Trash.
-
-  Undo is itself journaled. A `begin` entry without `done` (for example after a crash) is resolved by checking which path currently exists.
+- **No undo (ADR-0009):** nothing reverses a finished run. The only put-back is inside one run: if the second half of a Live Photo pair fails, the first half is put back. A `begin` entry without `done` (for example after a crash) is resolved on `--resume` by checking which path currently exists.
 - **Resume:** `yojaka apply --resume <plan-id>` skips ops that are already `done`.
 
 ## 7. TUI design (`yojaka-tui`)
@@ -402,7 +397,7 @@ pub struct Fingerprint { size: u64, mtime_ns: i64, hash: Option<[u8; 32]> }
 | `4` | **Organize** | Destination picker, template presets (Date / Place / Place+Date / Kind+Date), template input with a live sample preview (5 example files, including a geotagged one and one without location), an infer-location toggle, coverage ("82% of files have a location"), copy/move toggle, and the proposed tree glimpse. |
 | — | **Review / Dry-run** (modal) | Summary counts, warnings, before/after trees, op list sample, and a confirmation (typed phrase for large or permanent plans) |
 | — | **Execute** | Progress, current op, error list, `Esc` to stop safely after the current op |
-| `5` | **History** | Past plans from the journal, status, and `u` to undo |
+| `5` | **History** | Past plans from the journal and their status (a note says there is no undo) |
 
 **Global UI:**
 - Header shows the root, the mode badge (**READ-ONLY** green or **WRITE** amber), and the index status.
@@ -423,7 +418,6 @@ yojaka organize [PATH] --dest DIR --template "{year}/{month:02}" [--copy|--move]
                                      # e.g. --template "{country}/{city}/{year}-{month:02}/{name}"
 yojaka plan show FILE [--full-tree]   # dry-run view of a saved plan
 yojaka apply FILE [--yes] [--resume]  # executes; requires --write semantics
-yojaka undo [PLAN_ID|--last]
 yojaka history
 yojaka export [PATH] --format csv|json [--filter ...] [--include-gps]
 yojaka places [PATH] [--json]        # countries/cities with counts, location coverage
@@ -492,11 +486,11 @@ Reference machine: M-series MacBook with an internal SSD (the development machin
 |-------|------|
 | Geo | Known coordinates → expected place (Goa, Paris, Tokyo, a mid-ocean point, the poles, near the antimeridian, a border town); ISO 6709 parsing; precision-guard thresholds; inference window edges |
 | Unit | Detection, each extractor (against fixture images **and a few real iPhone, Android and camera clips** in `tests/data/`, kept small, under 1 MB each), Live Photo pairing, name normalization, keep rules, template parser, glimpse algorithm |
-| Property (`proptest`) | Plan invariants (§6.5): no overwrite, no full-group deletion, never split a Live Photo pair, undo(apply(plan)) restores the original tree |
-| Integration | `tempfile` trees: scan → dupes → plan → apply → verify → undo → verify the tree hash matches the original |
+| Property (`proptest`) | Plan invariants (§6.5): no overwrite, no full-group deletion, never split a Live Photo pair |
+| Integration | `tempfile` trees: scan → dupes → plan → apply → verify the tree |
 | CLI | `assert_cmd` + `insta` snapshots of `stats`, `dupes`, and `plan show` output |
 | TUI | `ratatui::backend::TestBackend` + `insta` buffer snapshots for each screen, plus key-sequence tests driving `update()` |
-| Fault injection | Kill mid-apply (spawn child, SIGKILL), then `--resume` and `undo` must both succeed; read-only destination; disk full simulated with a small APFS disk image (`hdiutil create -size 50m`) |
+| Fault injection | Kill mid-apply (spawn child, SIGKILL), then `--resume` must succeed; read-only destination; disk full simulated with a small APFS disk image (`hdiutil create -size 50m`) |
 | Manual | Real-world libraries: phone export, external HFS+/exFAT drive, iCloud Drive folder with dataless files |
 
 CI runs on GitHub Actions `macos-14` (arm64) or later: `fmt`, `clippy -D warnings`, `test`, `cargo-deny`, and a benchmark smoke test.

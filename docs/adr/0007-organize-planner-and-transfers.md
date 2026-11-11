@@ -4,7 +4,7 @@ Status: accepted (Iteration 6)
 
 ## Context
 Organize turns a folder pattern into moves or copies. It must never overwrite a file, never split a
-Live Photo pair, and be undoable. The tech spec asked for `clonefile` and `renamex_np(RENAME_EXCL)`;
+Live Photo pair. (It was meant to be undoable too; undo was dropped in ADR-0009.) The tech spec asked for `clonefile` and `renamex_np(RENAME_EXCL)`;
 `renamex_np` needs `unsafe`, which the workspace denies.
 
 ## Decision
@@ -33,7 +33,7 @@ Live Photo pair, and be undoable. The tech spec asked for `clonefile` and `renam
 - **Validation** before each op: source unchanged (size, mtime), inside the plan folder, destination
   absent, destination folder inside the destination, not protected. A pair is validated together; if the
   second half fails after the first moved, the first is put back.
-- **Undo**: a move goes back (never over an existing file); a copy is removed only if it still matches
+- **Undo** (removed by ADR-0009; kept as history): a move goes back (never over an existing file); a copy is removed only if it still matches
   the verified hash **and the original still exists** (the last copy is never removed); a folder is
   removed only if Yojaka created it and it is empty. Journal entries now carry the verified hash.
 - **Free space**: copies and cross-volume moves need their bytes plus 64 MiB free at the destination.

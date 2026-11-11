@@ -76,10 +76,7 @@ pub const HELP: &[(&str, &str)] = &[
     ),
     ("", "History"),
     ("j k  ↓ ↑", "move"),
-    (
-        "u",
-        "put back the files of the selected run (needs write mode)",
-    ),
+    ("", "Yojaka has no undo: a move or a copy is final"),
 ];
 
 /// Keys while a question, plan review or progress box is open: only text, Enter, Esc, Backspace.
@@ -187,7 +184,6 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('P') => Msg::SavePlan,
         KeyCode::Char('M') => Msg::Remember,
         KeyCode::Char('E') => Msg::ExportView,
-        KeyCode::Char('u') => Msg::UndoRun,
         KeyCode::Char('e') => Msg::EditTemplate,
         KeyCode::Char('d') => Msg::EditDest,
         KeyCode::Char('m') => Msg::ToggleTransfer,

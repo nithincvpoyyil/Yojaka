@@ -387,7 +387,7 @@ fn debug_flag_writes_a_log_with_threads_and_steps() {
 }
 
 #[test]
-fn apply_is_a_dry_run_without_write_then_trashes_and_undo_restores() {
+fn apply_is_a_dry_run_without_write_then_trashes_and_warns_there_is_no_undo() {
     let tmp = tempfile::tempdir().unwrap();
     let tree = fixture(tmp.path());
     let trash = tmp.path().join("trash");
@@ -436,6 +436,7 @@ fn apply_is_a_dry_run_without_write_then_trashes_and_undo_restores() {
     apply(&answer)
         .assert()
         .success()
+        .stdout(predicate::str::contains("Yojaka has no undo"))
         .stdout(predicate::str::contains("moved to the Trash"));
     assert_eq!(tree_listing(&tree).len(), before.len() - n);
     assert_eq!(std::fs::read_dir(&trash).unwrap().count(), n);
@@ -449,22 +450,12 @@ fn apply_is_a_dry_run_without_write_then_trashes_and_undo_restores() {
         .success()
         .stdout(predicate::str::contains("applied"));
 
-    // Undo previews without --write, and restores with it.
-    yojaka(tmp.path())
-        .args(["undo", "--last"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Preview only"));
-    assert_eq!(tree_listing(&tree).len(), before.len() - n);
-    yojaka(tmp.path())
-        .args(["--write", "undo", "--last"])
-        .assert()
-        .success();
-    assert_eq!(tree_listing(&tree), before);
+    // There is no undo command, and history says so.
+    yojaka(tmp.path()).args(["undo", "--last"]).assert().code(2);
     yojaka(tmp.path())
         .arg("history")
         .assert()
-        .stdout(predicate::str::contains("undone"));
+        .stdout(predicate::str::contains("no undo"));
 }
 
 #[test]
@@ -498,7 +489,7 @@ fn a_permanent_delete_needs_its_phrase_even_with_yes() {
 }
 
 #[test]
-fn organize_plans_then_apply_copies_and_undo_removes_the_copies() {
+fn organize_plans_then_apply_copies() {
     let tmp = tempfile::tempdir().unwrap();
     let tree = fixture(tmp.path());
     yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
@@ -569,13 +560,6 @@ fn organize_plans_then_apply_copies_and_undo_removes_the_copies() {
         .stdout(predicate::str::contains(format!("{copies} copied")));
     assert_eq!(tree_listing(&tree), before, "originals untouched");
     assert_eq!(tree_listing(&dest).len(), copies);
-
-    yojaka(tmp.path())
-        .args(["--write", "undo", "--last"])
-        .assert()
-        .success();
-    assert!(!dest.exists() || tree_listing(&dest).is_empty());
-    assert_eq!(tree_listing(&tree), before);
 }
 
 #[test]
