@@ -110,6 +110,8 @@ pub enum Msg {
     SavePlan,
     /// `E` (File browser): export the files shown as a CSV file in Yojaka's data folder.
     ExportView,
+    /// `M` (Duplicates, Organize): remember the current choices in the config file.
+    Remember,
     /// `u` (History): put back the files of the selected run.
     UndoRun,
     /// `e` (Organize): edit the folder pattern.
@@ -160,6 +162,8 @@ pub enum Cmd {
     /// Work out an organize plan (reads the index and the destination's names, changes nothing).
     PlanOrganize(Box<PlanRequest>),
     CancelPlan,
+    /// Save choices as the defaults in `config.toml`.
+    Remember(Remember),
     /// Write a plan to a new file (never overwrites; changes no photos).
     SavePlan(Box<yojaka_core::plan::Plan>),
     /// Write the files the browser shows to a new CSV file.
@@ -169,6 +173,15 @@ pub enum Cmd {
     UndoRun(uuid::Uuid),
     CancelExec,
     LoadHistory,
+}
+
+/// Choices `M` writes to the config file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Remember {
+    /// A `--keep` chain, e.g. `oldest-modified,shortest-path`.
+    KeepRules(String),
+    /// Folder pattern and `copy` / `move`.
+    Organize { template: String, mode: String },
 }
 
 /// What the scan gauge shows.
@@ -751,6 +764,20 @@ impl App {
         vec![]
     }
 
+    /// Starts from the choices saved in `config.toml`. A saved value that cannot be used is
+    /// ignored and the footer says so.
+    pub fn use_config(&mut self, config: &yojaka_core::Config) {
+        let (_, keep_warning) = yojaka_core::dupes::configured_rules(&config.dupes.keep_rules);
+        if keep_warning.is_none() {
+            self.dupes.use_saved_chain(&config.dupes.keep_rules);
+        }
+        let organize_warning = self.organize.use_config(config);
+        if let Some(w) = keep_warning.or(organize_warning) {
+            tracing::warn!("{w}");
+            self.say(w);
+        }
+    }
+
     /// `P` on the Duplicates screen: save the plan for the marked copies. Works in read-only mode.
     fn save_dupes_plan(&mut self) -> Vec<Cmd> {
         if self.dashboard.scan.running || self.dupes.searching() {
@@ -939,6 +966,7 @@ impl App {
                 | Msg::NextRule
                 | Msg::ReviewPlan
                 | Msg::SavePlan
+                | Msg::Remember
                 | Msg::ExportView
                 | Msg::UndoRun
                 | Msg::EditTemplate
@@ -1081,6 +1109,16 @@ impl App {
             Msg::ReviewPlan if self.screen == Screen::Duplicates => self.review_plan(),
             Msg::SavePlan if self.screen == Screen::Organize => self.save_organize_plan(),
             Msg::SavePlan if self.screen == Screen::Duplicates => self.save_dupes_plan(),
+            Msg::Remember if self.screen == Screen::Duplicates => {
+                let chain = self.dupes.chain_text().to_string();
+                vec![Cmd::Remember(Remember::KeepRules(chain))]
+            }
+            Msg::Remember if self.screen == Screen::Organize => {
+                vec![Cmd::Remember(Remember::Organize {
+                    template: self.organize.template.clone(),
+                    mode: yojaka_core::organize::transfer_word(self.organize.transfer).into(),
+                })]
+            }
             Msg::ExportView if self.screen == Screen::Browser => {
                 if self.dashboard.no_index {
                     self.say("Scan this folder first".into());
@@ -1090,7 +1128,7 @@ impl App {
                 }
             }
             Msg::UndoRun if self.screen == Screen::History => self.ask_undo(),
-            Msg::ReviewPlan | Msg::UndoRun | Msg::SavePlan | Msg::ExportView => {
+            Msg::ReviewPlan | Msg::UndoRun | Msg::SavePlan | Msg::Remember | Msg::ExportView => {
                 self.dirty = false;
                 vec![]
             }

@@ -10,6 +10,10 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 - File browser `E` exports the files shown to a new CSV in Yojaka's data folder. Duplicates and Organize `P` save the plan to a file there (`yojaka plan show <file>`); neither needs write mode.
 - Two more keep rules: `largest-file` and `has-exif`.
 - `docs/fr-checklist.md`: each functional requirement against the code and its tests.
+- Remembered choices. `yojaka dupes --keep RULES --remember` and `yojaka organize ... --remember` save the keep rules, or the folder pattern and copy / move, in `config.toml`; in the app `M` on Duplicates or Organize does the same. They are the starting choices next time (`yojaka dupes` without `--keep`, `yojaka organize` without a pattern, and the app's first keep rule and Organize settings). Nothing is saved unless you ask. A saved value that cannot be used (a mistyped rule or pattern) is ignored with a warning and the default is used. `--copy` overrides a saved `move`. New config key `organize.mode` (`copy` or `move`).
+
+### Changed (Iteration 8)
+- The default keep rules in `config.toml` are now `oldest-modified, shortest-path`, the same as the built-in default (the file used to say `oldest`, and the app ignored it). `dupes.keep_rules` is now read.
 
 ### Fixed (Iteration 8)
 - `yojaka history` printed times in UTC while the History screen used local time. Both now show local time.

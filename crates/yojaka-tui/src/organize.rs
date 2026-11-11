@@ -68,6 +68,18 @@ impl OrganizeState {
         }
     }
 
+    /// Starts from the choices saved in the config file. Returns a warning for a value that was
+    /// ignored.
+    pub fn use_config(&mut self, config: &yojaka_core::Config) -> Option<String> {
+        let (template, w1) = yojaka_core::organize::configured_template(&config.organize.template);
+        let (transfer, w2) = yojaka_core::organize::configured_transfer(&config.organize.mode);
+        self.preset = PRESETS.iter().position(|(_, t)| *t == template);
+        self.template = template;
+        self.transfer = transfer;
+        self.infer |= config.location.infer;
+        w1.or(w2)
+    }
+
     /// Settings changed: what was planned no longer matches.
     pub fn invalidate(&mut self) {
         self.plan = None;

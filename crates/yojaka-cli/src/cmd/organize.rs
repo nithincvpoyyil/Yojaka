@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use yojaka_core::organize::{OrganizeOptions, Template, Transfer};
+use yojaka_core::organize::{
+    OrganizeOptions, Template, Transfer, configured_template, configured_transfer, transfer_word,
+};
 use yojaka_core::{CancelToken, Engine, EventSink};
 
 use super::exec::print_summary;
@@ -17,6 +19,8 @@ pub struct Args<'a> {
     pub template: Option<&'a str>,
     pub preset: Option<PresetArg>,
     pub r#move: bool,
+    pub copy: bool,
+    pub remember: bool,
     pub infer_location: bool,
     pub plan_out: Option<&'a Path>,
     pub full_tree: bool,
@@ -24,17 +28,48 @@ pub struct Args<'a> {
 }
 
 pub fn run(engine: &Engine, a: Args<'_>) -> anyhow::Result<Exit> {
-    let text = a
-        .template
-        .or(a.preset.map(PresetArg::template))
-        .unwrap_or(&engine.config.organize.template);
-    let template = match Template::parse(text) {
+    // Pattern and copy / move: the flags, else what is saved in the config file (a bad saved
+    // value is ignored with a warning).
+    let text = match a.template.or(a.preset.map(PresetArg::template)) {
+        Some(t) => t.to_string(),
+        None => {
+            let (t, warning) = configured_template(&engine.config.organize.template);
+            if let Some(w) = warning {
+                eprintln!("warning: {w}");
+            }
+            t
+        }
+    };
+    let template = match Template::parse(&text) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("error: {e}");
             return Ok(Exit::Usage);
         }
     };
+    let transfer = if a.r#move {
+        Transfer::Move
+    } else if a.copy {
+        Transfer::Copy
+    } else {
+        let (t, warning) = configured_transfer(&engine.config.organize.mode);
+        if let Some(w) = warning {
+            eprintln!("warning: {w}");
+        }
+        t
+    };
+    if a.remember {
+        let file = engine.paths.config_file();
+        yojaka_core::Config::remember(&file, |c| {
+            c.organize.template = text.clone();
+            c.organize.mode = transfer_word(transfer).to_string();
+        })?;
+        eprintln!(
+            "Saved the folder pattern and {} as the defaults in {}",
+            transfer_word(transfer),
+            file.display()
+        );
+    }
     if let Some(out) = a.plan_out
         && out.exists()
     {
@@ -57,11 +92,7 @@ pub fn run(engine: &Engine, a: Args<'_>) -> anyhow::Result<Exit> {
     let opts = OrganizeOptions {
         dest,
         template,
-        transfer: if a.r#move {
-            Transfer::Move
-        } else {
-            Transfer::Copy
-        },
+        transfer,
         infer_location: location.infer,
         location,
     };

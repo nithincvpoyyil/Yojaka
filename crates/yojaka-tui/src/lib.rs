@@ -41,6 +41,7 @@ pub struct TuiOptions {
 pub fn run(engine: Engine, root: PathBuf, opts: TuiOptions) -> std::io::Result<()> {
     tracing::info!(root = %root.display(), "tui starting");
     let mut app = app::App::new(root, opts.mode);
+    app.use_config(&engine.config);
     app.refresh_when_stale = opts.refresh;
     app.confirm_flush = opts.force;
     let mut guard = terminal::TerminalGuard::enter()?;

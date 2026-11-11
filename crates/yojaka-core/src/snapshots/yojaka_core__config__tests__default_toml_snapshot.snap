@@ -21,13 +21,14 @@ exiftool_fallback = false
 
 [dupes]
 keep_rules = [
-    "oldest",
+    "oldest-modified",
     "shortest-path",
 ]
 similar_distance = 6
 
 [organize]
 template = "{year}/{month:02}/{name}"
+mode = "copy"
 large_plan_threshold = 1000
 
 [location]

@@ -77,6 +77,18 @@ pub fn parse_rules<S: AsRef<str>>(parts: &[S]) -> Result<Vec<KeepRule>, ParseKee
     Ok(rules)
 }
 
+/// The chain saved in `config.toml`. A value that does not parse is ignored with a warning: a bad
+/// saved setting must never stop the app.
+pub fn configured_rules(saved: &[String]) -> (Vec<KeepRule>, Option<String>) {
+    match parse_rules(saved) {
+        Ok(rules) => (rules, None),
+        Err(e) => (
+            parse_rules(&[DEFAULT_KEEP]).unwrap_or_default(),
+            Some(format!("Saved keep rules ignored: {e}")),
+        ),
+    }
+}
+
 /// Narrows `cands` to the members with the smallest key, ignoring members without one.
 /// If nobody has a key the candidates are left as they are.
 fn narrow_by<K: Ord>(
@@ -216,6 +228,16 @@ mod tests {
         // A preferred folder that matches nothing changes nothing.
         let rules = parse_rules(&["prefer-path:/zzz", "newest-modified"]).unwrap();
         assert_eq!(pick_keeper(&items, &rules), 2);
+    }
+
+    #[test]
+    fn a_bad_saved_chain_falls_back_with_a_warning() {
+        let (rules, warn) = configured_rules(&["oldest-modified".into(), "bogus".into()]);
+        assert_eq!(rules, parse_rules(&[DEFAULT_KEEP]).unwrap());
+        assert!(warn.unwrap().contains("bogus"));
+        let (rules, warn) = configured_rules(&["largest-file".into()]);
+        assert_eq!(rules, vec![KeepRule::LargestFile]);
+        assert!(warn.is_none());
     }
 
     #[test]

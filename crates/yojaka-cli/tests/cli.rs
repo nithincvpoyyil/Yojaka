@@ -641,3 +641,116 @@ fn export_can_be_limited_by_kind_text_and_folder() {
             .starts_with(dir.to_str().unwrap())
     }));
 }
+
+#[test]
+fn remembered_choices_become_the_defaults_and_bad_ones_are_ignored() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let config = tmp.path().join("data").join("config.toml");
+    let dest = tmp.path().join("sorted");
+
+    // --remember needs something to remember.
+    yojaka(tmp.path())
+        .args(["dupes", "--remember"])
+        .arg(&tree)
+        .assert()
+        .code(2);
+
+    // Nothing is saved unless asked: plain runs leave the config file alone.
+    yojaka(tmp.path())
+        .args(["dupes", "--keep", "largest-file"])
+        .arg(&tree)
+        .assert()
+        .success();
+    assert!(
+        !config.exists()
+            || !std::fs::read_to_string(&config)
+                .unwrap()
+                .contains("largest-file")
+    );
+
+    yojaka(tmp.path())
+        .args([
+            "dupes",
+            "--keep",
+            "largest-file,shortest-path",
+            "--remember",
+        ])
+        .arg(&tree)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Saved these keep rules"));
+    yojaka(tmp.path())
+        .args([
+            "organize",
+            "--template",
+            "{year}/{name}",
+            "--move",
+            "--remember",
+        ])
+        .arg(&tree)
+        .arg(&dest)
+        .assert()
+        .success();
+    let saved = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        saved.contains("largest-file") && saved.contains("{year}/{name}"),
+        "{saved}"
+    );
+    assert!(saved.contains("mode = \"move\""), "{saved}");
+
+    // The next run, with no flags, uses them: this plan is a move with the saved pattern.
+    let plan = tmp.path().join("plan.json");
+    yojaka(tmp.path())
+        .arg("organize")
+        .arg(&tree)
+        .arg(&dest)
+        .arg("--plan-out")
+        .arg(&plan)
+        .assert()
+        .success();
+    let plan_text = std::fs::read_to_string(&plan).unwrap();
+    assert!(
+        plan_text.contains("\"mode\": \"move\""),
+        "saved mode is used"
+    );
+    assert!(plan_text.contains("/sorted/20"), "saved pattern is used");
+    // --copy beats the saved mode.
+    let plan2 = tmp.path().join("plan2.json");
+    yojaka(tmp.path())
+        .args(["organize", "--copy", "--plan-out"])
+        .arg(&plan2)
+        .arg(&tree)
+        .arg(&dest)
+        .assert()
+        .success();
+    assert!(
+        std::fs::read_to_string(&plan2)
+            .unwrap()
+            .contains("\"mode\": \"copy\"")
+    );
+
+    // Hand-edited nonsense is ignored with a warning; the commands still run.
+    std::fs::write(
+        &config,
+        "[dupes]\nkeep_rules = [\"bogus\"]\n[organize]\ntemplate = \"{nope}\"\nmode = \"teleport\"\n",
+    )
+    .unwrap();
+    yojaka(tmp.path())
+        .args(["dupes"])
+        .arg(&tree)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Saved keep rules ignored"));
+    let plan3 = tmp.path().join("plan3.json");
+    yojaka(tmp.path())
+        .arg("organize")
+        .arg(&tree)
+        .arg(&dest)
+        .arg("--plan-out")
+        .arg(&plan3)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Saved folder pattern ignored"));
+}

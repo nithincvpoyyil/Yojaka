@@ -41,6 +41,8 @@ pub struct DupesConfig {
 #[serde(default)]
 pub struct OrganizeConfig {
     pub template: String,
+    /// `copy` or `move`.
+    pub mode: String,
     pub large_plan_threshold: usize,
 }
 
@@ -82,7 +84,7 @@ impl Default for ScanConfig {
 impl Default for DupesConfig {
     fn default() -> Self {
         Self {
-            keep_rules: vec!["oldest".into(), "shortest-path".into()],
+            keep_rules: vec!["oldest-modified".into(), "shortest-path".into()],
             similar_distance: 6,
         }
     }
@@ -92,6 +94,7 @@ impl Default for OrganizeConfig {
     fn default() -> Self {
         Self {
             template: "{year}/{month:02}/{name}".into(),
+            mode: "copy".into(),
             large_plan_threshold: 1000,
         }
     }
@@ -131,6 +134,14 @@ impl Config {
             path: path.to_path_buf(),
             message: e.to_string(),
         })
+    }
+
+    /// Loads the file as it is on disk, applies `change` and saves it. Used for "remember these
+    /// choices": it never carries over one-off command-line overrides such as `--threads`.
+    pub fn remember(path: &Path, change: impl FnOnce(&mut Config)) -> Result<()> {
+        let mut config = Self::load(path)?;
+        change(&mut config);
+        config.save(path)
     }
 
     /// Atomic: write `<path>.tmp`, fsync, rename.
@@ -194,6 +205,32 @@ mod tests {
         let p = tmp.path().join("c.toml");
         std::fs::write(&p, "threads = [").unwrap();
         assert!(matches!(Config::load(&p), Err(YojakaError::Config { .. })));
+    }
+
+    #[test]
+    fn remember_changes_only_what_it_is_told_and_keeps_the_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("c.toml");
+        std::fs::write(&p, "threads = 3\n[location]\nnear_km = 5.0\n").unwrap();
+        Config::remember(&p, |c| {
+            c.dupes.keep_rules = vec!["largest-file".into()];
+            c.organize.mode = "move".into();
+        })
+        .unwrap();
+        let c = Config::load(&p).unwrap();
+        assert_eq!(c.dupes.keep_rules, vec!["largest-file".to_string()]);
+        assert_eq!(c.organize.mode, "move");
+        assert_eq!(c.threads, 3);
+        assert_eq!(c.location.near_km, 5.0);
+    }
+
+    #[test]
+    fn remember_refuses_a_broken_file_instead_of_replacing_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("c.toml");
+        std::fs::write(&p, "threads = [").unwrap();
+        assert!(Config::remember(&p, |c| c.threads = 1).is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "threads = [");
     }
 
     #[test]

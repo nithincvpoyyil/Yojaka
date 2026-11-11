@@ -2,7 +2,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use yojaka_core::dupes::{DupGroup, DupItem, DupOptions, DupReport, KeepRule, Tier, parse_rules};
+use yojaka_core::dupes::{
+    DupGroup, DupItem, DupOptions, DupReport, KeepRule, Tier, configured_rules, parse_rules,
+};
 use yojaka_core::plan::Plan;
 use yojaka_core::{CancelToken, CoreEvent, Engine, EventSink, TaskKind, YojakaError};
 
@@ -16,6 +18,7 @@ pub struct Args<'a> {
     pub similar: bool,
     pub similar_distance: Option<u32>,
     pub keep: &'a [String],
+    pub remember: bool,
     pub plan_out: Option<&'a Path>,
     pub json: bool,
     pub local_index: bool,
@@ -31,11 +34,20 @@ pub fn run(engine: &Engine, a: Args<'_>) -> anyhow::Result<Exit> {
     };
     opts.similar |= a.similar;
     opts.similar_distance = a.similar_distance;
-    let mut rules = match parse_rules(a.keep) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return Ok(Exit::Usage);
+    // Without --keep: the chain saved in the config file (a bad one is ignored with a warning).
+    let mut rules = if a.keep.is_empty() {
+        let (rules, warning) = configured_rules(&engine.config.dupes.keep_rules);
+        if let Some(w) = warning {
+            eprintln!("warning: {w}");
+        }
+        rules
+    } else {
+        match parse_rules(a.keep) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return Ok(Exit::Usage);
+            }
         }
     };
     // Relative preferred folders are resolved against the current directory.
@@ -43,6 +55,29 @@ pub fn run(engine: &Engine, a: Args<'_>) -> anyhow::Result<Exit> {
         if let KeepRule::PreferPath(p) = r {
             *p = p.canonicalize().unwrap_or_else(|_| p.clone());
         }
+    }
+    if a.remember {
+        // Folders are saved as full paths: "next time" may be another directory.
+        let chain: Vec<String> = a
+            .keep
+            .iter()
+            .map(|r| match r.trim().strip_prefix("prefer-path:") {
+                Some(dir) => format!(
+                    "prefer-path:{}",
+                    Path::new(dir)
+                        .canonicalize()
+                        .unwrap_or_else(|_| dir.into())
+                        .display()
+                ),
+                None => r.trim().to_string(),
+            })
+            .collect();
+        let file = engine.paths.config_file();
+        yojaka_core::Config::remember(&file, |c| c.dupes.keep_rules = chain)?;
+        eprintln!(
+            "Saved these keep rules as the default in {}",
+            file.display()
+        );
     }
     if let Some(out) = a.plan_out
         && out.exists()

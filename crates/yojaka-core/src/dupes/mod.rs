@@ -36,7 +36,9 @@ use crate::{
 pub use name::normalize as normalize_name;
 pub use similar::{BkTree, Look, dhash_file, look_file};
 
-pub use keep::{DEFAULT_KEEP, KeepRule, ParseKeepRuleError, parse_rules, pick_keeper};
+pub use keep::{
+    DEFAULT_KEEP, KeepRule, ParseKeepRuleError, configured_rules, parse_rules, pick_keeper,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

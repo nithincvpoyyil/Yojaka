@@ -191,6 +191,9 @@ pub enum Cmd {
         /// Which copy to keep, in order of preference, e.g. `prefer-path:~/Pictures,oldest-modified,shortest-path`
         #[arg(long, value_delimiter = ',')]
         keep: Vec<String>,
+        /// Save the --keep rules in the config file, so they are the default next time
+        #[arg(long, requires = "keep")]
+        remember: bool,
         /// Save the proposed removals as a plan file (never overwrites; nothing is deleted)
         #[arg(long)]
         plan_out: Option<PathBuf>,
@@ -212,12 +215,15 @@ pub enum Cmd {
         /// A ready-made pattern
         #[arg(long, value_enum)]
         preset: Option<PresetArg>,
-        /// Copy the files (originals stay). This is the default
+        /// Copy the files (originals stay). This is the default unless the config file says move
         #[arg(long, conflicts_with = "move")]
         copy: bool,
         /// Move the files instead of copying them
         #[arg(long = "move")]
         r#move: bool,
+        /// Save the folder pattern and copy / move choice in the config file as the defaults
+        #[arg(long)]
+        remember: bool,
         /// Give files without GPS the place of a geotagged file of the same camera taken within
         /// two hours; marked as inferred in the plan
         #[arg(long)]

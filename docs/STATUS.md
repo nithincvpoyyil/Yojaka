@@ -57,6 +57,7 @@ CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`
   `t` all / photos / videos, `s` sort column, `S` reverse. **Enter on a file opens it with the OS default
   app** (`/usr/bin/open`); iCloud-only files are refused; a vanished file gives a footer message.
 - Scan: `r` rescan (incremental), `R` scan from scratch (asks y/n), `c` or Esc cancel (keeps partial results).
+- `M` on Duplicates or Organize (and `--remember` on `yojaka dupes` / `yojaka organize`) saves the keep rule, or the folder pattern and copy / move, in `config.toml` (`dupes.keep_rules`, `organize.template`, `organize.mode`). Only on request. Bad saved values are ignored with a warning. A saved keep chain that is not one of the four presets becomes a fifth step of `p`.
 - File browser `E` exports the files shown to a new CSV in `<data>/exports/`; Duplicates and Organize `P` save the plan to `<data>/plans/` (both work in read-only mode: they write only Yojaka's own folder).
 - Other: `?` help, `D` debug overlay (frame / fetch times), `q` quit, Ctrl-C stops the scan, then quits.
 

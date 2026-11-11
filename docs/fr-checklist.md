@@ -50,7 +50,7 @@ passed at the end of Phase 1. All other rows were checked against the code in th
 | 56 | Free-space check before running | done for Organize | `exec/organize_run.rs:125` | Organize copy and move. Trash plans free space, so no check. **No test refuses on a full disk yet: Phase 3 item 4** |
 | 60 | Always responsive, heavy work off the UI thread | done † | `tui/worker.rs`, `event_loop.rs` | `rendering_a_full_browser_frame_is_far_below_16_ms`; numbers in `docs/perf.md` |
 | 61 | Status bar, `?` help overlay, vim and arrow keys | done † | `keymap.rs` (`HELP` is the one list) | `vim_and_arrow_keys_agree`, help tests |
-| 62 | Rich live feedback; remembered choices in `config.toml` | **partial** | Feedback done †. Remembering: `Config` has template and keep rules, but **keep rules are never read** (the app uses a built-in default) and nothing writes the config from the app | Phase 2 |
+| 62 | Rich live feedback; remembered choices in `config.toml` | done (Phase 2) | Feedback †. Remembering: `config.rs` (`Config::remember`, `organize.mode`), `dupes/keep.rs` (`configured_rules`), `organize/mod.rs` (`configured_template`, `configured_transfer`), CLI `--remember`, TUI `M` | `remembered_choices_become_the_defaults_and_bad_ones_are_ignored`, `saved_choices::*` (6 TUI tests), `config::tests::remember_*`, `a_bad_saved_chain_falls_back_with_a_warning`. Saves keep rules, folder pattern and copy / move, only on request. Skip folders stay a hand edit of `config.toml` (`scan.skip_dirs`): no screen edits them |
 
 ## Also fixed in this phase
 

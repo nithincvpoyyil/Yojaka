@@ -56,6 +56,10 @@ pub const HELP: &[(&str, &str)] = &[
         "P",
         "save the plan to a file (changes no photos; no write mode needed)",
     ),
+    (
+        "M",
+        "remember the current keep rule as the default next time",
+    ),
     ("", "Organize (writes only after you review)"),
     ("e  d", "edit the folder pattern / the destination folder"),
     ("p", "next ready-made pattern"),
@@ -65,6 +69,10 @@ pub const HELP: &[(&str, &str)] = &[
     (
         "P",
         "save the plan to a file (changes no photos; no write mode needed)",
+    ),
+    (
+        "M",
+        "remember the folder pattern and copy / move as the defaults",
     ),
     ("", "History"),
     ("j k  ↓ ↑", "move"),
@@ -177,6 +185,7 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('W') => Msg::ToggleWrite,
         KeyCode::Char('a') => Msg::ReviewPlan,
         KeyCode::Char('P') => Msg::SavePlan,
+        KeyCode::Char('M') => Msg::Remember,
         KeyCode::Char('E') => Msg::ExportView,
         KeyCode::Char('u') => Msg::UndoRun,
         KeyCode::Char('e') => Msg::EditTemplate,

@@ -81,6 +81,7 @@ impl Runtime {
                 Cmd::LoadHistory => self.load_history(),
                 Cmd::PlanOrganize(req) => self.start_plan(*req),
                 Cmd::SavePlan(plan) => self.save_plan(&plan),
+                Cmd::Remember(what) => self.remember(&what),
                 Cmd::ExportView(query) => self.export_view(*query),
                 Cmd::CancelPlan => {
                     if let Some((token, _)) = &self.plan {
@@ -89,6 +90,29 @@ impl Runtime {
                 }
             }
         }
+    }
+
+    /// Writes the choice to `config.toml` (only on request: this is the `M` key).
+    fn remember(&self, what: &crate::app::Remember) {
+        use crate::app::Remember;
+        let file = self.engine.paths.config_file();
+        let result = yojaka_core::Config::remember(&file, |c| match what {
+            Remember::KeepRules(chain) => {
+                c.dupes.keep_rules = chain.split(',').map(str::to_string).collect();
+            }
+            Remember::Organize { template, mode } => {
+                c.organize.template.clone_from(template);
+                c.organize.mode.clone_from(mode);
+            }
+        });
+        let msg = match (result, what) {
+            (Ok(()), Remember::KeepRules(_)) => "Saved this keep rule as the default".to_string(),
+            (Ok(()), Remember::Organize { .. }) => {
+                "Saved the folder pattern and copy / move as the defaults".to_string()
+            }
+            (Err(e), _) => format!("Could not save: {e}"),
+        };
+        let _ = self.bg_tx.send(Bg::Notice(msg));
     }
 
     /// Writes the plan to a new file in the data folder. Never overwrites, touches no photos.

@@ -313,6 +313,117 @@ fn e_exports_the_files_the_browser_shows() {
     assert!(a.update(Msg::ExportView).is_empty());
 }
 
+mod saved_choices {
+    use super::*;
+    use crate::app::Remember;
+
+    fn config(keep: &[&str], template: &str, mode: &str) -> yojaka_core::Config {
+        let mut c = yojaka_core::Config::default();
+        c.dupes.keep_rules = keep.iter().map(|s| (*s).to_string()).collect();
+        c.organize.template = template.into();
+        c.organize.mode = mode.into();
+        c
+    }
+
+    #[test]
+    fn the_defaults_change_nothing() {
+        let mut a = app_at(100, 30);
+        a.use_config(&yojaka_core::Config::default());
+        assert_eq!(a.dupes.chain_text(), "oldest-modified,shortest-path");
+        assert_eq!(a.dupes.preset, 0);
+        assert!(a.dupes.saved.is_none() && a.notice.is_none());
+        assert_eq!(a.organize.transfer, yojaka_core::organize::Transfer::Copy);
+        assert_eq!(a.organize.preset_label(), "Date");
+    }
+
+    #[test]
+    fn a_saved_chain_is_the_starting_rule_and_one_more_step_in_the_cycle() {
+        let mut a = app_at(100, 30);
+        a.use_config(&config(
+            &["largest-file", "shortest-path"],
+            "{year}/{month:02}/{name}",
+            "copy",
+        ));
+        assert_eq!(a.dupes.chain_text(), "largest-file,shortest-path");
+        assert!(a.dupes.preset_label().starts_with("saved:"));
+        // The presets still come round; after the last one the saved chain is back.
+        a.screen = Screen::Duplicates;
+        a.update(Msg::NextRule);
+        assert_eq!(a.dupes.chain_text(), crate::dupes::PRESETS[0].1);
+        for _ in 0..crate::dupes::PRESETS.len() {
+            a.update(Msg::NextRule);
+        }
+        assert_eq!(a.dupes.chain_text(), "largest-file,shortest-path");
+    }
+
+    #[test]
+    fn a_saved_chain_equal_to_a_preset_selects_that_preset() {
+        let mut a = app_at(100, 30);
+        a.use_config(&config(
+            &["shortest-path", "oldest-modified"],
+            "{year}/{month:02}/{name}",
+            "copy",
+        ));
+        assert_eq!(a.dupes.preset, 1);
+        assert!(a.dupes.saved.is_none());
+    }
+
+    #[test]
+    fn saved_organize_choices_are_the_starting_settings() {
+        let mut a = app_at(100, 30);
+        a.use_config(&config(
+            &["oldest-modified"],
+            "{country}/{city}/{name}",
+            "move",
+        ));
+        assert_eq!(a.organize.transfer, yojaka_core::organize::Transfer::Move);
+        assert_eq!(a.organize.template, "{country}/{city}/{name}");
+        assert_eq!(a.organize.preset_label(), "Place");
+        let custom = {
+            let mut b = app_at(100, 30);
+            b.use_config(&config(&[], "{year}/{name}", "copy"));
+            b.organize.preset_label()
+        };
+        assert_eq!(custom, "custom");
+    }
+
+    #[test]
+    fn bad_saved_values_are_ignored_and_the_footer_says_so() {
+        let mut a = app_at(100, 30);
+        a.use_config(&config(&["bogus"], "{nope}/{name}", "teleport"));
+        assert_eq!(a.dupes.chain_text(), "oldest-modified,shortest-path");
+        assert_eq!(a.organize.template, "{year}/{month:02}/{name}");
+        assert_eq!(a.organize.transfer, yojaka_core::organize::Transfer::Copy);
+        assert!(a.notice.as_ref().unwrap().0.contains("ignored"));
+        // The app still works.
+        a.update(Msg::Goto(Screen::Organize));
+        assert!(a.update(Msg::Enter).len() <= 1);
+    }
+
+    #[test]
+    fn m_remembers_only_when_pressed_and_only_on_the_two_screens() {
+        let mut a = app_at(100, 30);
+        a.dashboard_stats(stats());
+        a.screen = Screen::Duplicates;
+        a.update(Msg::NextRule);
+        let cmds = a.update(Msg::Remember);
+        assert!(matches!(
+            &cmds[..],
+            [Cmd::Remember(Remember::KeepRules(c))] if c == "shortest-path,oldest-modified"
+        ));
+        a.screen = Screen::Organize;
+        a.update(Msg::ToggleTransfer);
+        let cmds = a.update(Msg::Remember);
+        assert!(matches!(
+            &cmds[..],
+            [Cmd::Remember(Remember::Organize { template, mode })]
+                if template == "{year}/{month:02}/{name}" && mode == "move"
+        ));
+        a.screen = Screen::Browser;
+        assert!(a.update(Msg::Remember).is_empty());
+    }
+}
+
 #[test]
 fn browser_with_rows_and_details() {
     for (w, h) in SIZES {

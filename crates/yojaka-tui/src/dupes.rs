@@ -56,6 +56,9 @@ pub struct DupesState {
     pub stats: Option<DupStats>,
     pub issues: u64,
     pub preset: usize,
+    /// A keep chain from the config file that is none of the `PRESETS`: it is one more step in
+    /// the `p` cycle, after the last preset.
+    pub saved: Option<String>,
     pub pane: Pane,
     /// Show only groups of this tier (`None`: all of them).
     pub filter: Option<Tier>,
@@ -77,6 +80,7 @@ impl Default for DupesState {
             stats: None,
             issues: 0,
             preset: 0,
+            saved: None,
             pane: Pane::Groups,
             filter: None,
             group: 0,
@@ -104,16 +108,18 @@ impl DupesState {
     pub fn reset(&mut self) {
         *self = Self {
             preset: self.preset,
+            saved: self.saved.take(),
             page_rows: self.page_rows,
             ..Self::default()
         };
     }
 
     pub fn begin(&mut self) {
-        let (preset, page_rows) = (self.preset, self.page_rows);
+        let (preset, page_rows, saved) = (self.preset, self.page_rows, self.saved.take());
         *self = Self {
             phase: Phase::Searching,
             preset,
+            saved,
             page_rows,
             ..Self::default()
         };
@@ -145,12 +151,35 @@ impl DupesState {
         self.phase = Phase::Failed(message);
     }
 
-    pub fn rules(&self) -> Vec<KeepRule> {
-        parse_rules(&[PRESETS[self.preset].1]).unwrap_or_default()
+    /// The `--keep` text of the current chain.
+    pub fn chain_text(&self) -> &str {
+        match (&self.saved, self.preset) {
+            (Some(text), i) if i >= PRESETS.len() => text,
+            (_, i) => PRESETS[i.min(PRESETS.len() - 1)].1,
+        }
     }
 
-    pub fn preset_label(&self) -> &'static str {
-        PRESETS[self.preset].0
+    pub fn rules(&self) -> Vec<KeepRule> {
+        parse_rules(&[self.chain_text()]).unwrap_or_default()
+    }
+
+    pub fn preset_label(&self) -> String {
+        match (&self.saved, self.preset) {
+            (Some(text), i) if i >= PRESETS.len() => format!("saved: {text}"),
+            (_, i) => PRESETS[i.min(PRESETS.len() - 1)].0.to_string(),
+        }
+    }
+
+    /// Starts from the chain in the config file: a preset when it is one, else its own step.
+    pub fn use_saved_chain(&mut self, saved: &[String]) {
+        let text = saved.join(",");
+        match PRESETS.iter().position(|(_, t)| *t == text) {
+            Some(i) => self.preset = i,
+            None => {
+                self.saved = Some(text);
+                self.preset = PRESETS.len();
+            }
+        }
     }
 
     /// Applies the current rule chain to every group of identical files (manual marks there are
@@ -163,7 +192,8 @@ impl DupesState {
     }
 
     pub fn next_preset(&mut self) {
-        self.preset = (self.preset + 1) % PRESETS.len();
+        let steps = PRESETS.len() + usize::from(self.saved.is_some());
+        self.preset = (self.preset + 1) % steps;
         self.apply_preset();
     }
 
