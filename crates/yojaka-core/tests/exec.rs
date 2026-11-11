@@ -93,7 +93,13 @@ impl Lab {
 
     fn plan(&self) -> Plan {
         let mut r = engine(&self.env)
-            .dupes(&self.root, false, &EventSink::null(), &CancelToken::new())
+            .dupes(
+                &self.root,
+                false,
+                Default::default(),
+                &EventSink::null(),
+                &CancelToken::new(),
+            )
             .unwrap();
         r.apply_rules(&parse_rules(&["shortest-path"]).unwrap());
         Plan::from_dupes(&self.root, &r.groups)

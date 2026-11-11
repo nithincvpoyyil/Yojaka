@@ -24,8 +24,14 @@ zstd.workspace = true
 kamadak-exif.workspace = true
 imagesize.workspace = true
 objc2-foundation = { version = "0.3.2", features = ["NSFileManager", "NSURL", "NSError", "NSString", "NSPathUtilities"] }
+# ImageIO decodes HEIC, AVIF and raw photos for the similar duplicate tier (sys/imageio.rs).
+objc2 = "0.6.5"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes", "CFDictionary", "CFNumber", "CFString", "CFURL"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
+objc2-image-io = { version = "0.3.2", default-features = false, features = ["std", "CGImageProperties", "CGImageSource", "objc2-core-graphics"] }
 unicode-normalization.workspace = true
 reflink-copy = "0.1.32"
+image.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

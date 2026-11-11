@@ -103,10 +103,16 @@ pub enum ExportFmt {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TierArg {
+    /// Identical files
     Exact,
+    /// Same date, camera and picture size, but different files
     Likely,
+    /// Same name apart from a copy suffix, and nearly the same size
     Name,
+    /// Pictures that look alike (reads every picture once)
     Similar,
+    /// Exact, likely and name (add --similar to also compare how pictures look)
+    All,
 }
 
 #[derive(Debug, Subcommand)]
@@ -156,12 +162,20 @@ pub enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Find identical files and preview what could be removed (changes nothing)
+    /// Find duplicate files and preview what could be removed (changes nothing)
     Dupes {
         path: Option<PathBuf>,
-        /// How sure a match must be (only `exact` is available so far)
+        /// How sure a match must be. Only exact copies are ever marked for removal here;
+        /// the other tiers are listed for you to review in the app
         #[arg(long, value_enum, default_value = "exact")]
         tier: TierArg,
+        /// Also compare how pictures look, to find resized or re-saved copies. Slower the
+        /// first time: every JPEG, PNG, GIF, WebP, TIFF and BMP picture is read once
+        #[arg(long)]
+        similar: bool,
+        /// With --similar: how different two pictures may be (0 = same look, 6 = default, 32 = most)
+        #[arg(long, value_name = "BITS", value_parser = clap::value_parser!(u32).range(0..=32))]
+        similar_distance: Option<u32>,
         /// Which copy to keep, in order of preference, e.g. `prefer-path:~/Pictures,oldest-modified,shortest-path`
         #[arg(long, value_delimiter = ',')]
         keep: Vec<String>,

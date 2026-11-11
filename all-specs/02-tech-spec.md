@@ -16,13 +16,13 @@ Companion to `01-product-spec.md`. FR-xx references point to that document.
 | Parallelism | `rayon` (CPU work) + `crossbeam-channel` (pipeline) | No async runtime needed for local disk work |
 | Format sniffing | `infer` | Magic-byte detection (FR-10) |
 | Dimensions | `imagesize` | Reads the header only, never decodes the image |
-| EXIF | `kamadak-exif` (`exif` crate) | Pure Rust; JPEG, TIFF, HEIF, PNG, WebP. RAW via its TIFF container |
+| EXIF | `kamadak-exif` (`exif` crate); macOS ImageIO for raw | Pure Rust; JPEG, TIFF, HEIF, PNG, WebP. Raw photos (DNG, CR2, CR3, NEF, ARW, RAF, ORF) through ImageIO properties, `kamadak-exif` as the fallback (ADR-0002 addendum) |
 | Video metadata | Own ISO-BMFF box walker (MOV/MP4/M4V/3GP) and a minimal EBML walker (MKV/WebM) in `meta/` | Seeks box by box and reads only the small leaf boxes, so `mdat` and sample tables are never read (ADR-0002). `nom-exif` and `mp4parse` were dropped: neither lets us bound the bytes read. |
 | Reverse geocoding | Built-in GeoNames data (`cities1000` + `admin1CodesASCII` + `admin2Codes` + `countryInfo`) built by `tools/geodata` into a zstd blob (`crates/yojaka-core/data/geo.bin.zst`, 2.9 MB, committed), embedded with `include_bytes!`, loaded lazily into a static 3-D k-d tree over unit-sphere coordinates | Offline, about 1 µs per lookup, binary grows 3.5 MB in total with all of I2 (ADR-0003). Own k-d tree instead of `kiddo` (about 60 lines, no API risk). **License:** GeoNames is CC-BY 4.0, so attribution is required in `--about` and the README. |
 | Video fallback | `exiftool -json` in batches (installed); `ffprobe` used only if present | AVI and MTS/M2TS, plus odd containers the Rust crates miss |
 | PNG/GIF details | Chunk and block walkers in `meta/image.rs` over the capped header read | APNG `acTL` and GIF frame count; no extra crates |
 | Hashing | `blake3` (with `mmap` + `rayon` features) | Fastest secure hash; uses NEON on Apple Silicon |
-| Perceptual hash (later) | `image_hasher` + `image` | Near-duplicate tier (images only) |
+| Perceptual hash | Own 64-bit difference hash and colour signature over upright pixels decoded by `image` (JPEG, PNG, GIF, WebP, TIFF, BMP) and macOS ImageIO through `objc2-image-io` (HEIC, AVIF; raw photos through the camera's embedded preview), own BK-tree | Similar tier, photos only, opt-in (ADR-0008). `image_hasher` was not needed. |
 | Index storage | `rusqlite` (`bundled` feature), WAL mode | Embedded, queryable, low memory, crash-safe |
 | Serialization | `serde`, `serde_json` | Plans, journal, config, export |
 | Trash | `trash` crate (macOS backend) | Reversible delete (FR-33) |
@@ -290,15 +290,18 @@ Staged, so the minimum number of bytes is read:
 4. **Likely tier:**
    - Images: group by `(taken_at, camera_model, width, height)` where `taken_at_src='exif'`.
    - Videos: group by `(taken_at, width, height)` with `duration_ms` within ±1000 ms. This catches re-exported or messenger-shared copies.
-   - Files that are already exact duplicates are excluded.
+   - Files that are already exact duplicates of each other count once.
    - Images and videos are never grouped together.
+   - A Live Photo is one item, listed under its photo; its video half is never matched on its own.
 5. **Name tier:** normalize the name:
    - Apply NFC normalization and lowercase.
-   - Strip ` (n)`, ` copy`, ` copy n`, `-1`, and `_1` suffixes.
    - Strip the extension.
+   - Strip ` (n)`, `(n)`, ` copy`, ` copy n`, ` - copy`, and `-n` / `_n` with one digit (so the counter in `IMG_1234` stays).
 
-   Then group by the normalized name and keep groups whose sizes are within ±5%.
-6. **Similar tier (later, images only):** dHash or pHash with a 64-bit value; group with a BK-tree when the Hamming distance is ≤ 6.
+   Then group by kind and normalized name and keep runs whose sizes are within 5% of the smallest.
+6. **Similar tier (images only, opt-in with `--similar`):** a 64-bit difference hash (9×8 grey cells) plus a colour signature (average colour of each quarter). Two pictures match when the hashes differ in at most `dupes.similar_distance` bits (default 6), the colours agree, and width over height agrees within 3%. Grouped with a BK-tree and union-find. Both values are cached in the index (`perceptual_hash`, `color_signature`).
+
+The likely, name and similar tiers are guesses. Keep rules never mark their groups, the CLI never plans them, and in the TUI each group is marked by hand (ADR-0008). A group that a stronger tier already shows is not repeated. Measured precision and recall: `docs/dupes-accuracy.md`.
 
 Hashes are cached in the index and stay valid while `(size, mtime)` is unchanged. Videos make up most of the bytes in a typical library. Size grouping plus the partial hash means only true candidates are fully read, and those reads use `update_mmap_rayon`.
 
@@ -395,7 +398,7 @@ pub struct Fingerprint { size: u64, mtime_ns: i64, hash: Option<[u8; 32]> }
 |-----|--------|---------|
 | `1` | **Dashboard** | Scan progress gauge, totals (photos and videos shown separately, plus total video duration), format distribution (bar chart, most used first), year histogram (sparkline or bars), top cameras, error count |
 | `2` | **Browser** | Folder tree (left) and virtualized file table (right). Columns: name, kind, format, dimensions, duration, size, taken, camera, place (`≈` when inferred). `t` cycles the kind filter (all, photos, videos); `k` stays "up" for the vim keys. Sort and filter (`/`). Detail pane shows full metadata. |
-| `3` | **Duplicates** | Groups list (tier, count, reclaim), with group members below. `space` toggles keep/delete, `r` applies a keep rule to all, a tier filter, and the total reclaim shown in the header. |
+| `3` | **Duplicates** | Groups list (tier badge, count, reclaim), with group members on the right. `f` searches (exact, likely, name); `F` also compares how pictures look. `v` filters by tier. `space` toggles keep/delete, `p` applies the next keep rule to every exact group. Groups of the other tiers show a side-by-side comparison (size, pixels, date, length, camera) and are marked one at a time. Total reclaim in the summary. |
 | `4` | **Organize** | Destination picker, template presets (Date / Place / Place+Date / Kind+Date), template input with a live sample preview (5 example files, including a geotagged one and one without location), an infer-location toggle, coverage ("82% of files have a location"), copy/move toggle, and the proposed tree glimpse. |
 | — | **Review / Dry-run** (modal) | Summary counts, warnings, before/after trees, op list sample, and a confirmation (typed phrase for large or permanent plans) |
 | — | **Execute** | Progress, current op, error list, `Esc` to stop safely after the current op |
@@ -414,7 +417,8 @@ yojaka [PATH]                         # open TUI (read-only)
 yojaka [PATH] --write                 # open TUI with write mode available
 yojaka scan [PATH] [--kind image|video|all] [--sniff-all] [--force] [--threads N] [--local-index]
 yojaka stats [PATH] [--json]
-yojaka dupes [PATH] [--tier exact|likely|name|all] [--keep RULE,...] [--plan-out FILE] [--json]
+yojaka dupes [PATH] [--tier exact|likely|name|similar|all] [--similar] [--similar-distance BITS]
+             [--keep RULE,...] [--plan-out FILE] [--json]   # only exact groups are marked or planned
 yojaka organize [PATH] --dest DIR --template "{year}/{month:02}" [--copy|--move] [--infer-location] [--plan-out FILE]
                                      # e.g. --template "{country}/{city}/{year}-{month:02}/{name}"
 yojaka plan show FILE [--full-tree]   # dry-run view of a saved plan

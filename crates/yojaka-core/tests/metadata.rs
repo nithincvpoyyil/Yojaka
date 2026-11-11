@@ -216,6 +216,47 @@ fn rescan_reads_only_new_or_changed_files() {
 }
 
 #[test]
+fn raw_photos_from_older_saved_data_are_read_again_once() {
+    let env = TestEnv::new();
+    let root = env.tmp.path().join("pics");
+    std::fs::create_dir_all(&root).unwrap();
+    // A DNG is a TIFF inside; a plain TIFF named .dng stands in for one here.
+    let img = fixturegen::pictures::detailed(1, 64, 48);
+    img.save(root.join("tmp.tif")).unwrap();
+    std::fs::rename(root.join("tmp.tif"), root.join("photo.dng")).unwrap();
+    std::fs::write(
+        root.join("other.jpg"),
+        fixturegen::pictures::jpeg(&img, 90, 1).unwrap(),
+    )
+    .unwrap();
+    let e = engine(&env);
+    let scan_root = |metadata: bool| {
+        let o = ScanOptions {
+            root: root.clone(),
+            metadata,
+            ..Default::default()
+        };
+        e.scan(&o, &EventSink::null(), &CancelToken::new())
+            .unwrap()
+            .metadata
+            .unwrap()
+    };
+    assert_eq!(scan_root(true).extracted, 2);
+    assert_eq!(scan_root(true).extracted, 0);
+
+    // Saved data from before raw photos were read by ImageIO: the next scan reads the raw
+    // file again (only that one), and the one after reads nothing.
+    let idx = yojaka_core::index::Index::open(&e.index_path(&root.canonicalize().unwrap(), false))
+        .unwrap();
+    idx.connection()
+        .execute("DELETE FROM meta_kv WHERE key='raw_meta_version'", [])
+        .unwrap();
+    let again = scan_root(true);
+    assert_eq!(again.extracted + again.errors, 1);
+    assert_eq!(scan_root(true).extracted, 0);
+}
+
+#[test]
 fn scan_without_metadata_then_extract_later() {
     let env = TestEnv::with_spec(spec(14));
     let e = engine(&env);

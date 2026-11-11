@@ -64,7 +64,7 @@ impl Runtime {
                     }
                 }
                 Cmd::StartScan { force } => self.start_scan(force),
-                Cmd::FindDupes => self.start_dupes(),
+                Cmd::FindDupes { similar } => self.start_dupes(similar),
                 Cmd::CancelDupes => {
                     if let Some((token, _)) = &self.dupes {
                         token.cancel();
@@ -178,8 +178,8 @@ impl Runtime {
         }
     }
 
-    /// Looks for exact duplicates on its own thread. Reads files, changes none.
-    fn start_dupes(&mut self) {
+    /// Looks for duplicates on its own thread. Reads files, changes none.
+    fn start_dupes(&mut self, similar: bool) {
         if self.dupes.as_ref().is_some_and(|(_, h)| h.is_finished())
             && let Some((_, h)) = self.dupes.take()
         {
@@ -200,7 +200,9 @@ impl Runtime {
             .name("dupes".into())
             .spawn(move || {
                 tracing::info!("dupes thread started");
-                let outcome = match engine.dupes(&root, local, &sink, &token) {
+                let mut opts = yojaka_core::dupes::DupOptions::all();
+                opts.similar = similar;
+                let outcome = match engine.dupes(&root, local, opts, &sink, &token) {
                     Ok(report) => {
                         tracing::info!("dupes thread finished");
                         DupOutcome::Done(Box::new(report))

@@ -309,6 +309,7 @@ fn footer_line(app: &App) -> Line<'static> {
                 ("q", "quit"),
                 ("?", "help"),
                 ("f", "find"),
+                ("v", "tier"),
                 ("Space", "mark"),
                 ("Enter", "keep"),
                 ("p", "rule"),

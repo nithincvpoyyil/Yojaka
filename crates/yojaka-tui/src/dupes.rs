@@ -1,7 +1,10 @@
 //! State of the Duplicates screen: the groups found, what is marked, and where the cursor is.
-//! Marking is bookkeeping only; nothing here (or anywhere in this iteration) deletes a file.
+//! Marking is bookkeeping only; nothing here deletes a file.
+//!
+//! Keep rules mark identical copies only. Groups of the other tiers (likely, similar, name) are
+//! different files that may be the same picture, so each one is marked by hand.
 
-use yojaka_core::dupes::{DupGroup, DupReport, DupStats, KeepRule, parse_rules};
+use yojaka_core::dupes::{DupGroup, DupReport, DupStats, KeepRule, Tier, parse_rules};
 
 /// Keep-rule chains `p` cycles through: (label, `--keep` text).
 pub const PRESETS: [(&str, &str); 4] = [
@@ -54,6 +57,9 @@ pub struct DupesState {
     pub issues: u64,
     pub preset: usize,
     pub pane: Pane,
+    /// Show only groups of this tier (`None`: all of them).
+    pub filter: Option<Tier>,
+    /// Index into `groups` of the selected group (always one the filter shows, if any is).
     pub group: usize,
     pub copy: usize,
     pub done: u64,
@@ -72,6 +78,7 @@ impl Default for DupesState {
             issues: 0,
             preset: 0,
             pane: Pane::Groups,
+            filter: None,
             group: 0,
             copy: 0,
             done: 0,
@@ -123,6 +130,7 @@ impl DupesState {
         self.stats = Some(report.stats);
         self.groups = report.groups;
         self.apply_preset();
+        self.filter = None;
         self.group = 0;
         self.copy = 0;
         self.pane = Pane::Groups;
@@ -145,7 +153,8 @@ impl DupesState {
         PRESETS[self.preset].0
     }
 
-    /// Applies the current rule chain to every group (manual marks are replaced).
+    /// Applies the current rule chain to every group of identical files (manual marks there are
+    /// replaced). Groups of the other tiers are never marked by a rule.
     pub fn apply_preset(&mut self) {
         let rules = self.rules();
         for g in &mut self.groups {
@@ -159,7 +168,56 @@ impl DupesState {
     }
 
     pub fn current(&self) -> Option<&DupGroup> {
-        self.groups.get(self.group)
+        self.groups
+            .get(self.group)
+            .filter(|g| self.filter.is_none_or(|t| g.tier == t))
+    }
+
+    /// Indices of the groups the tier filter shows, in order.
+    pub fn visible(&self) -> Vec<usize> {
+        self.groups
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| self.filter.is_none_or(|t| g.tier == t))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// How many groups each tier has, in display order, leaving out empty tiers.
+    pub fn tier_counts(&self) -> Vec<(Tier, usize)> {
+        Tier::ALL
+            .into_iter()
+            .map(|t| (t, self.groups.iter().filter(|g| g.tier == t).count()))
+            .filter(|(_, n)| *n > 0)
+            .collect()
+    }
+
+    /// Groups that are not identical copies and have nothing marked yet.
+    pub fn undecided(&self) -> usize {
+        self.groups
+            .iter()
+            .filter(|g| !g.tier.is_exact() && g.delete_count() == 0)
+            .count()
+    }
+
+    /// `v`: all tiers, then each tier that has groups, then all again.
+    pub fn cycle_filter(&mut self) {
+        let present: Vec<Tier> = self.tier_counts().into_iter().map(|(t, _)| t).collect();
+        self.filter = match self.filter {
+            None => present.first().copied(),
+            Some(now) => present
+                .iter()
+                .position(|t| *t == now)
+                .and_then(|i| present.get(i + 1))
+                .copied(),
+        };
+        self.group = self.visible().first().copied().unwrap_or(0);
+        self.copy = 0;
+        self.pane = Pane::Groups;
+    }
+
+    pub fn filter_label(&self) -> &'static str {
+        self.filter.map_or("all", Tier::label)
     }
 
     /// Bytes freed if every mark were carried out.
@@ -180,8 +238,12 @@ impl DupesState {
     pub fn move_by(&mut self, delta: i64) {
         match self.pane {
             Pane::Groups => {
-                let last = self.groups.len().saturating_sub(1);
-                let g = self.group.saturating_add_signed(delta as isize).min(last);
+                let visible = self.visible();
+                let Some(last) = visible.len().checked_sub(1) else {
+                    return;
+                };
+                let at = visible.iter().position(|&i| i == self.group).unwrap_or(0);
+                let g = visible[at.saturating_add_signed(delta as isize).min(last)];
                 if g != self.group {
                     self.group = g;
                     self.copy = 0;
@@ -214,6 +276,9 @@ impl DupesState {
 
     /// Flips the mark on the selected copy. The last unmarked copy of a group cannot be marked.
     pub fn toggle(&mut self) -> Toggled {
+        if self.current().is_none() {
+            return Toggled::Nothing;
+        }
         let Some(g) = self.groups.get_mut(self.group) else {
             return Toggled::Nothing;
         };
@@ -226,7 +291,8 @@ impl DupesState {
 
     /// Keeps the selected copy and marks the others.
     pub fn keep_only(&mut self) {
-        if let Some(g) = self.groups.get_mut(self.group)
+        if self.current().is_some()
+            && let Some(g) = self.groups.get_mut(self.group)
             && self.copy < g.members.len()
         {
             g.set_keeper(self.copy);
@@ -235,7 +301,9 @@ impl DupesState {
 
     /// Clears every mark in the selected group.
     pub fn keep_all(&mut self) {
-        if let Some(g) = self.groups.get_mut(self.group) {
+        if self.current().is_some()
+            && let Some(g) = self.groups.get_mut(self.group)
+        {
             g.keep_all();
         }
     }

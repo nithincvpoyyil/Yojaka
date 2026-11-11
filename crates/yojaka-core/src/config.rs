@@ -33,6 +33,8 @@ pub struct ScanConfig {
 #[serde(default)]
 pub struct DupesConfig {
     pub keep_rules: Vec<String>,
+    /// Similar tier: two pictures match when at most this many of the 64 hash bits differ.
+    pub similar_distance: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,6 +83,7 @@ impl Default for DupesConfig {
     fn default() -> Self {
         Self {
             keep_rules: vec!["oldest".into(), "shortest-path".into()],
+            similar_distance: 6,
         }
     }
 }

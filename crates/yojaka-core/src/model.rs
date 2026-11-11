@@ -50,6 +50,15 @@ impl Format {
         }
     }
 
+    /// A camera raw photo (DNG, CR2, CR3, NEF, ARW, RAF, ORF).
+    pub fn is_raw(self) -> bool {
+        use Format::*;
+        matches!(
+            self,
+            RawDng | RawCr2 | RawCr3 | RawNef | RawArw | RawRaf | RawOrf
+        )
+    }
+
     /// The kebab-case name stored in the index (same as the serde name).
     pub fn as_str(self) -> &'static str {
         use Format::*;

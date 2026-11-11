@@ -30,6 +30,10 @@ pub struct Spec {
     pub videos: f64,
     /// Live Photo pairs (JPEG + MOV sharing a content identifier), plus decoys that must not pair.
     pub live_photos: usize,
+    /// Sets of look-alikes for the likely, name and similar duplicate tiers: a detailed picture
+    /// (or a clip) plus a re-encoded, resized, stripped, renamed or re-exported copy, and decoys
+    /// that only seem to match. 0 (the default) leaves every other file exactly as before.
+    pub variants: usize,
 }
 
 impl Default for Spec {
@@ -47,6 +51,7 @@ impl Default for Spec {
             noise: 200,
             videos: 0.0,
             live_photos: 0,
+            variants: 0,
         }
     }
 }
@@ -82,6 +87,10 @@ pub struct Entry {
     /// Both halves of a true Live Photo pair share this number.
     #[serde(default)]
     pub live_pair: Option<u32>,
+    /// Set by `Spec::variants`: `base`, a true copy (`reencoded`, `resized`, `stripped`,
+    /// `renamed`, `reexport`) or a decoy (`burst`, `name_decoy`, `longer`).
+    #[serde(default)]
+    pub variant: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +100,10 @@ pub struct Expected {
     pub by_format: BTreeMap<String, usize>,
     #[serde(default)]
     pub live_pairs: usize,
+    /// Files that are the same picture or clip but not the same bytes (from `Spec::variants`).
+    /// Decoys are not listed.
+    #[serde(default)]
+    pub same_content: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +138,7 @@ struct Gen<'a> {
     tree: PathBuf,
     rng: Rng,
     entries: Vec<Entry>,
+    same_content: Vec<Vec<String>>,
     used: HashSet<String>,
     dirs: Vec<String>,
     warnings: Vec<String>,
@@ -137,6 +151,7 @@ pub fn generate(spec: &Spec, out: &Path) -> Result<Manifest, GenError> {
         tree: out.join("tree"),
         rng: Rng::new(spec.seed),
         entries: Vec::new(),
+        same_content: Vec::new(),
         used: HashSet::new(),
         dirs: Vec::new(),
         warnings: Vec::new(),
@@ -152,6 +167,7 @@ pub fn generate(spec: &Spec, out: &Path) -> Result<Manifest, GenError> {
     g.make_links(&uniques, out)?;
     g.make_videos()?;
     g.make_live_photos()?;
+    g.make_variants()?;
     g.make_noise_and_bait()?;
     let manifest = g.finish(out)?;
     Ok(manifest)
@@ -244,8 +260,12 @@ impl Gen<'_> {
     }
 
     fn encode_jpeg(&self, img: &RgbImage) -> Result<Vec<u8>, GenError> {
+        self.encode_jpeg_q(img, 85)
+    }
+
+    fn encode_jpeg_q(&self, img: &RgbImage, quality: u8) -> Result<Vec<u8>, GenError> {
         let mut buf = Vec::new();
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 85)
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality)
             .encode(
                 img.as_raw(),
                 img.width(),
@@ -280,32 +300,7 @@ impl Gen<'_> {
     }
 
     fn heic_from_jpeg(&mut self, jpeg: &[u8]) -> Option<Vec<u8>> {
-        let cache = directories::BaseDirs::new()?
-            .home_dir()
-            .join(".cache")
-            .join("yojaka-fixtures");
-        let key = blake3::hash(jpeg).to_hex();
-        let cached = cache.join(format!("{}.heic", &key.as_str()[..32]));
-        if let Ok(b) = std::fs::read(&cached) {
-            return Some(b);
-        }
-        std::fs::create_dir_all(&cache).ok()?;
-        let src = cache.join(format!("{}.jpg", &key.as_str()[..32]));
-        std::fs::write(&src, jpeg).ok()?;
-        let ok = std::process::Command::new("sips")
-            .args(["-s", "format", "heic"])
-            .arg(&src)
-            .arg("--out")
-            .arg(&cached)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        let _ = std::fs::remove_file(&src);
-        if ok {
-            std::fs::read(&cached).ok()
-        } else {
-            None
-        }
+        crate::pictures::heic_from_jpeg(jpeg)
     }
 
     fn make_uniques(&mut self) -> Result<Vec<usize>, GenError> {
@@ -408,6 +403,7 @@ impl Gen<'_> {
                 should_index: true,
                 duration_ms: None,
                 live_pair: None,
+                variant: None,
             });
             uniques.push(self.entries.len() - 1);
         }
@@ -516,6 +512,7 @@ impl Gen<'_> {
                 should_index: true,
                 duration_ms: None,
                 live_pair: None,
+                variant: None,
             });
         }
         Ok(())
@@ -598,6 +595,7 @@ impl Gen<'_> {
                 should_index: false,
                 duration_ms: None,
                 live_pair: None,
+                variant: None,
             });
         }
         Ok(())
@@ -626,6 +624,7 @@ impl Gen<'_> {
             should_index: true,
             duration_ms: Some(spec.duration_ms),
             live_pair: None,
+            variant: None,
         })
     }
 
@@ -849,6 +848,185 @@ impl Gen<'_> {
         Ok(())
     }
 
+    /// Look-alike sets for the non-exact duplicate tiers (see [`Spec::variants`]).
+    fn make_variants(&mut self) -> Result<(), GenError> {
+        let mut rng = Rng::new(self.spec.seed ^ 0x7A21_0000);
+        for k in 0..self.spec.variants {
+            let dir = self.dirs[rng.below(self.dirs.len())].clone();
+            let other = self.pick_other_dir(&dir);
+            // Every set has its own second, so sets never match each other by date.
+            let unix = 1_650_000_000 + k as i64 * 3671;
+            let (y, mo, d, h, mi, s) = unix_to_civil(unix);
+            let wall = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}");
+            let exif_dt = format!("{y:04}:{mo:02}:{d:02} {h:02}:{mi:02}:{s:02}");
+            let (make, model) = CAMERAS[k % CAMERAS.len()];
+            let case = k % 6;
+
+            if case == 5 {
+                // A clip, the same clip exported again (0.4 s longer, other codec), and a
+                // different clip recorded in the same second that is 5 s longer.
+                let duration_ms = 4000 + rng.range(0, 50) as u64 * 1000;
+                let clips = [
+                    (
+                        join(&dir, &format!("CLIP_{k:04}.mp4")),
+                        "base",
+                        0,
+                        *b"avc1",
+                        8192,
+                    ),
+                    (
+                        join(&other, &format!("CLIP_{k:04}_export.mp4")),
+                        "reexport",
+                        400,
+                        *b"hvc1",
+                        6000,
+                    ),
+                    (
+                        join(&other, &format!("CLIP_{k:04}_long.mp4")),
+                        "longer",
+                        5000,
+                        *b"avc1",
+                        9000,
+                    ),
+                ];
+                let mut same = Vec::new();
+                for (rel, label, extra_ms, codec, mdat_len) in clips {
+                    if self.used.contains(&rel) {
+                        continue;
+                    }
+                    let spec = VideoSpec {
+                        quicktime: false,
+                        duration_ms: duration_ms + extra_ms,
+                        video_codec: codec,
+                        mdat_len,
+                        mvhd_unix: Some(unix),
+                        ..VideoSpec::default()
+                    };
+                    let full = self.tree.join(&rel);
+                    if let Some(p) = full.parent() {
+                        io(p, std::fs::create_dir_all(p))?;
+                    }
+                    write_video(&full, &spec)?;
+                    self.used.insert(rel.clone());
+                    let mut e = self.video_entry(rel.clone(), &spec, "mp4")?;
+                    e.taken_at = Some(wall.clone());
+                    e.variant = Some(label.into());
+                    self.entries.push(e);
+                    if label != "longer" {
+                        same.push(rel);
+                    }
+                }
+                if same.len() > 1 {
+                    self.same_content.push(same);
+                }
+                continue;
+            }
+
+            let picture = detailed_picture(&mut rng, 320, 240);
+            let exif = ExifData {
+                make,
+                model,
+                orientation: 1,
+                date_time_original: &exif_dt,
+                gps: None,
+            };
+            let with_exif = |jpeg: &[u8]| splice_into_jpeg(jpeg, &exif);
+            let stem = format!("PIC_{k:04}");
+            // (path, label, bytes, format, keeps the camera's date?)
+            let mut files: Vec<(String, &str, Vec<u8>, &str, bool)> = vec![(
+                join(&dir, &format!("{stem}.jpg")),
+                "base",
+                with_exif(&self.encode_jpeg_q(&picture, 90)?),
+                "jpeg",
+                true,
+            )];
+            match case {
+                // Saved again at a lower quality: same date, camera and size in pixels.
+                0 => files.push((
+                    join(&other, &format!("{stem}_edit.jpg")),
+                    "reencoded",
+                    with_exif(&self.encode_jpeg_q(&picture, 60)?),
+                    "jpeg",
+                    true,
+                )),
+                // Half the size in pixels.
+                1 => files.push((
+                    join(&other, &format!("{stem}_small.jpg")),
+                    "resized",
+                    with_exif(&self.encode_jpeg_q(&halved(&picture), 85)?),
+                    "jpeg",
+                    true,
+                )),
+                // Another format, no camera data; plus an unrelated picture with a counter
+                // suffix that makes the names collide.
+                2 => {
+                    files.push((
+                        join(&other, &format!("{stem}_shared.png")),
+                        "stripped",
+                        self.encode_png(&picture)?,
+                        "png",
+                        false,
+                    ));
+                    let unrelated = detailed_picture(&mut rng, 320, 240);
+                    files.push((
+                        join(&other, &format!("{stem}-1.jpg")),
+                        "name_decoy",
+                        self.encode_jpeg_q(&unrelated, 90)?,
+                        "jpeg",
+                        false,
+                    ));
+                }
+                // A copy the Finder renamed, re-saved without camera data: almost the same size.
+                3 => {
+                    let mut touched = picture.clone();
+                    touched.put_pixel(0, 0, Rgb([1, 2, 3]));
+                    files.push((
+                        join(&other, &format!("{stem} copy.jpg")),
+                        "renamed",
+                        self.encode_jpeg_q(&touched, 90)?,
+                        "jpeg",
+                        false,
+                    ));
+                }
+                // Another picture taken in the same second with the same camera (a burst).
+                _ => {
+                    let next_shot = detailed_picture(&mut rng, 320, 240);
+                    files.push((
+                        join(&dir, &format!("{stem}_b.jpg")),
+                        "burst",
+                        with_exif(&self.encode_jpeg_q(&next_shot, 90)?),
+                        "jpeg",
+                        true,
+                    ));
+                }
+            }
+            let mut same = Vec::new();
+            for (rel, label, bytes, format, dated) in files {
+                if self.used.contains(&rel) {
+                    continue;
+                }
+                self.write(&rel, &bytes)?;
+                let mut e = other_entry(rel.clone(), bytes.len() as u64);
+                e.kind = "image".into();
+                e.format = Some(format.into());
+                e.should_index = true;
+                e.variant = Some(label.into());
+                if dated {
+                    e.taken_at = Some(wall.clone());
+                    e.camera = Some(format!("{make} {model}"));
+                }
+                self.entries.push(e);
+                if !matches!(label, "burst" | "name_decoy") {
+                    same.push(rel);
+                }
+            }
+            if same.len() > 1 {
+                self.same_content.push(same);
+            }
+        }
+        Ok(())
+    }
+
     fn make_noise_and_bait(&mut self) -> Result<(), GenError> {
         const EXTS: &[&str] = &["txt", "pdf", "json", "md"];
         for i in 0..self.spec.noise {
@@ -941,6 +1119,14 @@ impl Gen<'_> {
                 exact_groups,
                 by_format,
                 live_pairs,
+                same_content: {
+                    let mut sets = self.same_content;
+                    for set in &mut sets {
+                        set.sort();
+                    }
+                    sets.sort();
+                    sets
+                },
             },
             warnings: self.warnings,
         };
@@ -950,6 +1136,53 @@ impl Gen<'_> {
         io(&path, std::fs::write(&path, json))?;
         Ok(manifest)
     }
+}
+
+/// A picture with detail at several scales (soft colour patches plus stripes), so that it
+/// survives resizing and re-compression the way a photo does, and no two look alike.
+pub(crate) fn detailed_picture(rng: &mut Rng, w: u32, h: u32) -> RgbImage {
+    const GX: usize = 7;
+    const GY: usize = 6;
+    let grid: Vec<[f64; 3]> = (0..GX * GY)
+        .map(|_| {
+            [
+                rng.below(256) as f64,
+                rng.below(256) as f64,
+                rng.below(256) as f64,
+            ]
+        })
+        .collect();
+    let (fx, fy) = (rng.range(3, 9) as f64, rng.range(3, 9) as f64);
+    let phase = rng.below(628) as f64 / 100.0;
+    RgbImage::from_fn(w, h, |x, y| {
+        let u = x as f64 / w as f64 * (GX - 1) as f64;
+        let v = y as f64 / h as f64 * (GY - 1) as f64;
+        let (x0, y0) = (u.floor() as usize, v.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(GX - 1), (y0 + 1).min(GY - 1));
+        let (tx, ty) = (u - x0 as f64, v - y0 as f64);
+        let stripes = ((u * fx + v * fy + phase).sin()) * 18.0;
+        let mut px = [0u8; 3];
+        for (c, out) in px.iter_mut().enumerate() {
+            let top = grid[y0 * GX + x0][c] * (1.0 - tx) + grid[y0 * GX + x1][c] * tx;
+            let bottom = grid[y1 * GX + x0][c] * (1.0 - tx) + grid[y1 * GX + x1][c] * tx;
+            *out = (top * (1.0 - ty) + bottom * ty + stripes).clamp(0.0, 255.0) as u8;
+        }
+        Rgb(px)
+    })
+}
+
+/// Half the width and height: each pixel is the average of a 2×2 block.
+fn halved(img: &RgbImage) -> RgbImage {
+    RgbImage::from_fn(img.width() / 2, img.height() / 2, |x, y| {
+        let mut sum = [0u32; 3];
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let p = img.get_pixel(x * 2 + dx, y * 2 + dy);
+            for c in 0..3 {
+                sum[c] += u32::from(p[c]);
+            }
+        }
+        Rgb([(sum[0] / 4) as u8, (sum[1] / 4) as u8, (sum[2] / 4) as u8])
+    })
 }
 
 fn other_entry(path: String, size: u64) -> Entry {
@@ -969,6 +1202,7 @@ fn other_entry(path: String, size: u64) -> Entry {
         should_index: false,
         duration_ms: None,
         live_pair: None,
+        variant: None,
     }
 }
 

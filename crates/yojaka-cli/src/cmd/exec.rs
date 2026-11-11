@@ -86,6 +86,12 @@ pub(crate) fn print_summary(plan: &Plan, full_tree: bool) {
                     plan.summary.live_pairs
                 );
             }
+            let lookalikes = plan.lookalike_ops();
+            if lookalikes > 0 {
+                println!(
+                    "  note:    {lookalikes} of these are not identical to the copy that stays (matched by eye)"
+                );
+            }
         }
     }
     for w in &plan.warnings {

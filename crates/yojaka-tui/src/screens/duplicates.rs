@@ -1,12 +1,13 @@
-//! Duplicates: groups of identical files (left), the copies of the selected group (right), and a
-//! summary on top. Marks are a proposal only; this iteration never deletes anything.
+//! Duplicates: groups (left), the copies of the selected group (right), and a summary on top.
+//! Each group carries its tier: identical files, or a guess (likely, similar, name) that shows a
+//! comparison of its files and is only ever marked by hand. Marks are a proposal only.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use yojaka_core::dupes::DupGroup;
+use yojaka_core::dupes::{DupFile, DupGroup, Tier};
 
 use crate::app::App;
 use crate::dupes::{DupesState, Pane, Phase};
@@ -23,7 +24,14 @@ pub fn render(app: &App, f: &mut Frame, area: Rect) {
 
 fn render_summary(app: &App, f: &mut Frame, area: Rect) {
     let d = &app.dupes;
-    let block = theme::panel("Exact duplicates", false);
+    let mut title = String::from("Duplicates");
+    for (tier, n) in d.tier_counts() {
+        title.push_str(&format!(" · {} {}", fmt::thousands(n as u64), tier.label()));
+    }
+    if d.filter.is_some() {
+        title.push_str(&format!(" · showing {}", d.filter_label()));
+    }
+    let block = theme::panel(title, false);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let w = inner.width as usize;
@@ -52,25 +60,30 @@ fn render_summary(app: &App, f: &mut Frame, area: Rect) {
             let n = d.stats.as_ref().map_or(0, |s| s.candidate_files);
             Line::styled(
                 format!(
-                    "No identical files among the {} files that share a size.",
+                    "No duplicates: {} files share a size, none are identical or likely copies.",
                     fmt::thousands(n)
                 ),
                 theme::good(),
             )
         }
         Phase::Done => {
-            let mut spans = vec![
-                Span::styled(
-                    format!("{} groups", fmt::thousands(d.groups.len() as u64)),
-                    theme::title(),
-                ),
-                Span::raw(format!(
-                    " · {} files marked · frees {} · rule: {}",
-                    fmt::thousands(d.marked_files() as u64),
-                    fmt::bytes(d.total_reclaim()),
-                    d.preset_label()
-                )),
-            ];
+            let mut spans = vec![Span::styled(
+                format!("{} groups", fmt::thousands(d.groups.len() as u64)),
+                theme::title(),
+            )];
+            let undecided = d.undecided();
+            if undecided > 0 {
+                spans.push(Span::styled(
+                    format!(" · {} to review", fmt::thousands(undecided as u64)),
+                    theme::accent(),
+                ));
+            }
+            spans.push(Span::raw(format!(
+                " · {} files marked · frees {} · rule: {}",
+                fmt::thousands(d.marked_files() as u64),
+                fmt::bytes(d.total_reclaim()),
+                d.preset_label()
+            )));
             if d.issues > 0 {
                 spans.push(Span::styled(
                     format!(" · {} skipped", d.issues),
@@ -86,7 +99,12 @@ fn render_summary(app: &App, f: &mut Frame, area: Rect) {
         }
         Phase::Idle => Line::from(vec![
             Span::styled("f", theme::key_hint()),
-            Span::styled(" finds identical files. Nothing is deleted.", theme::dim()),
+            Span::styled(" finds duplicates. ", theme::dim()),
+            Span::styled("F", theme::key_hint()),
+            Span::styled(
+                " also compares how pictures look. Nothing is deleted.",
+                theme::dim(),
+            ),
         ]),
     };
     f.render_widget(Paragraph::new(line), inner);
@@ -101,18 +119,30 @@ fn window(selected: usize, len: usize, rows: usize) -> usize {
     }
 }
 
+/// Seven columns: the tier of a group, as shown in the list.
+fn badge(tier: Tier) -> (&'static str, Style) {
+    match tier {
+        Tier::Exact => ("exact  ", theme::good()),
+        Tier::Likely => ("likely ", theme::accent()),
+        Tier::Similar => ("similar", theme::accent()),
+        Tier::Name => ("name   ", theme::accent()),
+    }
+}
+
 fn render_groups(app: &App, f: &mut Frame, area: Rect) {
     let d = &app.dupes;
     let focused = d.pane == Pane::Groups;
-    let title = if d.groups.is_empty() {
+    let visible = d.visible();
+    let at = visible.iter().position(|&i| i == d.group).unwrap_or(0);
+    let title = if visible.is_empty() {
         "Groups".to_string()
     } else {
-        format!("Groups {}/{}", d.group + 1, d.groups.len())
+        format!("Groups {}/{}", at + 1, visible.len())
     };
     let block = theme::panel(title, focused);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    if d.groups.is_empty() {
+    if visible.is_empty() {
         let msg = match d.phase {
             Phase::Searching => "searching…",
             Phase::Done => "nothing to review",
@@ -122,17 +152,18 @@ fn render_groups(app: &App, f: &mut Frame, area: Rect) {
         return;
     }
     let rows = inner.height as usize;
-    let top = window(d.group, d.groups.len(), rows);
-    let lines: Vec<Line> = d
-        .groups
+    let width = inner.width as usize;
+    let top = window(at, visible.len(), rows);
+    let lines: Vec<Line> = visible
         .iter()
-        .enumerate()
         .skip(top)
         .take(rows)
-        .map(|(i, g)| {
-            let text = format!(
-                "{:>5} {:>2}× {:>9}{}",
-                g.id,
+        .map(|&i| {
+            let g = &d.groups[i];
+            let (tier, tier_style) = badge(g.tier);
+            let head = format!("{:>4} ", g.id);
+            let tail = format!(
+                " {:>2}× {:>9}{}",
                 g.members.len(),
                 fmt::bytes(g.reclaim()),
                 if g.members.iter().any(|m| m.is_pair()) {
@@ -141,16 +172,21 @@ fn render_groups(app: &App, f: &mut Frame, area: Rect) {
                     ""
                 }
             );
-            let text = fmt::truncate(&text, inner.width as usize);
             if i == d.group {
                 let style = if focused {
                     theme::selected()
                 } else {
                     theme::selected_dim()
                 };
-                Line::styled(format!("{text:<w$}", w = inner.width as usize), style)
+                let text = fmt::truncate(&format!("{head}{tier}{tail}"), width);
+                Line::styled(format!("{text:<width$}"), style)
             } else {
-                Line::from(text)
+                let room = width.saturating_sub(head.chars().count() + tier.chars().count());
+                Line::from(vec![
+                    Span::raw(head),
+                    Span::styled(tier, tier_style),
+                    Span::raw(fmt::truncate(&tail, room)),
+                ])
             }
         })
         .collect();
@@ -162,6 +198,9 @@ fn copy_line(g: &DupGroup, i: usize, width: usize) -> Vec<Span<'static>> {
     let marked = g.delete[i];
     let (tag, style) = if marked {
         ("✕ delete ", theme::error())
+    } else if !g.tier.is_exact() && g.delete_count() == 0 {
+        // A guess that nobody has decided yet: nothing is kept "instead of" anything.
+        ("? review ", theme::accent())
     } else {
         ("✓ keep   ", theme::good())
     };
@@ -177,6 +216,72 @@ fn copy_line(g: &DupGroup, i: usize, width: usize) -> Vec<Span<'static>> {
     ]
 }
 
+/// The facts that tell look-alike files apart, one column each: (label, width). The last
+/// column takes what is left.
+fn compare_columns(g: &DupGroup) -> Vec<(&'static str, usize)> {
+    let mut cols = vec![("size", 10), ("pixels", 11), ("taken", 20)];
+    // Photos have no length: the column is only there when a file has one.
+    if g.members.iter().any(|m| m.primary().duration_ms.is_some()) {
+        cols.push(("length", 8));
+    }
+    cols.push(("camera", 0));
+    cols
+}
+
+fn compare_cell(f: &DupFile, column: &str) -> String {
+    let dash = || "—".to_string();
+    match column {
+        "size" => fmt::bytes(f.size),
+        "pixels" => f.pixels_text().unwrap_or_else(dash),
+        "taken" => f.taken_text().unwrap_or_else(dash),
+        "length" => f
+            .duration_ms
+            .map_or_else(dash, |ms| fmt::clock(ms.max(0) as u64)),
+        _ => f.camera.clone().unwrap_or_else(dash),
+    }
+}
+
+/// One row of the comparison: the facts of member `i`, with those that differ from the
+/// selected copy standing out.
+fn compare_line(g: &DupGroup, i: usize, selected: usize, width: usize) -> Line<'static> {
+    let (this, base) = (
+        g.members[i].primary(),
+        g.members[selected.min(g.members.len() - 1)].primary(),
+    );
+    let mut spans = vec![Span::styled(
+        if i == selected { "▸ " } else { "  " },
+        theme::title(),
+    )];
+    let mut used = 2usize;
+    for (label, w) in compare_columns(g) {
+        let w = if w == 0 {
+            width.saturating_sub(used)
+        } else {
+            w.min(width.saturating_sub(used))
+        };
+        let cell = compare_cell(this, label);
+        let text = fmt::truncate(&cell, w.saturating_sub(1));
+        let style = if cell != compare_cell(base, label) {
+            theme::accent()
+        } else if i == selected {
+            Style::new()
+        } else {
+            theme::dim()
+        };
+        spans.push(Span::styled(format!("{text:<w$}"), style));
+        used += w;
+    }
+    Line::from(spans)
+}
+
+fn compare_header(g: &DupGroup, width: usize) -> Line<'static> {
+    let mut text = String::from("  ");
+    for (label, w) in compare_columns(g) {
+        text.push_str(&format!("{label:<w$}"));
+    }
+    Line::styled(fmt::truncate(&text, width), theme::dim())
+}
+
 fn render_copies(d: &DupesState, f: &mut Frame, area: Rect) {
     let focused = d.pane == Pane::Copies;
     let Some(g) = d.current() else {
@@ -184,25 +289,37 @@ fn render_copies(d: &DupesState, f: &mut Frame, area: Rect) {
         f.render_widget(block, area);
         return;
     };
-    let title = format!(
-        "Group {} · {} copies{}",
-        g.id,
-        g.members.len(),
-        if g.members.iter().any(|m| m.is_pair()) {
-            " · Live Photos (photo and video move together)"
-        } else {
-            ""
-        }
-    );
+    let title = if g.tier.is_exact() {
+        format!(
+            "Group {} · {} copies{}",
+            g.id,
+            g.members.len(),
+            if g.members.iter().any(|m| m.is_pair()) {
+                " · Live Photos (photo and video move together)"
+            } else {
+                ""
+            }
+        )
+    } else {
+        format!("Group {} · {} · {}", g.id, g.tier.label(), g.tier.reason())
+    };
     let block = theme::panel(title, focused);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    // The last line shows the whole path of the selected copy, which the list may have cut.
-    let list_rows = inner.height.saturating_sub(2) as usize;
-    let top = window(d.copy, g.members.len(), list_rows.max(1));
     let width = inner.width as usize;
-    let mut lines: Vec<Line> = (top..g.members.len())
-        .take(list_rows)
+    let height = inner.height as usize;
+    // A guess shows its files twice: the list, then their facts side by side. The last two
+    // lines are a gap and the whole path of the selected copy, which the list may have cut.
+    let compare = !g.tier.is_exact() && height >= 7;
+    let list_rows = if compare {
+        (height.saturating_sub(4) / 2).clamp(1, g.members.len())
+    } else {
+        height.saturating_sub(2)
+    };
+    let top = window(d.copy, g.members.len(), list_rows.max(1));
+    let shown = top..g.members.len().min(top + list_rows);
+    let mut lines: Vec<Line> = shown
+        .clone()
         .map(|i| {
             let spans = copy_line(g, i, width);
             if i == d.copy {
@@ -222,10 +339,15 @@ fn render_copies(d: &DupesState, f: &mut Frame, area: Rect) {
             }
         })
         .collect();
-    while lines.len() < list_rows {
+    if compare {
+        lines.push(Line::raw(""));
+        lines.push(compare_header(g, width));
+        lines.extend(shown.map(|i| compare_line(g, i, d.copy, width)));
+    }
+    while lines.len() < height.saturating_sub(2) {
         lines.push(Line::raw(""));
     }
-    if inner.height >= 2
+    if height >= 2
         && let Some(m) = g.members.get(d.copy)
     {
         lines.push(Line::raw(""));

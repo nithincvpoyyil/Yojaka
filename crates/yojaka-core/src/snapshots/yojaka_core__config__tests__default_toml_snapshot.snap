@@ -24,6 +24,7 @@ keep_rules = [
     "oldest",
     "shortest-path",
 ]
+similar_distance = 6
 
 [organize]
 template = "{year}/{month:02}/{name}"

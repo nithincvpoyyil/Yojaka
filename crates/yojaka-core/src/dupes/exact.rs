@@ -1,4 +1,4 @@
-//! The exact tier: files with identical bytes.
+//! The exact tier: files with identical bytes. Also the shared loading and checking of index rows.
 //!
 //! Staged so that as few bytes as possible are read (tech spec §6.3):
 //! 1. group by size (SQL), collapsing hard links so one file is never "a duplicate of itself";
@@ -17,55 +17,95 @@ use std::time::Instant;
 use rayon::prelude::*;
 use rusqlite::Connection;
 
-use super::{DupFile, DupGroup, DupItem, DupReport, DupStats, Tier};
+use super::{DupFile, DupGroup, DupItem, DupOptions, DupStats, Tier};
 use crate::hash::{self, ContentHash};
 use crate::index::Index;
 use crate::model::{FileId, MediaKind};
-use crate::{
-    CancelToken, Config, CoreEvent, EventSink, FileIssue, IssueKind, Result, TaskKind, TaskOutcome,
-    YojakaError,
-};
+use crate::{CancelToken, Config, CoreEvent, EventSink, FileIssue, IssueKind, Result, TaskKind};
 
 /// Files hashed between progress reports, cache writes and cancel checks.
 const CHUNK: usize = 64;
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct DupOptions {
-    /// Hash again even when a hash is saved (not used by default).
-    pub rehash: bool,
-}
-
-struct Rec {
-    id: i64,
-    path: PathBuf,
-    size: u64,
-    mtime_ns: i64,
-    dev: i64,
-    ino: i64,
-    partial: Option<ContentHash>,
-    full: Option<ContentHash>,
-    kind: MediaKind,
-    taken_at: Option<i64>,
-    width: Option<u32>,
-    height: Option<u32>,
-    duration_ms: Option<i64>,
-    bitrate: Option<i64>,
-    pair_id: Option<i64>,
+pub(super) struct Rec {
+    pub id: i64,
+    pub path: PathBuf,
+    pub size: u64,
+    pub mtime_ns: i64,
+    pub dev: i64,
+    pub ino: i64,
+    pub partial: Option<ContentHash>,
+    pub full: Option<ContentHash>,
+    pub kind: MediaKind,
+    pub taken_at: Option<i64>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration_ms: Option<i64>,
+    pub bitrate: Option<i64>,
+    pub pair_id: Option<i64>,
+    pub camera: Option<String>,
     /// Still a candidate (readable, unchanged, not a hard-link alias).
-    ok: bool,
+    pub ok: bool,
 }
 
-struct Run<'a> {
-    pool: rayon::ThreadPool,
-    conn: Connection,
-    sink: &'a EventSink,
-    cancel: &'a CancelToken,
-    stats: DupStats,
-    issues: Vec<FileIssue>,
+impl Rec {
+    pub fn dup_file(&self) -> DupFile {
+        DupFile {
+            id: FileId(self.id),
+            path: self.path.clone(),
+            size: self.size,
+            mtime_ns: self.mtime_ns,
+            kind: self.kind,
+            taken_at: self.taken_at,
+            width: self.width,
+            height: self.height,
+            duration_ms: self.duration_ms,
+            bitrate: self.bitrate,
+            camera: self.camera.clone(),
+            hash: self.full,
+        }
+    }
 }
 
-impl Run<'_> {
-    fn issue(&mut self, path: &Path, kind: IssueKind, message: String) {
+pub(super) struct Run<'a> {
+    pub pool: rayon::ThreadPool,
+    pub conn: Connection,
+    pub sink: &'a EventSink,
+    pub cancel: &'a CancelToken,
+    pub stats: DupStats,
+    pub issues: Vec<FileIssue>,
+    /// Paths already reported, so a file that several tiers look at is listed once.
+    reported: HashSet<PathBuf>,
+}
+
+impl<'a> Run<'a> {
+    pub fn new(
+        config: &Config,
+        index_path: &Path,
+        sink: &'a EventSink,
+        cancel: &'a CancelToken,
+    ) -> Result<Self> {
+        let threads = if config.threads == 0 {
+            std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).max(1))
+        } else {
+            config.threads
+        };
+        let pool = crate::pool::build("dupes-worker", threads)?;
+        tracing::info!(threads, "dupes: starting");
+        Ok(Self {
+            pool,
+            conn: Index::open(index_path)?.into_connection(),
+            sink,
+            cancel,
+            stats: DupStats::default(),
+            issues: Vec::new(),
+            reported: HashSet::new(),
+        })
+    }
+
+    pub fn issue(&mut self, path: &Path, kind: IssueKind, message: String) {
+        if !self.reported.insert(path.to_path_buf()) {
+            return;
+        }
         tracing::warn!(path = %path.display(), "dupes: {message}");
         let issue = FileIssue {
             path: path.to_path_buf(),
@@ -77,60 +117,17 @@ impl Run<'_> {
     }
 }
 
-/// Finds groups of identical files in the index at `index_path`. Reads (and caches hashes for)
-/// only files whose size is shared with another file. Cancelling returns `Err(Cancelled)`;
-/// hashes saved so far are kept for the next run.
-pub fn find_exact(
-    config: &Config,
-    opts: DupOptions,
-    index_path: &Path,
-    sink: &EventSink,
-    cancel: &CancelToken,
-) -> Result<DupReport> {
-    sink.important(CoreEvent::TaskStarted {
-        task: TaskKind::Hash,
-        label: "Looking for duplicates".into(),
-    });
-    let result = find_exact_inner(config, opts, index_path, sink, cancel);
-    let outcome = match &result {
-        Ok(_) => TaskOutcome::Complete,
-        Err(YojakaError::Cancelled) => TaskOutcome::Cancelled,
-        Err(e) => TaskOutcome::Failed(e.to_string()),
-    };
-    sink.important(CoreEvent::TaskFinished {
-        task: TaskKind::Hash,
-        outcome,
-    });
-    result
-}
+/// Which exact group (by position in the returned list) each file belongs to.
+pub(super) type ExactOf = HashMap<i64, u32>;
 
-fn find_exact_inner(
-    config: &Config,
-    opts: DupOptions,
-    index_path: &Path,
-    sink: &EventSink,
-    cancel: &CancelToken,
-) -> Result<DupReport> {
-    let threads = if config.threads == 0 {
-        std::thread::available_parallelism().map_or(2, |n| n.get().saturating_sub(2).max(1))
-    } else {
-        config.threads
-    };
-    let pool = crate::pool::build("dupes-worker", threads)?;
-    tracing::info!(threads, "dupes: starting");
-    let mut run = Run {
-        pool,
-        conn: Index::open(index_path)?.into_connection(),
-        sink,
-        cancel,
-        stats: DupStats::default(),
-        issues: Vec::new(),
-    };
-
-    let mut recs = load_candidates(&run.conn)?;
+/// The exact tier. Reads (and caches hashes for) only files whose size is shared with another
+/// file. Cancelling returns `Err(Cancelled)`; hashes saved so far are kept for the next run.
+pub(super) fn run_exact(run: &mut Run<'_>, opts: DupOptions) -> Result<(Vec<DupGroup>, ExactOf)> {
+    let cancel = run.cancel;
+    let mut recs = load_recs(&run.conn, SAME_SIZE)?;
     cancel.check()?;
-    check_unchanged(&mut run, &mut recs);
-    collapse_hard_links(&mut run, &mut recs);
+    check_unchanged(run, &mut recs);
+    collapse_hard_links(run, &mut recs, true);
 
     // Stage 1: size.
     let mut cands = group_idx(&recs, |r| r.size);
@@ -145,7 +142,7 @@ fn find_exact_inner(
         .filter(|&i| opts.rehash || recs[i].partial.is_none())
         .collect();
     run.stats.cached_hashes += (cands.iter().map(Vec::len).sum::<usize>() - todo.len()) as u64;
-    hash_stage(&mut run, &mut recs, todo, Stage::Partial)?;
+    hash_stage(run, &mut recs, todo, Stage::Partial)?;
     let by_partial = group_by_key(&recs, cands.drain(..).flatten(), |r| {
         r.partial.map(|p| (r.size, p))
     });
@@ -158,31 +155,35 @@ fn find_exact_inner(
         .filter(|&i| opts.rehash || recs[i].full.is_none())
         .collect();
     run.stats.cached_hashes += (by_partial.iter().map(Vec::len).sum::<usize>() - todo.len()) as u64;
-    hash_stage(&mut run, &mut recs, todo, Stage::Full)?;
+    hash_stage(run, &mut recs, todo, Stage::Full)?;
     let by_full = group_by_key(&recs, by_partial.into_iter().flatten(), |r| r.full);
 
     let groups = build_groups(&run.conn, &recs, &by_full)?;
-    run.stats.groups = groups.len() as u64;
-    run.stats.potential_reclaim = groups.iter().map(DupGroup::potential_reclaim).sum();
-    Ok(DupReport {
-        groups,
-        stats: run.stats,
-        issues: run.issues,
-    })
+    let mut exact_of = ExactOf::new();
+    for (n, g) in groups.iter().enumerate() {
+        for f in g.members.iter().flat_map(|m| &m.files) {
+            exact_of.insert(f.id.0, n as u32);
+        }
+    }
+    Ok((groups, exact_of))
 }
 
 /// Rows with a size shared by at least two distinct files (two names for one inode do not count).
-fn load_candidates(conn: &Connection) -> Result<Vec<Rec>> {
-    let mut stmt = conn.prepare(
+const SAME_SIZE: &str = "f.size_bytes IN ( \
+    SELECT size_bytes FROM file WHERE is_cloud_only = 0 AND size_bytes > 0 \
+    GROUP BY size_bytes HAVING COUNT(DISTINCT device_id || ':' || inode) > 1)";
+
+/// Non-empty, not cloud-only files matching `filter` (SQL over `file f` and `meta m`).
+pub(super) fn load_recs(conn: &Connection, filter: &str) -> Result<Vec<Rec>> {
+    let mut stmt = conn.prepare(&format!(
         "SELECT f.id, f.full_path, f.size_bytes, f.modified_at_ns, f.device_id, f.inode, \
                 f.partial_hash, f.full_hash, f.media_kind, \
-                m.taken_at, m.width, m.height, m.duration_ms, m.bitrate, m.pair_id \
+                m.taken_at, m.width, m.height, m.duration_ms, m.bitrate, m.pair_id, \
+                COALESCE(m.camera_model, m.camera_make) \
          FROM file f LEFT JOIN meta m ON m.file_id = f.id \
-         WHERE f.is_cloud_only = 0 AND f.size_bytes > 0 AND f.size_bytes IN ( \
-             SELECT size_bytes FROM file WHERE is_cloud_only = 0 AND size_bytes > 0 \
-             GROUP BY size_bytes HAVING COUNT(DISTINCT device_id || ':' || inode) > 1) \
-         ORDER BY f.id",
-    )?;
+         WHERE f.is_cloud_only = 0 AND f.size_bytes > 0 AND {filter} \
+         ORDER BY f.id"
+    ))?;
     let blob = |r: &rusqlite::Row<'_>, i: usize| -> rusqlite::Result<Option<ContentHash>> {
         Ok(r.get::<_, Option<Vec<u8>>>(i)?
             .and_then(|b| ContentHash::from_blob(&b)))
@@ -213,6 +214,7 @@ fn load_candidates(conn: &Connection) -> Result<Vec<Rec>> {
             duration_ms: r.get(12)?,
             bitrate: r.get(13)?,
             pair_id: r.get(14)?,
+            camera: r.get(15)?,
             ok: true,
         })
     })?;
@@ -221,7 +223,7 @@ fn load_candidates(conn: &Connection) -> Result<Vec<Rec>> {
 
 /// Drops files that vanished or changed since the scan (a stale index must not decide what is
 /// a duplicate). Only `stat` is used; nothing is opened.
-fn check_unchanged(run: &mut Run<'_>, recs: &mut [Rec]) {
+pub(super) fn check_unchanged(run: &mut Run<'_>, recs: &mut [Rec]) {
     let verdicts: Vec<Option<(IssueKind, String)>> = run.pool.install(|| {
         recs.par_iter()
             .map(|r| match std::fs::symlink_metadata(&r.path) {
@@ -249,12 +251,16 @@ fn check_unchanged(run: &mut Run<'_>, recs: &mut [Rec]) {
 }
 
 /// Keeps the lowest id of each `(device, inode)`; the other names are not duplicates of it.
-fn collapse_hard_links(run: &mut Run<'_>, recs: &mut [Rec]) {
+/// `count` adds the dropped names to the statistics (only the exact tier does, so a name is
+/// counted once).
+pub(super) fn collapse_hard_links(run: &mut Run<'_>, recs: &mut [Rec], count: bool) {
     let mut seen: HashSet<(i64, i64)> = HashSet::new();
     for r in recs.iter_mut().filter(|r| r.ok) {
         if !seen.insert((r.dev, r.ino)) {
             r.ok = false;
-            run.stats.hardlinks_skipped += 1;
+            if count {
+                run.stats.hardlinks_skipped += 1;
+            }
         }
     }
 }
@@ -397,22 +403,10 @@ fn build_groups(conn: &Connection, recs: &[Rec], by_full: &[Vec<usize>]) -> Resu
         .map(|(i, r)| (r.id, i))
         .collect();
 
-    let dup_file = |r: &Rec| DupFile {
-        id: FileId(r.id),
-        path: r.path.clone(),
-        size: r.size,
-        mtime_ns: r.mtime_ns,
-        kind: r.kind,
-        taken_at: r.taken_at,
-        width: r.width,
-        height: r.height,
-        duration_ms: r.duration_ms,
-        bitrate: r.bitrate,
-        hash: r.full.unwrap_or(ContentHash([0; 32])),
-    };
+    let dup_file = Rec::dup_file;
 
     let mut seen: HashSet<Key> = HashSet::new();
-    let mut by_sig: HashMap<Vec<ContentHash>, Vec<DupItem>> = HashMap::new();
+    let mut by_sig: HashMap<Vec<Option<ContentHash>>, Vec<DupItem>> = HashMap::new();
     for &i in by_full.iter().flatten() {
         let r = &recs[i];
         let key = match r.pair_id {
@@ -448,7 +442,7 @@ fn build_groups(conn: &Connection, recs: &[Rec], by_full: &[Vec<usize>]) -> Resu
                 }
             }
         };
-        let sig: Vec<ContentHash> = item.files.iter().map(|f| f.hash).collect();
+        let sig: Vec<Option<ContentHash>> = item.files.iter().map(|f| f.hash).collect();
         by_sig.entry(sig).or_default().push(item);
     }
 
@@ -470,8 +464,5 @@ fn build_groups(conn: &Connection, recs: &[Rec], by_full: &[Vec<usize>]) -> Resu
                     .cmp(&b.members[0].primary().path)
             })
     });
-    for (n, g) in groups.iter_mut().enumerate() {
-        g.id = n as u32 + 1;
-    }
     Ok(groups)
 }

@@ -92,8 +92,12 @@ pub enum Msg {
     Enter,
     /// Space: mark / unmark the selected copy (Duplicates).
     Toggle,
-    /// `f`: look for duplicates.
+    /// `f`: look for duplicates (identical, likely and same-name copies).
     FindDupes,
+    /// `F`: the same, and also compare how pictures look (reads every picture once).
+    FindSimilar,
+    /// `v`: show all tiers / one tier at a time.
+    CycleTier,
     /// `p`: next keep rule, applied to every group.
     NextRule,
     /// `x`: keep every copy in the selected group.
@@ -140,8 +144,10 @@ pub enum Cmd {
         force: bool,
     },
     CancelScan,
-    /// Look for exact duplicates (reads files, changes none).
-    FindDupes,
+    /// Look for duplicates (reads files, changes none). `similar` also decodes pictures.
+    FindDupes {
+        similar: bool,
+    },
     CancelDupes,
     /// Hand the file to the OS to open with its default app. Never modifies it.
     OpenFile(PathBuf),
@@ -578,7 +584,7 @@ impl App {
         vec![]
     }
 
-    fn find_dupes(&mut self) -> Vec<Cmd> {
+    fn find_dupes(&mut self, similar: bool) -> Vec<Cmd> {
         if self.dupes.searching() {
             self.dirty = false;
             return vec![];
@@ -592,7 +598,7 @@ impl App {
             return vec![];
         }
         self.dupes.begin();
-        vec![Cmd::FindDupes]
+        vec![Cmd::FindDupes { similar }]
     }
 
     fn cancel_dupes(&mut self) -> Vec<Cmd> {
@@ -625,7 +631,15 @@ impl App {
             Msg::KeepAllInGroup => self.dupes.keep_all(),
             Msg::NextRule => {
                 self.dupes.next_preset();
-                let msg = format!("Keep rule: {}", self.dupes.preset_label());
+                let msg = format!(
+                    "Keep rule for identical copies: {}",
+                    self.dupes.preset_label()
+                );
+                self.say(msg);
+            }
+            Msg::CycleTier => {
+                self.dupes.cycle_filter();
+                let msg = format!("Showing: {}", self.dupes.filter_label());
                 self.say(msg);
             }
             _ => self.dirty = false,
@@ -878,6 +892,8 @@ impl App {
                 | Msg::StartFilter
                 | Msg::Toggle
                 | Msg::FindDupes
+                | Msg::FindSimilar
+                | Msg::CycleTier
                 | Msg::NextRule
                 | Msg::ReviewPlan
                 | Msg::UndoRun
@@ -1047,13 +1063,20 @@ impl App {
             | Msg::Enter
             | Msg::Toggle
             | Msg::NextRule
+            | Msg::CycleTier
             | Msg::KeepAllInGroup
                 if self.screen == Screen::Duplicates =>
             {
                 self.dupes_key(msg)
             }
-            Msg::FindDupes if self.screen == Screen::Duplicates => self.find_dupes(),
-            Msg::Toggle | Msg::FindDupes | Msg::NextRule | Msg::KeepAllInGroup => {
+            Msg::FindDupes if self.screen == Screen::Duplicates => self.find_dupes(false),
+            Msg::FindSimilar if self.screen == Screen::Duplicates => self.find_dupes(true),
+            Msg::Toggle
+            | Msg::FindDupes
+            | Msg::FindSimilar
+            | Msg::NextRule
+            | Msg::CycleTier
+            | Msg::KeepAllInGroup => {
                 self.dirty = false;
                 vec![]
             }
@@ -1298,7 +1321,23 @@ impl App {
             }
             Bg::DupesFinished(outcome) => {
                 match outcome {
-                    DupOutcome::Done(report) => self.dupes.finish(*report),
+                    DupOutcome::Done(report) => {
+                        let skipped = report.stats.pictures_unsupported;
+                        let looked = report.stats.pictures_hashed + report.stats.pictures_cached;
+                        self.dupes.finish(*report);
+                        let undecided = self.dupes.undecided();
+                        if looked > 0 && skipped > 0 {
+                            self.say(format!(
+                                "{} pictures are in a format that cannot be compared by look",
+                                crate::fmt::thousands(skipped)
+                            ));
+                        } else if undecided > 0 {
+                            self.say(format!(
+                                "{} groups are not identical copies: mark those yourself",
+                                crate::fmt::thousands(undecided as u64)
+                            ));
+                        }
+                    }
                     DupOutcome::Cancelled => self.dupes.cancelled(),
                     DupOutcome::Failed(e) => self.dupes.failed(e),
                 }

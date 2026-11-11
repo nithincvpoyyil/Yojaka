@@ -229,6 +229,9 @@ struct Item<'p> {
     path: &'p Path,
     expect: &'p Fingerprint,
     kept: &'p Path,
+    /// `Some` for a non-exact match: the kept copy is a different file, checked on its own.
+    kept_expect: Option<&'p Fingerprint>,
+    exact: bool,
     partner: Option<&'p Path>,
     permanent: bool,
 }
@@ -261,6 +264,8 @@ impl Runner<'_> {
                         path,
                         expect,
                         kept: &reason.kept,
+                        kept_expect: reason.kept_expect.as_ref(),
+                        exact: reason.tier.is_exact(),
                         partner: reason.partner.as_deref(),
                         permanent: matches!(op, Op::Delete { .. }),
                     });
@@ -514,6 +519,15 @@ impl Runner<'_> {
         check_file(it.path, it.expect, "this file")?;
         if it.kept == it.path {
             return Err("it is the copy that should be kept".into());
+        }
+        if !it.exact {
+            // A look-alike, not an identical copy: it cannot be compared with the removed file,
+            // so it must still be exactly the file the person reviewed.
+            let Some(expect) = it.kept_expect else {
+                return Err("the plan does not say what the copy to keep looked like".into());
+            };
+            let what = format!("the copy to keep ({})", it.kept.display());
+            return check_file(it.kept, expect, &what);
         }
         let kept = std::fs::symlink_metadata(it.kept)
             .map_err(|_| format!("the copy to keep ({}) is missing", it.kept.display()))?;

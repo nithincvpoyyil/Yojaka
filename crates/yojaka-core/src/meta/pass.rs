@@ -4,10 +4,8 @@
 //! Cloud-only (dataless) files are never opened. Files are opened with `O_NOFOLLOW`.
 //! Per-file failures are collected (`metadata_status='error'` + a `scan_error` row), never fatal.
 
-use std::fs::File;
 use std::io::BufReader;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -45,14 +43,52 @@ pub struct MetaSummary {
     pub elapsed_ms: u64,
 }
 
-/// Opens `path` without following symlinks and extracts with the right extractor.
+/// Opens `path` without following symlinks and extracts with the right extractor. A raw photo
+/// is read by macOS ImageIO first ([`super::raw`]), then by the EXIF reader if that fails.
 pub fn extract_path(path: &Path, format: Format, size: u64) -> Result<Meta, MetaError> {
-    let file = File::options()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
+    let file = crate::sys::macos::open_nofollow(path)?;
+    if format.is_raw() {
+        match super::raw::extract(&file, format) {
+            Ok(m) => return Ok(m),
+            Err(e) => tracing::debug!(
+                path = %path.display(),
+                "metadata: ImageIO could not read the raw file ({e}); trying the EXIF reader"
+            ),
+        }
+    }
     let info = super::FileInfo { size, format };
+    // The EXIF reader seeks to the start first, wherever ImageIO left the shared offset.
     extract(&mut BufReader::with_capacity(16 << 10, file), &info)
+}
+
+/// Raw photos read before ImageIO read their metadata (a Nikon NEF got its thumbnail's size;
+/// Fuji, Canon CR3 and Olympus files got nothing) are read again once, on the next scan. No
+/// scan from scratch is needed.
+fn refresh_raw(conn: &mut Connection) -> rusqlite::Result<u64> {
+    let version = super::raw::RAW_META_VERSION;
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta_kv WHERE key='raw_meta_version'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    if stored.as_deref() == Some(version) {
+        return Ok(0);
+    }
+    let tx = conn.transaction()?;
+    let again = tx.execute(
+        "UPDATE file SET metadata_status='pending' WHERE format LIKE 'raw-%' \
+         AND is_cloud_only=0 AND metadata_status IN ('ok','error','unsupported')",
+        [],
+    )?;
+    tx.execute(
+        "INSERT INTO meta_kv(key,value) VALUES('raw_meta_version',?1) \
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [version],
+    )?;
+    tx.commit()?;
+    Ok(again as u64)
 }
 
 enum Outcome {
@@ -140,6 +176,13 @@ pub fn run(
 ) -> Result<MetaSummary> {
     let started = Instant::now();
     let mut conn = Index::open(index_path)?.into_connection();
+    let raw_again = refresh_raw(&mut conn)?;
+    if raw_again > 0 {
+        tracing::info!(
+            files = raw_again,
+            "metadata: raw photos are read again (ImageIO)"
+        );
+    }
     let cloud_only = conn.execute(
         "UPDATE file SET metadata_status='cloud' WHERE metadata_status='pending' AND is_cloud_only=1",
         [],

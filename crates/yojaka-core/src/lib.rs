@@ -172,12 +172,14 @@ impl Engine {
         )
     }
 
-    /// Finds exact duplicates in an already scanned `root`. Reads only files that share a size
-    /// with another file, and saves their hashes in the index for next time. Changes no media file.
+    /// Finds duplicates in an already scanned `root`, in the tiers `opts` asks for. Reads only
+    /// files that share a size with another file (and, for the similar tier, pictures not looked
+    /// at before), and saves what it learns in the index for next time. Changes no media file.
     pub fn dupes(
         &self,
         root: &std::path::Path,
         local: bool,
+        opts: dupes::DupOptions,
         sink: &EventSink,
         cancel: &CancelToken,
     ) -> Result<dupes::DupReport> {
@@ -186,13 +188,7 @@ impl Engine {
         if !index.is_file() {
             return Err(YojakaError::NoIndex(root));
         }
-        dupes::find_exact(
-            &self.config,
-            dupes::DupOptions::default(),
-            &index,
-            sink,
-            cancel,
-        )
+        dupes::find(&self.config, opts, &index, sink, cancel)
     }
 
     /// Plans how to arrange the files of an already scanned `root` under `opts.dest`. Reads the

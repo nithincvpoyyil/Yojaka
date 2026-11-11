@@ -109,7 +109,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   | **Exact** | Same content hash (BLAKE3) | Bulk delete allowed |
   | **Likely** | Images: same EXIF date-taken + camera + dimensions, different bytes (for example re-saved or stripped copies). Videos: same creation date + duration (±1 s) + resolution (for example a re-exported or shared copy). | Manual review only |
   | **Name** | Normalized names match (`IMG_1234.jpg`, `IMG_1234 (1).jpg`, `IMG_1234 copy.jpg`) and sizes are within ±5% | Manual review only |
-  | **Similar** (later iteration, images only) | Perceptual hash distance ≤ threshold (resized or recompressed copies) | Manual review only |
+  | **Similar** (images only, opt-in) | Perceptual hash distance ≤ threshold and the same colours and shape (resized or recompressed copies). Every image format Yojaka knows: JPEG, PNG, GIF, WebP, TIFF, BMP, HEIC, AVIF and raw (DNG, CR2, CR3, NEF, ARW, RAF, ORF; compared through the camera's preview, so a raw matches the JPEG the camera saved with it). Pictures are turned upright first. | Manual review only |
 
 - **FR-31** **Keep rules** pick the copy to keep in each group. Rules can be chained, for example `prefer-path:~/Pictures` → `highest-resolution` → `oldest` → `shortest-path`. Available rules:
   - Oldest date taken.

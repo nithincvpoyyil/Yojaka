@@ -919,7 +919,8 @@ fn dfile(id: i64, path: &str, size: u64, mtime: i64, kind: MediaKind) -> DupFile
         height: None,
         duration_ms: None,
         bitrate: None,
-        hash: ContentHash([id as u8; 32]),
+        camera: None,
+        hash: Some(ContentHash([id as u8; 32])),
     }
 }
 
@@ -1053,7 +1054,7 @@ fn the_search_needs_a_scanned_folder_and_no_running_scan() {
 
     a.dashboard_stop_scan();
     let cmds = keys(&mut a, vec![Msg::FindDupes]);
-    assert!(matches!(cmds.as_slice(), [Cmd::FindDupes]));
+    assert!(matches!(cmds.as_slice(), [Cmd::FindDupes { .. }]));
     assert!(a.dupes.searching());
     // asking again while it runs does nothing
     assert!(keys(&mut a, vec![Msg::FindDupes]).is_empty());
@@ -1183,10 +1184,237 @@ fn marking_session() {
     // p cycles the rule and applies it to every group again.
     keys(&mut a, vec![Msg::NextRule]);
     assert_eq!(a.dupes.preset, 1);
-    assert!(a.notice.as_ref().unwrap().0.starts_with("Keep rule:"));
+    assert!(a.notice.as_ref().unwrap().0.starts_with("Keep rule"));
     for g in &a.dupes.groups {
         assert_eq!(g.delete_count(), g.members.len() - 1);
     }
+}
+
+/// A photo with the facts the comparison shows.
+fn shot(id: i64, path: &str, size: u64, pixels: (u32, u32), taken: i64) -> DupItem {
+    let mut f = dfile(id, path, size, 50, MediaKind::Image);
+    f.hash = None;
+    f.width = Some(pixels.0);
+    f.height = Some(pixels.1);
+    f.taken_at = Some(taken);
+    f.camera = Some("iPhone 15".into());
+    DupItem { files: vec![f] }
+}
+
+/// The exact groups of `report()` plus two likely groups and a name group.
+fn tiered_report() -> DupReport {
+    let mut r = report();
+    let taken = 1_700_000_000;
+    r.groups.push(DupGroup::new(
+        4,
+        Tier::Likely,
+        vec![
+            shot(
+                40,
+                "/photos/2023/Goa/IMG_0042.jpg",
+                3_800_000,
+                (4032, 3024),
+                taken,
+            ),
+            shot(
+                41,
+                "/photos/shared/IMG_0042_edited.jpg",
+                1_100_000,
+                (4032, 3024),
+                taken,
+            ),
+        ],
+    ));
+    r.groups.push(DupGroup::new(
+        5,
+        Tier::Likely,
+        vec![
+            shot(
+                42,
+                "/photos/a/burst_1.jpg",
+                2_000_000,
+                (4032, 3024),
+                taken + 9,
+            ),
+            shot(
+                43,
+                "/photos/a/burst_2.jpg",
+                2_100_000,
+                (4032, 3024),
+                taken + 9,
+            ),
+        ],
+    ));
+    r.groups.push(DupGroup::new(
+        6,
+        Tier::Name,
+        vec![
+            shot(
+                44,
+                "/photos/x/DSC_0001.jpg",
+                5_000_000,
+                (6000, 4000),
+                taken + 100,
+            ),
+            shot(
+                45,
+                "/photos/y/DSC_0001 (1).jpg",
+                5_100_000,
+                (6000, 4000),
+                taken + 9000,
+            ),
+        ],
+    ));
+    r
+}
+
+fn with_tiers(w: u16, h: u16) -> App {
+    let mut a = app_at(w, h);
+    a.dashboard_stats(stats());
+    a.screen = Screen::Duplicates;
+    a.dupes.begin();
+    a.update(Msg::Bg(Bg::DupesFinished(DupOutcome::Done(Box::new(
+        tiered_report(),
+    )))));
+    a
+}
+
+#[test]
+fn look_alike_groups_are_never_marked_by_a_rule() {
+    let mut a = with_tiers(80, 24);
+    assert!(
+        a.notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("3 groups are not identical")
+    );
+    assert_eq!(a.dupes.undecided(), 3);
+    let marks =
+        |a: &App| -> Vec<usize> { a.dupes.groups.iter().map(|g| g.delete_count()).collect() };
+    assert_eq!(marks(&a), [1, 1, 2, 0, 0, 0]);
+    // Every rule, twice round: still nothing marked outside the identical groups.
+    for _ in 0..crate::dupes::PRESETS.len() * 2 {
+        keys(&mut a, vec![Msg::NextRule]);
+        assert_eq!(marks(&a), [1, 1, 2, 0, 0, 0]);
+    }
+
+    // v shows one tier at a time, and the cursor stays inside what is shown.
+    keys(&mut a, vec![Msg::CycleTier]);
+    assert_eq!(a.dupes.filter, Some(Tier::Exact));
+    keys(&mut a, vec![Msg::CycleTier]);
+    assert_eq!(a.dupes.filter, Some(Tier::Likely));
+    assert_eq!(a.dupes.visible(), [3, 4]);
+    assert_eq!(a.dupes.current().unwrap().id, 4);
+    keys(&mut a, vec![Msg::Up, Msg::Up]);
+    assert_eq!(a.dupes.current().unwrap().id, 4);
+    keys(&mut a, vec![Msg::Bottom, Msg::Down]);
+    assert_eq!(a.dupes.current().unwrap().id, 5);
+
+    // Marking by hand, in the group under the cursor, works: keep the first burst shot.
+    keys(&mut a, vec![Msg::Enter, Msg::Enter]);
+    assert_eq!(a.dupes.groups[4].delete, [false, true]);
+    assert_eq!(a.dupes.undecided(), 2);
+    // A rule change leaves the hand-made mark alone.
+    keys(&mut a, vec![Msg::NextRule]);
+    assert_eq!(a.dupes.groups[4].delete, [false, true]);
+
+    keys(&mut a, vec![Msg::CycleTier]);
+    assert_eq!(a.dupes.filter, Some(Tier::Name));
+    assert_eq!(a.dupes.current().unwrap().id, 6);
+    keys(&mut a, vec![Msg::CycleTier]);
+    assert_eq!(a.dupes.filter, None);
+    assert_eq!(a.dupes.visible().len(), 6);
+}
+
+#[test]
+fn look_alike_groups_show_a_comparison() {
+    for (w, h) in SIZES {
+        let mut a = with_tiers(w, h);
+        keys(&mut a, vec![Msg::CycleTier, Msg::CycleTier]);
+        let screen = draw(&a, w, h);
+        assert!(screen.contains("3 exact · 2 likely · 1 name"), "{screen}");
+        assert!(screen.contains("showing likely"), "{screen}");
+        assert!(screen.contains("? review"), "{screen}");
+        // Both files, their sizes and what they share.
+        for fact in [
+            "3.8 MB",
+            "1.1 MB",
+            "4032×3024",
+            "2023-11-14 22:13",
+            "pixels",
+        ] {
+            assert!(screen.contains(fact), "{fact} missing:\n{screen}");
+        }
+        if w >= 100 {
+            assert!(screen.contains("iPhone 15"), "{screen}");
+        }
+        insta::assert_snapshot!(format!("duplicates_likely_{w}x{h}"), screen);
+
+        // After a decision the rows say keep / delete.
+        keys(&mut a, vec![Msg::Enter, Msg::Enter]);
+        let screen = draw(&a, w, h);
+        assert!(screen.contains("✓ keep") && screen.contains("✕ delete"));
+        assert!(!screen.contains("? review"));
+    }
+}
+
+#[test]
+fn reviewing_a_plan_with_look_alikes_says_so() {
+    let mut a = with_tiers(100, 30);
+    a.mode = Mode::Write;
+    // Only identical copies are marked: no warning.
+    keys(&mut a, vec![Msg::ReviewPlan]);
+    let screen = draw(&a, 100, 30);
+    assert!(screen.contains("Review"), "{screen}");
+    assert!(!screen.contains("not identical to the copy"), "{screen}");
+    keys(&mut a, vec![Msg::Back]);
+    assert!(a.modal.is_none());
+
+    // Mark one look-alike by hand: the review names it.
+    keys(
+        &mut a,
+        vec![Msg::CycleTier, Msg::CycleTier, Msg::Enter, Msg::Enter],
+    );
+    keys(&mut a, vec![Msg::ReviewPlan]);
+    let screen = draw(&a, 100, 30);
+    assert!(
+        screen.contains("1 of these are not identical to the copy that stays"),
+        "{screen}"
+    );
+}
+
+#[test]
+fn f_and_shift_f_ask_for_different_searches() {
+    let mut a = app_at(80, 24);
+    a.dashboard_stats(stats());
+    a.screen = Screen::Duplicates;
+    let cmds = keys(&mut a, vec![Msg::FindDupes]);
+    assert!(matches!(
+        cmds.as_slice(),
+        [Cmd::FindDupes { similar: false }]
+    ));
+    a.update(Msg::Bg(Bg::DupesFinished(DupOutcome::Cancelled)));
+    let cmds = keys(&mut a, vec![Msg::FindSimilar]);
+    assert!(matches!(
+        cmds.as_slice(),
+        [Cmd::FindDupes { similar: true }]
+    ));
+
+    // Pictures that cannot be compared by look are mentioned when the search ends.
+    let mut report = tiered_report();
+    report.stats.pictures_hashed = 900;
+    report.stats.pictures_unsupported = 120;
+    a.update(Msg::Bg(Bg::DupesFinished(DupOutcome::Done(Box::new(
+        report,
+    )))));
+    assert!(
+        a.notice
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("120 pictures are in a format that cannot be compared")
+    );
 }
 
 #[test]
@@ -1254,7 +1482,10 @@ fn nothing_the_duplicates_screen_does_asks_the_runtime_to_change_a_file() {
             Msg::FindDupes,
         ],
     );
-    assert!(cmds.iter().all(|c| matches!(c, Cmd::FindDupes)), "{cmds:?}");
+    assert!(
+        cmds.iter().all(|c| matches!(c, Cmd::FindDupes { .. })),
+        "{cmds:?}"
+    );
 }
 
 // ---- write mode, review, history -----------------------------------------------------------

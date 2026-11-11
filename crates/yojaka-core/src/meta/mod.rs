@@ -8,6 +8,7 @@ mod image;
 mod isobmff;
 mod matroska;
 mod pass;
+mod raw;
 mod time;
 
 pub mod exiftool;

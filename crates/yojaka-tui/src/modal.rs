@@ -209,6 +209,8 @@ mod tests {
                     group: 1,
                     kept: "/p/k.jpg".into(),
                     partner: None,
+                    tier: yojaka_core::dupes::Tier::Exact,
+                    kept_expect: None,
                 },
             });
         }

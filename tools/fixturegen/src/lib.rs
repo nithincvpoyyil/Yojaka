@@ -6,6 +6,7 @@
 //! - `outside/`: symlink targets that live outside the scan root
 
 mod exif_writer;
+pub mod pictures;
 mod rng;
 mod tree;
 pub mod video;

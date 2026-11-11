@@ -209,7 +209,7 @@ fn dupes_previews_and_saves_a_plan_without_touching_files() {
 }
 
 #[test]
-fn dupes_rejects_a_bad_keep_rule_and_unbuilt_tiers() {
+fn dupes_rejects_a_bad_keep_rule_and_a_bad_distance() {
     let tmp = tempfile::tempdir().unwrap();
     let tree = fixture(tmp.path());
     yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
@@ -220,11 +220,109 @@ fn dupes_rejects_a_bad_keep_rule_and_unbuilt_tiers() {
         .code(2)
         .stderr(predicate::str::contains("unknown keep rule"));
     yojaka(tmp.path())
+        .args(["dupes", "--similar", "--similar-distance", "40"])
+        .arg(&tree)
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn dupes_lists_look_alikes_for_review_and_plans_only_identical_copies() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("fx");
+    let spec = fixturegen::Spec {
+        files: 60,
+        variants: 18,
+        noise: 5,
+        ..Default::default()
+    };
+    fixturegen::generate(&spec, &out).unwrap();
+    let tree = out.join("tree");
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let before = tree_listing(&tree);
+
+    // The default is still the exact tier alone.
+    let exact = yojaka(tmp.path())
+        .args(["dupes", "--json"])
+        .arg(&tree)
+        .output()
+        .unwrap();
+    let exact: serde_json::Value = serde_json::from_slice(&exact.stdout).unwrap();
+    assert!(
+        exact["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|g| g["tier"] == "exact")
+    );
+
+    let plan = tmp.path().join("plan.json");
+    let run = yojaka(tmp.path())
+        .args([
+            "dupes",
+            "--tier",
+            "all",
+            "--similar",
+            "--json",
+            "--plan-out",
+        ])
+        .arg(&plan)
+        .arg(&tree)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&run.stdout).unwrap();
+    let groups = v["groups"].as_array().unwrap();
+    for tier in ["exact", "likely", "similar", "name"] {
+        assert!(
+            groups.iter().any(|g| g["tier"] == tier),
+            "no {tier} group in {:?}",
+            v["stats"]
+        );
+    }
+    let mut exact_marked = 0;
+    for g in groups {
+        let marked = g["delete"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d.as_bool().unwrap())
+            .count();
+        if g["tier"] == "exact" {
+            assert_eq!(g["needs_review"], false);
+            exact_marked += marked;
+        } else {
+            assert_eq!(g["needs_review"], true);
+            assert_eq!(marked, 0, "a look-alike group is never marked: {g}");
+        }
+    }
+    // The saved plan removes identical copies only.
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+    let ops = saved["ops"].as_array().unwrap();
+    assert_eq!(ops.len(), exact_marked);
+    assert!(ops.iter().all(|op| op["reason"].get("tier").is_none()));
+
+    // The text form says what to do with the rest.
+    yojaka(tmp.path())
         .args(["dupes", "--tier", "likely"])
         .arg(&tree)
         .assert()
-        .code(1)
-        .stderr(predicate::str::contains("not available yet"));
+        .success()
+        .stdout(predicate::str::contains(
+            "· likely · 2 files (same date, camera, pixels)",
+        ))
+        .stdout(predicate::str::contains("review  "))
+        .stdout(predicate::str::contains("need a look"))
+        .stdout(predicate::str::contains("  delete  ").not());
+    assert_eq!(
+        tree_listing(&tree),
+        before,
+        "dupes must not change the tree"
+    );
 }
 
 fn tree_listing(root: &std::path::Path) -> Vec<(String, u64)> {

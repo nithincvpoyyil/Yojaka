@@ -22,7 +22,8 @@ Items that are not part of the current iteration.
 
 ## Open
 
-See "Open items" in `docs/STATUS.md`. Next iteration: Iteration 5, safe execution (Trash, journal, undo).
+See "Open items" in `docs/STATUS.md`. Next iteration: Iteration 8, hardening and release.
+- [ ] Optional inline thumbnails on the Duplicates screen (`ratatui-image`).
 - [ ] Detailed dashboard (the user will describe it).
 - [ ] Select a place on the dashboard to filter the file browser.
 - [ ] Another theme (last iteration).

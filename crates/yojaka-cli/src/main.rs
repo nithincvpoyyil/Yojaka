@@ -155,6 +155,8 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
         Some(Cmd::Dupes {
             path,
             tier,
+            similar,
+            similar_distance,
             keep,
             plan_out,
             json,
@@ -163,6 +165,8 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
             cmd::dupes::Args {
                 path: path.as_deref(),
                 tier: *tier,
+                similar: *similar,
+                similar_distance: *similar_distance,
                 keep,
                 plan_out: plan_out.as_deref(),
                 json: *json,

@@ -1,13 +1,13 @@
 # Yojaka: project status and hand-off
 
-Last updated: 2026-11-09. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
+Last updated: 2026-11-11. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
 rules are in `CLAUDE.md`.
 
 **Scan walker (after I4), done 2026-11-09** (`all-specs/05-scan-walker-fix-plan.md`, ADR-0005): `dua-core`
 replaces jwalk, so folders over 50k entries no longer freeze the scan and memory is flat (1M entries: 51.9 s,
 25 MB; rescan 6.5 s). A root named like a skip-list entry is now scanned. Progress has a "Finishing up" state
 with no false "No progress" warning or stale ETA, and live statistics back off when slow. 251 tests pass.
-Committed. Iteration 5 was built the same day (below); Iteration 6 is next after sign-off.
+Committed. Iterations 5, 6 and 7 followed (below).
 
 ## Where we are
 
@@ -17,15 +17,16 @@ Committed. Iteration 5 was built the same day (below); Iteration 6 is next after
 | 1 | `scan`, per-folder saved data | Done |
 | 2 | Metadata, Live Photos, offline places, `info` / `places` / `export` | Done |
 | 3 | TUI: dashboard, file browser, help, scan control | Done |
-| 4 | Exact duplicates (hashing, `dupes`, Duplicates screen) | Done (not committed or tagged yet) |
-| 5 | Safe executor, History | **Built 2026-11-09, awaiting the user's manual sign-off on a real folder** (ADR-0006) |
-| 6 | Organize (templates, planner, copy/move, undo, screen, CLI) | **Built 2026-11-10, awaiting sign-off** (ADR-0007) |
-| 7 | More duplicate tiers | **Next** |
-| 8-10 | See the plan | Not started |
+| 4 | Exact duplicates (hashing, `dupes`, Duplicates screen) | Done (`1c698fc`) |
+| 5 | Safe executor, History | Committed (`79ea0b6`), **awaiting the user's manual sign-off on a real folder** (ADR-0006) |
+| 6 | Organize (templates, planner, copy/move, undo, screen, CLI) | Committed (`bb1e12e`), **awaiting sign-off** (ADR-0007) |
+| 7 | More duplicate tiers (likely, name, similar) | **Built 2026-11-10, not committed, awaiting sign-off** (ADR-0008) |
+| 8 | Hardening, performance, release v1.0 | **Next** |
+| 9-10 | See the plan | Not started |
 
 No git tags exist (`v0.1.0` .. `v0.3.0` not created). Everything up to the GeoNames attribution
-commit (`a1c39a9`) is on `origin/main`. Checks at the end of the session: 210 tests passed
-(1 skipped), `cargo fmt`, clippy `-D warnings` and `cargo deny` clean.
+commit (`a1c39a9`) is on `origin/main`; the Iteration 5 and 6 commits are local only. Checks at the
+end of the Iteration 7 session: see "Duplicate tiers" below.
 
 Full check: `source ~/.cargo/env && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo nextest run --workspace && cargo deny check`.
 New insta snapshots: run with `INSTA_UPDATE=always`, then read the `.snap`. The TUI snapshots under
@@ -45,7 +46,7 @@ automatically in `~/Library` (no user choice, no jargon).
 | `--local-index` | Hidden. For tests and tooling only: keeps the data inside the folder. |
 
 CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`, `export`, `doctor`.
-`dupes` (exact tier; see below), `plan show`, `apply`, `undo`, `history` (Iteration 5; see below). `organize` (Iteration 6; see below).
+`dupes` (all tiers; see below), `plan show`, `apply`, `undo`, `history` (Iteration 5; see below). `organize` (Iteration 6; see below).
 
 ### TUI keys (the `?` overlay is generated from `keymap.rs`)
 
@@ -59,7 +60,7 @@ CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`
 - Scan: `r` rescan (incremental), `R` scan from scratch (asks y/n), `c` or Esc cancel (keeps partial results).
 - Other: `?` help, `D` debug overlay (frame / fetch times), `q` quit, Ctrl-C stops the scan, then quits.
 
-### Duplicates (Iteration 4, exact tier only)
+### Duplicates: exact tier (Iteration 4)
 
 Finding copies never deletes anything: results are marks and a saved plan file. Running a plan is the executor below.
 
@@ -71,17 +72,66 @@ Finding copies never deletes anything: results are marks and a saved plan file. 
   (`IssueKind::Changed`) and left out. Cloud-only files and empty files are never considered.
 - A Live Photo pair is one item. A pair only matches another pair with the same image **and** video; a pair never
   matches a lone image. Toggling, rules and the plan always act on both halves.
-- `yojaka dupes PATH [--keep RULES] [--plan-out FILE] [--json]`. `--tier` accepts only `exact` (others: "not available
-  yet"). `--keep` chains rules, comma separated: `oldest-taken`, `oldest-modified`, `newest-modified`, `shortest-path`,
+- `yojaka dupes PATH [--keep RULES] [--plan-out FILE] [--json]` (tiers: next section). `--keep` chains rules, comma separated: `oldest-taken`, `oldest-modified`, `newest-modified`, `shortest-path`,
   `prefer-path:DIR`, `highest-resolution`, `longest-duration`, `highest-bitrate`. Default
   `oldest-modified,shortest-path`; the last tie-break is always the path bytes, then the file id. `--plan-out` never
   overwrites a file (exit 2).
-- TUI screen 3: `f` find, `j k` move, `Tab` groups / copies, `Space` mark, `Enter` keep only this copy (on a group:
+- TUI screen 3: `f` find (`F` with pictures, `v` tier filter: next section), `j k` move, `Tab` groups / copies, `Space` mark, `Enter` keep only this copy (on a group:
   open it), `p` next keep rule (applied to every group), `x` keep every copy in the group, `c` / Esc stop. The last
   unmarked copy of a group cannot be marked. A finished scan clears the results. A scan and a search cannot overlap.
   The search does not start by itself: it reads files, so it waits for `f`.
 - Help (`?`) now shows only the global keys plus the current screen's keys (the full list no longer fits 24 rows).
 - Measured: 20k-file fixture, 0.7 s, 58 MB read; the second run reads 0 B.
+
+### Duplicate tiers: likely, name, similar (Iteration 7, ADR-0008)
+
+Guesses, not identical files. **No rule marks them and the CLI never plans them**; in the app each group is
+marked by hand. Measured precision and recall: `docs/dupes-accuracy.md`.
+
+- `yojaka dupes PATH --tier exact|likely|name|similar|all [--similar] [--similar-distance BITS]`. Default `exact`.
+  `all` is exact + likely + name; `--similar` adds the picture comparison (opt-in: it decodes every picture once, then
+  remembers; every image format Yojaka knows, raw included). Non-exact groups print `review`; JSON has `tier` and `needs_review`.
+- **likely**: photos with the same EXIF date, camera model, width and height; videos with the same date, width and
+  height and lengths within 1 s. **name**: same kind and normalized name (NFC, lower case, no extension, no
+  ` (n)` / ` copy` / `-n` / `_n` suffix), sizes within 5%. **similar**: 64-bit difference hash within
+  `dupes.similar_distance` bits (default 6), same colour signature, same shape. Pictures are turned upright first
+  (EXIF orientation / HEIC rotation), so an iPhone portrait HEIC matches its upright JPEG copy.
+- HEIC, AVIF and raw (DNG, CR2, CR3, NEF, ARW, RAF, ORF) are decoded in process by macOS ImageIO
+  (`sys/imageio.rs`, the one module allowed `unsafe`; crates `objc2-image-io`, `objc2-core-graphics`), opened by
+  path and always told the file type (without it ImageIO misreads ARW and NEF as TIFF). The decoder comes from the
+  indexed format (`similar::decoder`). Not `sips` (not deprecated, but a process and a temp file per picture) and
+  not `libheif` (LGPL C library). Reasons and numbers: ADR-0008 "HEIC, AVIF and raw". A 12 MP HEIC takes 36 ms.
+- A raw photo is compared through the camera's preview inside it (12 to 29 ms, a few MB read), so it matches the
+  JPEG the camera saved with it; Apple's development of the raw is the fallback (slower, other colours). Measured
+  on 7 real CC0 raw files, one per format: all 7 RAW+JPEG pairs grouped (`docs/dupes-accuracy.md`). The saved size
+  of a raw is not used in the shape check (metadata bug, see open items).
+- The exact tier always runs first; files identical to each other count once in the other tiers. A group that a
+  stronger tier already shows is not repeated (order: exact, likely, similar, name). Candidates are `stat`ed; a
+  changed file is reported and left out. A Live Photo is one item, listed under its photo.
+- Core: `yojaka_core::dupes` (`find`, `DupOptions`, `tiers.rs`, `name.rs`, `similar.rs`); `Engine::dupes(root, local,
+  opts, sink, cancel)`. `DupGroup::apply_rules` does nothing to a non-exact group.
+- Plans: `DupRef.tier` and `DupRef.kept_expect`. For a non-exact removal the executor checks the kept copy against
+  its own size and date (it is a different file). `Plan::from_dupes` removes a file at most once and never removes
+  a file another group keeps. `Plan::lookalike_ops()` counts such removals; the Review box and `plan show` say so.
+- TUI screen 3: `f` searches exact + likely + name, `F` also pictures, `v` cycles the tier filter. Groups have a tier
+  badge; a non-exact group shows `? review` and a comparison table (size, pixels, taken, length, camera). `p` changes
+  the rule for exact groups only.
+- Index: new column `file.color_signature` (in `0002_scan_file.sql`, no new migration; bit 60 = the upright
+  picture is portrait). **Saved data from before 2026-11-10 needs `--force` before the similar tier works**; the
+  other tiers work on old data. `meta_kv.picture_look_version` (now `2`): when the code's `LOOK_VERSION` differs,
+  every saved picture hash is dropped once and made again (no `--force` needed).
+- `fixturegen --variants N` writes the look-alike sets and decoys; the manifest has `variant` and
+  `expected.same_content`.
+- Tests: `crates/yojaka-core/tests/dupe_tiers.rs` (16, one opt-in raw test), unit tests in `dupes/name.rs`,
+  `similar.rs`, `tiers.rs`, `sys/imageio.rs`, CLI `dupes_lists_look_alikes...`, TUI `look_alike_*`,
+  `reviewing_a_plan_with_look_alikes_says_so`. End of session (2026-11-11, after HEIC / AVIF / raw and raw
+  metadata): 371 tests passed (4 skipped); `cargo fmt`, clippy `-D warnings` and `cargo deny` clean. Release binary 9.2 MB.
+- Driven by hand in the real app (pty): find, filter, mark a likely group, review, apply to a scratch Trash, undo.
+- Not done: inline thumbnails (optional in the plan); similar videos; a measurement on real photos (real iPhone HEIC
+  especially); the BK-tree at 1M pictures. Opt-in raw test: `YOJAKA_RAW_SAMPLES=<dir of X.NEF + X.JPG>
+  cargo nextest run -p yojaka-core --run-ignored only -E 'test(raw_photos)'`.
+- Also fixed: `organize_exec::an_interrupted_move_resumes...` could wait forever (a race in the test, not in the
+  executor).
 
 ### Safe executor (Iteration 5, ADR-0006)
 
@@ -153,14 +203,25 @@ gitignored. Re-check before the first public release.
 
 ## Open items
 
-- **Iteration 5** is committed (`79ea0b6`); it still needs the user's own sign-off on a real folder. **Iteration 6** needs the same, and is not committed.
-- Iteration 4 is committed (`1c698fc`). Likely / name tiers are not built (the spec puts them in a later iteration).
+- **Iterations 5 and 6** are committed (`79ea0b6`, `bb1e12e`) but not pushed; **Iteration 7** is not committed. All
+  three still need the user's own sign-off on a real folder.
+- Similar tier: every image format is compared since 2026-11-10 (ImageIO for HEIC, AVIF, raw). Not measured on a
+  real photo library yet. Colours are not converted to one colour space, so a Display P3 photo and an sRGB copy can miss in strongly
+  coloured pictures.
+- Raw metadata **fixed 2026-11-11** (ADR-0002 addendum): read through ImageIO (`meta/raw.rs`), EXIF reader as
+  fallback. Before, Fuji RAF, Canon CR3 and Olympus ORF had no size, date, camera or place ("malformed metadata")
+  and a Nikon NEF had its thumbnail's size. Old saved data is fixed by the next scan (`meta_kv.raw_meta_version`),
+  no `--force`. Checked on the 7 samples and 210 files in parallel (0.34 s). The similar tier still ignores raw sizes.
+- The similar tier decodes JPEG / PNG etc. at full size (a 30 MP JPEG is about 90 MB; peak 500 MB seen with 7 at
+  once). ImageIO could shrink them while decoding, as for HEIC (would need a `LOOK_VERSION` bump).
+- The CLI `history` shows a different hour than the History screen for the same run (seen 2026-11-10: `11:26` and
+  `22:26`). Not looked into.
 - No TUI key writes a plan file yet (only `yojaka dupes --plan-out`).
   Add a `Screen` arm in `view::render` and a state struct like `browser.rs`.
 - Tag `v0.2.0` / `v0.3.0` (and `v0.1.0`) when the user wants.
-- Still missing real samples: iPhone Live Photo pair, iPhone HEVC MOV, Android MP4, RAW/DNG, GPS-tagged
-  photo. Those formats are tested with synthetic `fixturegen` files only.
-- `--infer-location` is not built (belongs to the organize iteration).
+- Still missing real samples: iPhone Live Photo pair, iPhone HEVC MOV, Android MP4, GPS-tagged photo. Those
+  formats are tested with synthetic `fixturegen` files only. Raw: 7 CC0 files from raw.pixls.us were tried
+  (listed in `docs/dupes-accuracy.md`; not kept in the repository).
 - Scan CPU optimization deferred by the user (numbers in `docs/perf.md`).
 - Open question: should a scan root that is itself a symlink be refused?
 - Slow at 1M rows: statistics about 4 s (own thread), text filter with few matches about 1.5 s. No mouse support.

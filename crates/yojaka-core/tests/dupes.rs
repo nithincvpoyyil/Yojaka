@@ -29,8 +29,14 @@ fn scan(e: &Engine, root: &Path, metadata: bool) {
 }
 
 fn dupes(e: &Engine, root: &Path) -> DupReport {
-    e.dupes(root, false, &EventSink::null(), &CancelToken::new())
-        .unwrap()
+    e.dupes(
+        root,
+        false,
+        Default::default(),
+        &EventSink::null(),
+        &CancelToken::new(),
+    )
+    .unwrap()
 }
 
 fn open_index(e: &Engine, root: &Path) -> yojaka_core::index::Index {
@@ -242,7 +248,13 @@ fn cancelling_stops_and_reports_cancelled() {
     let cancel = CancelToken::new();
     cancel.cancel();
     let err = e
-        .dupes(&tree, false, &EventSink::null(), &cancel)
+        .dupes(
+            &tree,
+            false,
+            Default::default(),
+            &EventSink::null(),
+            &cancel,
+        )
         .unwrap_err();
     assert!(matches!(err, YojakaError::Cancelled));
 }
@@ -254,7 +266,13 @@ fn dupes_before_a_scan_is_a_clear_error() {
     std::fs::create_dir_all(&dir).unwrap();
     let e = engine(&env);
     let err = e
-        .dupes(&dir, false, &EventSink::null(), &CancelToken::new())
+        .dupes(
+            &dir,
+            false,
+            Default::default(),
+            &EventSink::null(),
+            &CancelToken::new(),
+        )
         .unwrap_err();
     assert!(matches!(err, YojakaError::NoIndex(_)));
 }
@@ -368,7 +386,8 @@ fn file(id: i64, path: String, size: u64, kind: MediaKind) -> DupFile {
         height: None,
         duration_ms: None,
         bitrate: None,
-        hash: ContentHash([id as u8; 32]),
+        camera: None,
+        hash: Some(ContentHash([id as u8; 32])),
     }
 }
 

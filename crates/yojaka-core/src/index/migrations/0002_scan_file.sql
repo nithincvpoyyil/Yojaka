@@ -27,7 +27,8 @@ CREATE TABLE file (
   metadata_status TEXT NOT NULL DEFAULT 'pending',
   partial_hash BLOB,
   full_hash BLOB,
-  perceptual_hash INTEGER
+  perceptual_hash INTEGER,                 -- 64-bit difference hash of the picture (similar tier)
+  color_signature INTEGER                  -- average colour of the four quarters, bit 60: portrait (similar tier)
 );
 CREATE INDEX file_size ON file(size_bytes);
 CREATE INDEX file_full_hash ON file(full_hash);

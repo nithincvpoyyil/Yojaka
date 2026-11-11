@@ -163,7 +163,8 @@ mod tests {
                 height: None,
                 duration_ms: None,
                 bitrate: None,
-                hash: ContentHash([0; 32]),
+                camera: None,
+                hash: Some(ContentHash([0; 32])),
             }],
         }
     }

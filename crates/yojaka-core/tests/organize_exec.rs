@@ -300,14 +300,16 @@ fn an_interrupted_move_resumes_and_undo_still_restores_everything() {
             .unwrap()
         });
         // Cancel as soon as the first progress event arrives.
-        while let Ok(ev) = rx.recv() {
+        // The sink outlives the worker here, so the channel never closes: wait with a timeout,
+        // or a worker that finishes right after an event would leave this loop waiting forever.
+        while !h.is_finished() {
+            let Ok(ev) = rx.recv_timeout(std::time::Duration::from_millis(20)) else {
+                continue;
+            };
             if matches!(ev, yojaka_core::CoreEvent::Progress { done, .. } if done > 40)
                 && !stop.swap(true, Ordering::SeqCst)
             {
                 c2.cancel();
-            }
-            if h.is_finished() {
-                break;
             }
         }
         h.join().unwrap()

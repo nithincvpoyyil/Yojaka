@@ -145,6 +145,16 @@ fn review(f: &mut Frame, body: Rect, r: &Review) {
             p.summary.live_pairs
         )));
     }
+    let lookalikes = p.lookalike_ops();
+    if lookalikes > 0 {
+        v.push(Line::styled(
+            format!(
+                "{} of these are not identical to the copy that stays: you matched them by eye.",
+                fmt::thousands(lookalikes as u64)
+            ),
+            theme::error(),
+        ));
+    }
     for w in &p.warnings {
         v.push(Line::styled(
             format!("warning: {}", w.message),

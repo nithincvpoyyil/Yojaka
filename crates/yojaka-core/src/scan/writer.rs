@@ -49,7 +49,7 @@ modified_at_ns=excluded.modified_at_ns,status_changed_at_ns=excluded.status_chan
 created_at_ns=excluded.created_at_ns,device_id=excluded.device_id,inode=excluded.inode,\
 media_kind=excluded.media_kind,format=excluded.format,is_cloud_only=excluded.is_cloud_only,\
 last_seen_scan_id=excluded.last_seen_scan_id,metadata_status='pending',partial_hash=NULL,\
-full_hash=NULL,perceptual_hash=NULL";
+full_hash=NULL,perceptual_hash=NULL,color_signature=NULL";
 
 pub(crate) fn run(
     mut conn: Connection,

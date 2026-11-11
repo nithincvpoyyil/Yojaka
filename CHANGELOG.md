@@ -4,7 +4,26 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Added (Iteration 7: more duplicate tiers)
+- Three more kinds of duplicate, besides identical files. They are guesses, so they are only listed for review: no rule marks them and the command line never puts them in a plan.
+  - **likely**: photos with the same date taken, camera and size in pixels; videos with the same recorded date and size in pixels whose lengths differ by at most a second. Catches re-saved and re-exported copies.
+  - **name**: the same name apart from what copying adds (`IMG_1234 (1).jpg`, `IMG_1234 copy.jpg`, `IMG_1234-1.jpg`), with sizes within 5%.
+  - **similar** (photos, opt-in): pictures that look alike, such as resized or re-compressed copies. Reads every picture once (JPEG, PNG, GIF, WebP, TIFF, BMP, HEIC, AVIF and raw: DNG, CR2, CR3, NEF, ARW, RAF, ORF) and remembers the result. HEIC, AVIF and raw are decoded by macOS itself (ImageIO); a raw photo is compared through the camera's own preview inside it, so it matches the JPEG the camera saved with it, and only that preview is read (a few MB of the file). Pictures are turned upright first, so an iPhone portrait photo (stored sideways with a rotation flag) matches its upright copy.
+- `yojaka dupes --tier exact|likely|name|similar|all`, `--similar` and `--similar-distance BITS` (0 to 32, default 6; also `dupes.similar_distance` in the config). The default is still `exact`. Groups of the other tiers print `review` with each file's size, pixels, date and camera. JSON groups carry `tier` and `needs_review`.
+- Duplicates screen: `f` now looks for identical, likely and same-name copies; `F` also compares how pictures look. Each group has a tier badge and `v` shows one tier at a time. A group that is not identical shows `? review` and a comparison of its files (size, pixels, date, length, camera, differences highlighted); it is marked by hand with Space or Enter. `p` changes the rule for identical copies only.
+- The Review box says how many removals are not identical to the copy that stays.
+- `fixturegen --variants N`: look-alike sets (re-encoded, resized, stripped, renamed and re-exported copies, plus burst, name and length decoys) with the answers in the manifest.
+- `docs/dupes-accuracy.md`: precision and recall of each tier on the fixture.
+
+### Changed
+- A plan remembers the tier of each removal. For a removal that is not an identical copy, the kept file's own size and date are recorded and checked again before anything is moved to the Trash.
+- When two groups share a file, a plan removes it at most once and never removes a file another group keeps.
+- Saved data from before this version cannot hold what a picture looks like: the similar search asks for a scan from scratch (`--force`). Everything else works on old saved data.
+
+
 ### Fixed
+- Raw photos: Fuji RAF, Canon CR3 and Olympus ORF files got no metadata at all ("malformed metadata": no size, date, camera or place), and Nikon NEF files got the size of their small thumbnail (160×120). Raw files are now read by macOS itself (ImageIO), which gives the size Finder shows and reads only a few hundred KB of each file; the old EXIF reader is kept as a fallback. Raw files already scanned are read again on the next scan, once; no scan from scratch is needed.
+- The metadata pass and the picture comparison never follow a symlink that replaced a file after it was opened.
 - A scan could freeze for good when one folder held more than 50,000 entries (a camera dump, or `target/debug/deps` in a Rust project). The directory walker is now `dua-core`; memory stays flat.
 - A folder whose own name is on the skip list (`Library`, `node_modules`, `.git`, hidden names) was scanned as empty. The skip list now applies only inside the opened folder.
 

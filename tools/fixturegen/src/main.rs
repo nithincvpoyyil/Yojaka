@@ -50,6 +50,10 @@ struct Args {
     /// Live Photo pairs (JPEG + MOV) and decoys
     #[arg(long, default_value_t = 0)]
     live_photos: usize,
+    /// Look-alike sets for the likely, name and similar duplicate tiers (re-encoded, resized,
+    /// renamed copies and decoys)
+    #[arg(long, default_value_t = 0)]
+    variants: usize,
 }
 
 fn main() -> ExitCode {
@@ -71,6 +75,7 @@ fn main() -> ExitCode {
         noise: a.noise,
         videos: a.videos,
         live_photos: a.live_photos,
+        variants: a.variants,
     };
     match generate(&spec, &a.out_dir) {
         Ok(m) => {

@@ -9,6 +9,7 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 - `all-specs/03-iteration-plan.md`: iterations I0–I10, with acceptance criteria. **Work one iteration at a time.**
 - `all-specs/04-boilerplate-impl-plan.md`: step-by-step plan for the Iteration 0 skeleton (files, crates, code shapes, CI, done checklist)
 - `all-specs/05-scan-walker-fix-plan.md`: scan hang fix (jwalk → dua-core, honest progress). Done 2026-11-09 (ADR-0005).
+- `docs/STATUS.md`: where the work stands, keys, decisions and open items. Read it when resuming.
 
 ## Rules
 - **Safety first.** Never write to the user's files outside the Plan → Dry-run → Confirm → Execute (journaled) path. Read-only is the default. Delete means move to the Trash. Never overwrite a file.
@@ -16,6 +17,7 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 - Never log to stdout or stderr while the TUI is running. Use `tracing`, which writes to a file.
 - Per-file errors are collected, never fatal.
 - Never open iCloud dataless files. Skip `*.photoslibrary` bundles.
+- Only identical files (the exact tier) may be marked by a keep rule or planned from the CLI. Likely, similar and name groups are guesses: a person marks each group (ADR-0008).
 - Never split a Live Photo pair (HEIC/JPEG plus MOV). The two halves are always moved, copied or deleted together.
 - Never read a whole video for metadata. Seek to the `moov` box.
 - Location lookup is offline only (embedded GeoNames data). Coordinates never leave the machine, and GPS is left out of exports unless `--include-gps` is given.
