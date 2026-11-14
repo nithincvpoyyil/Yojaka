@@ -443,6 +443,13 @@ impl DiskImage {
             }
             left -= n as u64;
         }
+        if leave == 0 {
+            // A failed 4 MB write can leave a few MB unused (the CI runner showed this), so keep
+            // going with smaller writes until not even one block fits: the disk is really full.
+            for size in [256 * 1024, 4096] {
+                while f.write_all(&chunk[..size]).is_ok() {}
+            }
+        }
         let _ = f.sync_all();
         path
     }
