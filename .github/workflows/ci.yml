@@ -1,11 +1,12 @@
 name: ci
 on: { push: { branches: [main] }, pull_request: {} }
 concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
+env: { FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" }
 jobs:
   check:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.99.1", components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@v2
@@ -23,7 +24,7 @@ jobs:
   disk-image:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.99.1" }
       - uses: Swatinem/rust-cache@v2
