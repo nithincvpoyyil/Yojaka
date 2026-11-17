@@ -4,6 +4,20 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Added (Iteration 9, Phase 1A: Actions)
+- **Actions tab**, the new first tab (`1` Actions, `2` Dashboard … `6` History). Two ready-made jobs, each run as a column of steps like a CI pipeline, with a short description of what it does. **Organize into folders**: Scan → Summary (photos, videos, size, years, places) → Layout (Merge into one folder, By year, By year and month, By year and place, By place, By file format) → Destination and copy / move → Confirm → Run with a progress bar. **Remove duplicates**: Scan → Summary → Find identical → Keep which copy (oldest, shortest path, newest, largest picture) → Confirm → Run; identical files only, extra copies to the Trash. Scan, Summary and Find identical run by themselves; Esc goes back one step; Ctrl-C stops a run after the current file. A folder Yojaka has never scanned opens here and is scanned by itself; a scanned folder opens on the Dashboard. Plan: `all-specs/10-actions-plan.md` §10, ADR-0010.
+- **Identical files once.** Every action copies or moves files with the same bytes only once; the others stay where they are and the review says how many. On the command line: `yojaka organize --skip-identical`.
+- New organize presets: `year` (`{year}/{name}`), `year-place` (`{year}/{country}/{city}/{name}`), `merge` (`{kind}/{name}`: every photo in one folder, every video in another) and `format` (`{kind}/{format}/{name}`). They are also on the Organize screen.
+- **Delete the history.** `yojaka history delete` (asks; `--yes` skips the question) and `d` on the History screen (asks) delete the history of every finished run. Only Yojaka's own records go (the journal and the plan copy); no photo or video is touched and no write mode is needed. Unfinished runs are kept for `apply --resume`. The ids of deleted runs are kept in `journal/cleared-runs.txt`, so a plan that was run still cannot be applied again.
+
+### Changed (Iteration 9, Phase 1A)
+- `{format}` gives upper-case folder names (`HEIC`, `JPEG`, `MOV`).
+- Copying into the scanned folder (or a folder inside it) is refused, because the next scan would see every copy as a duplicate. Moving there is still allowed.
+
+### Fixed (Iteration 9, Phase 1A)
+- Organizing the same folder twice offered identical files again under a new ` (n)` name. A file is now skipped when its destination folder already holds the same bytes under any name.
+- Many files with the same name (a flat folder) are named ` (1)`, ` (2)` … in linear time instead of checking every earlier number again.
+
 ### Removed (Iteration 9)
 - **Undo.** `yojaka undo`, the History screen's `u` key and the core undo code are gone (ADR-0009). A move or a copy is the user's decision and is final; Yojaka warns about it before you confirm (`yojaka apply`, the review box, the write-mode question, History and the help overlay). Deduplicated files still go to the Trash, so they can be put back in Finder. History now lists only `applied` and `incomplete` runs.
 

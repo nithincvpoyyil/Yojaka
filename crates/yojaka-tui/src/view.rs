@@ -147,6 +147,7 @@ pub fn render(app: &App, f: &mut Frame) {
     );
 
     match app.screen {
+        Screen::Actions => screens::actions::render(app, f, body),
         Screen::Dashboard => screens::dashboard::render(app, f, body),
         Screen::Browser => screens::browser::render(app, f, body),
         Screen::Duplicates => screens::duplicates::render(app, f, body),
@@ -169,7 +170,7 @@ pub fn render(app: &App, f: &mut Frame) {
     f.render_widget(Paragraph::new(footer_line(app)), footer);
 }
 
-const SCREENS: [Screen; 5] = Screen::ALL;
+const SCREENS: [Screen; 6] = Screen::ALL;
 
 /// Height of the tab strip: top edge, labels, and the line the tabs stand on.
 const TAB_ROWS: u16 = 3;
@@ -316,6 +317,18 @@ fn footer_line(app: &App) -> Line<'static> {
                 ("a", "review"),
                 ("W", "write"),
             ],
+            Screen::Organize | Screen::Actions
+                if app
+                    .plan_state_of(app.screen)
+                    .is_some_and(|o| o.editing.is_some()) =>
+            {
+                vec![
+                    ("Enter", "keep"),
+                    ("Esc", "undo the edit"),
+                    ("Ctrl-U", "clear"),
+                ]
+            }
+            Screen::Actions => crate::screens::actions::footer(app),
             Screen::Organize if app.organize.editing.is_some() => vec![
                 ("Enter", "keep"),
                 ("Esc", "undo the edit"),
@@ -333,6 +346,7 @@ fn footer_line(app: &App) -> Line<'static> {
                 ("q", "quit"),
                 ("?", "help"),
                 ("j k", "move"),
+                ("d", "delete history"),
                 ("W", "write"),
                 ("< >", "tabs"),
             ],
@@ -350,7 +364,7 @@ fn footer_line(app: &App) -> Line<'static> {
             _ => vec![
                 ("q", "quit"),
                 ("?", "help"),
-                ("1-5 < >", "screens"),
+                ("1-6 < >", "screens"),
                 scan,
                 ("R", "from scratch"),
             ],

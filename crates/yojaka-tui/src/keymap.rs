@@ -10,8 +10,8 @@ pub const HELP: &[(&str, &str)] = &[
     ("q  Ctrl-C", "quit (Ctrl-C stops a running scan first)"),
     ("?  Esc", "open / close this help"),
     (
-        "1-5  < >",
-        "Dashboard, File browser, Duplicates, Organize, History",
+        "1-6  < >",
+        "Actions, Dashboard, File browser, Duplicates, Organize, History",
     ),
     (
         "Shift ← →",
@@ -25,6 +25,23 @@ pub const HELP: &[(&str, &str)] = &[
     ),
     ("W", "write mode on (asks first) / off"),
     ("D", "debug overlay: frame time, fetch time"),
+    ("", "Actions (nothing is written before you confirm)"),
+    ("j k  ↓ ↑", "choose a job, or a choice in the current step"),
+    ("Enter", "start the job; take the choice and go on"),
+    ("← →", "Destination step: copy / move"),
+    (
+        "Enter  Esc",
+        "while typing the folder: keep / undo the edit",
+    ),
+    (
+        "Esc",
+        "back one step (stops a scan or a search); on the list: pick a screen",
+    ),
+    (
+        "y",
+        "Confirm step: go ahead (a move or 50+ files: type the phrase)",
+    ),
+    ("Ctrl-C", "Run step: stop after the current file"),
     ("", "File browser"),
     ("Tab", "switch between folders and files"),
     (
@@ -82,6 +99,10 @@ pub const HELP: &[(&str, &str)] = &[
     ),
     ("", "History"),
     ("j k  ↓ ↑", "move"),
+    (
+        "d",
+        "delete the history of finished runs (asks first; no photo is touched)",
+    ),
     ("", "Yojaka has no undo: a move or a copy is final"),
 ];
 
@@ -159,11 +180,12 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('q') => Msg::Quit,
         KeyCode::Char('?') => Msg::ToggleHelp,
         KeyCode::Esc => Msg::Back,
-        KeyCode::Char('1') => Msg::Goto(Screen::Dashboard),
-        KeyCode::Char('2') => Msg::Goto(Screen::Browser),
-        KeyCode::Char('3') => Msg::Goto(Screen::Duplicates),
-        KeyCode::Char('4') => Msg::Goto(Screen::Organize),
-        KeyCode::Char('5') => Msg::Goto(Screen::History),
+        KeyCode::Char('1') => Msg::Goto(Screen::Actions),
+        KeyCode::Char('2') => Msg::Goto(Screen::Dashboard),
+        KeyCode::Char('3') => Msg::Goto(Screen::Browser),
+        KeyCode::Char('4') => Msg::Goto(Screen::Duplicates),
+        KeyCode::Char('5') => Msg::Goto(Screen::Organize),
+        KeyCode::Char('6') => Msg::Goto(Screen::History),
         KeyCode::Up | KeyCode::Char('k') => Msg::Up,
         KeyCode::Down | KeyCode::Char('j') => Msg::Down,
         KeyCode::Left | KeyCode::Char('h') => Msg::Left,
@@ -193,6 +215,7 @@ pub fn translate(key: KeyEvent, editing_filter: bool, confirming: bool) -> Optio
         KeyCode::Char('P') => Msg::SavePlan,
         KeyCode::Char('M') => Msg::Remember,
         KeyCode::Char('E') => Msg::ExportView,
+        KeyCode::Char('d') => Msg::ClearHistory,
         _ => return None,
     })
 }

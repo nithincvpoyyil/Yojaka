@@ -22,6 +22,16 @@ pub fn files(n: u64) -> String {
     }
 }
 
+/// `1 run`, `12 finished runs` (`adjective` may be empty).
+pub fn runs(n: usize, adjective: &str) -> String {
+    let noun = if n == 1 { "run" } else { "runs" };
+    if adjective.is_empty() {
+        format!("{} {noun}", thousands(n as u64))
+    } else {
+        format!("{} {adjective} {noun}", thousands(n as u64))
+    }
+}
+
 /// Decimal units, like the CLI: `1_500` → `1.5 KB`.
 pub fn bytes(n: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

@@ -90,6 +90,8 @@ pub enum Bg {
     Planned(Result<Box<yojaka_core::organize::OrganizePlan>, String>),
     /// The runs listed by the journals.
     History(Vec<yojaka_core::exec::RunSummary>),
+    /// The history of the finished runs was deleted (or could not be).
+    HistoryCleared(Result<yojaka_core::exec::ClearReport, String>),
     /// A short message for the footer (e.g. the OS could not open a file).
     Notice(String),
 }

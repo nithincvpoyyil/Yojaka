@@ -64,6 +64,8 @@ pub struct PlanRequest {
     pub template: Template,
     pub transfer: Transfer,
     pub infer: bool,
+    /// Copy or move identical files once (always on in Actions).
+    pub skip_identical: bool,
 }
 
 #[derive(Debug)]
@@ -74,6 +76,8 @@ pub struct OrganizeState {
     pub dest: String,
     pub transfer: Transfer,
     pub infer: bool,
+    /// Copy or move identical files once (the Actions tab always does).
+    pub skip_identical: bool,
     /// The selected row of the form (index into `ROWS`).
     pub cursor: usize,
     pub editing: Option<Editing>,
@@ -103,6 +107,7 @@ impl OrganizeState {
             dest,
             transfer: Transfer::Copy,
             infer: false,
+            skip_identical: false,
             cursor: 0,
             editing: None,
             backup: String::new(),
@@ -217,7 +222,16 @@ impl OrganizeState {
         self.invalidate();
     }
 
-    fn toggle_transfer(&mut self) {
+    /// Uses `template` (and forgets the plan) unless it is already the pattern.
+    pub fn set_template(&mut self, template: &str) {
+        if self.template != template {
+            self.template = template.to_string();
+            self.preset = PRESETS.iter().position(|(_, t)| *t == template);
+            self.invalidate();
+        }
+    }
+
+    pub fn toggle_transfer(&mut self) {
         self.transfer = match self.transfer {
             Transfer::Copy => Transfer::Move,
             Transfer::Move => Transfer::Copy,
@@ -298,6 +312,7 @@ impl OrganizeState {
             template,
             transfer: self.transfer,
             infer: self.infer,
+            skip_identical: self.skip_identical,
         })
     }
 

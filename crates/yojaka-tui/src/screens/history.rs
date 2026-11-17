@@ -1,4 +1,4 @@
-//! History: every plan that was run, newest first. `u` puts a run back.
+//! History: every plan that was run, newest first. `d` deletes the history of the finished runs.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -35,7 +35,7 @@ fn render_list(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(block, area);
     if h.runs.is_empty() {
         let msg = if h.loaded {
-            "Nothing has been run yet. Find duplicates (3), mark them, then press a to review."
+            "The history is empty. Find duplicates (4), mark them, then press a to review."
         } else {
             "Loading…"
         };

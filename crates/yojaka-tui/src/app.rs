@@ -4,10 +4,12 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use yojaka_core::exec::RunStatus;
 use yojaka_core::scan::{ScanStatus, ScanSummary};
 use yojaka_core::stats::Stats;
 use yojaka_core::{CoreEvent, TaskKind};
 
+use crate::actions::{ActionsState, DestRow, Step};
 use crate::browser::{BrowserState, Focus};
 use crate::dupes::{DupesState, Pane, Toggled};
 use crate::fmt;
@@ -16,8 +18,11 @@ use crate::modal::{self, Modal, Review, RunView};
 use crate::organize::{OrganizeState, Phase as OrgPhase, PlanRequest};
 use crate::worker::{Bg, DupOutcome, ExecOutcome, Request, Response};
 
+mod pipeline;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
+    Actions,
     Dashboard,
     Browser,
     Duplicates,
@@ -28,6 +33,7 @@ pub enum Screen {
 impl Screen {
     pub fn title(self) -> &'static str {
         match self {
+            Screen::Actions => "Actions",
             Screen::Dashboard => "Dashboard",
             Screen::Browser => "File browser",
             Screen::Duplicates => "Duplicates",
@@ -35,7 +41,8 @@ impl Screen {
             Screen::History => "History",
         }
     }
-    pub const ALL: [Screen; 5] = [
+    pub const ALL: [Screen; 6] = [
+        Screen::Actions,
         Screen::Dashboard,
         Screen::Browser,
         Screen::Duplicates,
@@ -113,6 +120,8 @@ pub enum Msg {
     ExportView,
     /// `M` (Duplicates, Organize): remember the current choices in the config file.
     Remember,
+    /// `d` (History): delete the history of every finished run (asks first; touches no photos).
+    ClearHistory,
     CycleKind,
     CycleSort,
     ReverseSort,
@@ -164,6 +173,8 @@ pub enum Cmd {
     ApplyPlan(Box<yojaka_core::plan::Plan>),
     CancelExec,
     LoadHistory,
+    /// Delete the history of every finished run (Yojaka's own records; no photo is touched).
+    ClearHistory,
 }
 
 /// Choices `M` writes to the config file.
@@ -356,6 +367,11 @@ pub struct App {
     pub dupes: DupesState,
     pub history: HistoryState,
     pub organize: OrganizeState,
+    pub actions: ActionsState,
+    /// Whose plan is being worked out (Organize or Actions). One at a time.
+    plan_owner: Option<Screen>,
+    /// Progress of the identical-files pass of the plan being worked out: (done, total).
+    pub plan_progress: Option<(u64, Option<u64>)>,
     /// The question, plan review or progress that has the keyboard.
     pub modal: Option<Modal>,
     pub debug: bool,
@@ -382,6 +398,9 @@ impl App {
             refresh_when_stale: false,
             auto_scan_tried: false,
             organize: OrganizeState::new(&root),
+            actions: ActionsState::new(&root),
+            plan_owner: None,
+            plan_progress: None,
             mode,
             root,
             should_quit: false,
@@ -541,10 +560,57 @@ impl App {
         self.notice = Some((msg, self.ticks + NOTICE_TICKS));
     }
 
-    /// ← → act inside the screen (the folder tree; the Organize choices) instead of changing it.
+    /// `d` on History: asks before deleting the history of the finished runs.
+    fn ask_clear_history(&mut self) {
+        let runs = &self.history.runs;
+        let unfinished = runs
+            .iter()
+            .filter(|r| r.status == RunStatus::Incomplete)
+            .count();
+        let finished = runs.len() - unfinished;
+        if finished > 0 {
+            self.modal = Some(Modal::ClearHistory {
+                finished,
+                unfinished,
+            });
+        } else if unfinished > 0 {
+            self.say(
+                "Nothing to delete: unfinished runs are kept for `yojaka apply <plan> --resume`"
+                    .into(),
+            );
+        } else {
+            self.say("The history is empty".into());
+        }
+    }
+
+    /// ← → act inside the screen (the folder tree; the Organize and Actions choices) instead of
+    /// changing it.
     fn arrows_stay_in_screen(&self) -> bool {
         (self.screen == Screen::Browser && self.browser.focus == Focus::Tree)
             || self.screen == Screen::Organize
+            || (self.screen == Screen::Actions && self.actions.going(Step::Destination))
+    }
+
+    /// The plan settings of `screen` (Organize, or the Actions tab's own).
+    fn plan_state(&mut self, screen: Screen) -> Option<&mut OrganizeState> {
+        match screen {
+            Screen::Organize => Some(&mut self.organize),
+            Screen::Actions => Some(&mut self.actions.org),
+            _ => None,
+        }
+    }
+
+    pub fn plan_state_of(&self, screen: Screen) -> Option<&OrganizeState> {
+        match screen {
+            Screen::Organize => Some(&self.organize),
+            Screen::Actions => Some(&self.actions.org),
+            _ => None,
+        }
+    }
+
+    /// A plan is being worked out (for Organize or Actions).
+    pub fn planning(&self) -> bool {
+        self.organize.phase == OrgPhase::Planning || self.actions.org.phase == OrgPhase::Planning
     }
 
     /// Why the Organize plan cannot be worked out right now, if it cannot.
@@ -565,25 +631,42 @@ impl App {
     /// The Organize preview follows the settings: work the plan out again whenever they change
     /// and nothing else is busy. Working it out only reads; it changes no file.
     fn follow_settings(&mut self) -> Option<Cmd> {
-        if self.organize.take_cancel() {
+        if self.organize.take_cancel() || self.actions.org.take_cancel() {
             return Some(Cmd::CancelPlan);
         }
-        if self.screen != Screen::Organize
-            || !self.organize.wants_plan()
+        let screen = self.screen;
+        if !matches!(screen, Screen::Organize | Screen::Actions)
             || self.modal.is_some()
             || self.confirm_flush
             || self.plan_blocker().is_some()
+            || self.planning()
         {
             return None;
         }
+        if screen == Screen::Actions && !self.actions.wants_plan() {
+            return None;
+        }
+        let st = self.plan_state(screen)?;
+        if !st.wants_plan() {
+            return None;
+        }
+        let req = st.request();
         self.dirty = true;
-        match self.organize.request() {
+        let st = self.plan_state(screen)?;
+        match req {
             Ok(req) => {
-                self.organize.phase = OrgPhase::Planning;
+                st.phase = OrgPhase::Planning;
+                self.plan_owner = Some(screen);
+                self.plan_progress = None;
                 Some(Cmd::PlanOrganize(Box::new(req)))
             }
             Err(e) => {
-                self.organize.problem = Some(e);
+                st.problem = Some(e.clone());
+                if screen == Screen::Actions
+                    && let Some(p) = &mut self.actions.pipeline
+                {
+                    p.fail(e);
+                }
                 None
             }
         }
@@ -601,7 +684,7 @@ impl App {
             self.say("Wait for the duplicate search, or press c to stop it".into());
             return vec![];
         }
-        if self.organize.phase == OrgPhase::Planning {
+        if self.planning() {
             self.say("Wait for the plan to finish, or press Esc to stop it".into());
             return vec![];
         }
@@ -719,7 +802,7 @@ impl App {
     }
 
     fn is_busy_writing(&self) -> bool {
-        matches!(self.modal, Some(Modal::Running(_)))
+        matches!(self.modal, Some(Modal::Running(_))) || self.actions.running()
     }
 
     /// `a`: review what the current screen would do. Asked again after write mode is turned on.
@@ -727,6 +810,11 @@ impl App {
         match self.screen {
             Screen::Duplicates => self.review_plan(),
             Screen::Organize => self.review_organize(),
+            // The Confirm step is the review: it is still on screen.
+            Screen::Actions => {
+                self.say("Write mode is on: confirm the step to run it".into());
+                vec![]
+            }
             _ => vec![],
         }
     }
@@ -762,17 +850,16 @@ impl App {
         vec![]
     }
 
-    /// `a` on the Organize screen: review the plan before anything is done.
+    /// `a` on the Organize screen (or "Review and run" on Actions): review the plan before
+    /// anything is done.
     fn review_organize(&mut self) -> Vec<Cmd> {
-        let Some(p) = self
-            .organize
-            .plan
-            .as_ref()
-            .filter(|_| self.organize.phase == OrgPhase::Ready)
-        else {
-            let why = if self.organize.problem.is_some() {
+        let Some(o) = self.plan_state_of(self.screen) else {
+            return vec![];
+        };
+        let Some(p) = o.plan.as_ref().filter(|_| o.phase == OrgPhase::Ready) else {
+            let why = if o.problem.is_some() {
                 "Fix the setting first"
-            } else if let OrgPhase::Failed(_) = self.organize.phase {
+            } else if let OrgPhase::Failed(_) = o.phase {
                 "There is no plan: the preview says why"
             } else {
                 self.plan_blocker()
@@ -859,6 +946,23 @@ impl App {
                 vec![]
             }
             Modal::Report(_) => vec![],
+            Modal::ClearHistory {
+                finished,
+                unfinished,
+            } => {
+                if yes || matches!(msg, Msg::Enter) {
+                    self.say("Deleting the history…".into());
+                    return vec![Cmd::ClearHistory];
+                }
+                if !no {
+                    self.modal = Some(Modal::ClearHistory {
+                        finished,
+                        unfinished,
+                    });
+                    self.dirty = false;
+                }
+                vec![]
+            }
             Modal::EnableWrite { then_review } => {
                 if yes || matches!(msg, Msg::Enter) {
                     self.mode = Mode::Write;
@@ -958,14 +1062,33 @@ impl App {
         {
             return self.modal_key(msg);
         }
-        if self.screen == Screen::Organize && self.organize.editing.is_some() {
+        let is_key = !matches!(msg, Msg::Core(_) | Msg::Bg(_) | Msg::Tick | Msg::Resize(..));
+        if is_key && self.actions.running() {
+            return self.running_key(&msg);
+        }
+        if self.pipeline_confirming()
+            && matches!(
+                msg,
+                Msg::Back | Msg::Enter | Msg::Char(_) | Msg::Backspace | Msg::Interrupt
+            )
+        {
+            return self.confirm_key(msg);
+        }
+        let screen = self.screen;
+        if let Some(o) = self.plan_state(screen).filter(|o| o.editing.is_some()) {
             // Keys go to the box; background news (a finished plan, scan progress) still counts.
             match msg {
-                Msg::Char(c) => self.organize.type_char(c),
-                Msg::Backspace => self.organize.backspace(),
-                Msg::ClearText => self.organize.clear_text(),
-                Msg::FilterAccept => self.organize.accept_edit(),
-                Msg::FilterCancel => self.organize.cancel_edit(),
+                Msg::Char(c) => o.type_char(c),
+                Msg::Backspace => o.backspace(),
+                Msg::ClearText => o.clear_text(),
+                Msg::FilterAccept => {
+                    o.accept_edit();
+                    // On to the copy / move row, where Enter goes on.
+                    if screen == Screen::Actions {
+                        self.actions.dest_row = DestRow::Transfer;
+                    }
+                }
+                Msg::FilterCancel => o.cancel_edit(),
                 Msg::Core(_) | Msg::Bg(_) | Msg::Tick | Msg::Resize(..) | Msg::Interrupt => {
                     return self.dispatch(msg);
                 }
@@ -1007,6 +1130,7 @@ impl App {
                 | Msg::SavePlan
                 | Msg::Remember
                 | Msg::ExportView
+                | Msg::ClearHistory
                 | Msg::KeepAllInGroup => {
                     self.dirty = false;
                     return vec![];
@@ -1040,15 +1164,20 @@ impl App {
                 } else if self.show_help {
                     self.show_help = false;
                     vec![]
+                } else if self.screen == Screen::Actions && self.actions.pipeline.is_some() {
+                    self.pipeline_back()
                 } else if self.screen == Screen::Browser && !self.browser.query.text.is_empty() {
                     self.browser.set_text(String::new())
                 } else if self.dupes.searching() {
                     self.cancel_dupes()
-                } else if self.organize.phase == OrgPhase::Planning {
+                } else if self.planning() {
                     vec![Cmd::CancelPlan]
                 } else if self.dashboard.scan.running {
                     self.cancel_scan()
-                } else if matches!(self.screen, Screen::Browser | Screen::Organize) {
+                } else if matches!(
+                    self.screen,
+                    Screen::Browser | Screen::Organize | Screen::Actions
+                ) {
                     // Nothing left to close, and ← → act inside these screens: hand them to the
                     // tabs.
                     self.tab_mode = true;
@@ -1135,6 +1264,19 @@ impl App {
                 self.organize_key(msg);
                 vec![]
             }
+            Msg::Up
+            | Msg::Down
+            | Msg::PageUp
+            | Msg::PageDown
+            | Msg::Top
+            | Msg::Bottom
+            | Msg::Left
+            | Msg::Right
+            | Msg::Enter
+                if self.screen == Screen::Actions =>
+            {
+                self.pipeline_key(msg)
+            }
             Msg::ReviewPlan if self.screen == Screen::Organize => self.review_organize(),
             Msg::ReviewPlan if self.screen == Screen::Duplicates => self.review_plan(),
             Msg::SavePlan if self.screen == Screen::Organize => self.save_organize_plan(),
@@ -1158,6 +1300,14 @@ impl App {
                 }
             }
             Msg::ReviewPlan | Msg::SavePlan | Msg::Remember | Msg::ExportView => {
+                self.dirty = false;
+                vec![]
+            }
+            Msg::ClearHistory if self.screen == Screen::History => {
+                self.ask_clear_history();
+                vec![]
+            }
+            Msg::ClearHistory => {
                 self.dirty = false;
                 vec![]
             }
@@ -1301,7 +1451,7 @@ impl App {
             self.notice = None;
         }
         if !self.dashboard.scan.running {
-            self.dirty = expired;
+            self.dirty = expired || self.pipeline_busy();
             return vec![];
         }
         // The spinner and the elapsed rate move even when no event arrives.
@@ -1318,11 +1468,16 @@ impl App {
                 task: TaskKind::Execute,
                 done,
                 total,
-                ..
+                bytes,
+                current,
             } => {
                 if let Some(Modal::Running(r)) = &mut self.modal {
                     r.done = *done;
                     r.total = *total;
+                } else {
+                    let (done, total, bytes) = (*done, *total, *bytes);
+                    let current = current.clone();
+                    self.pipeline_exec_progress(done, total, bytes, current.as_deref());
                 }
                 return vec![];
             }
@@ -1360,6 +1515,37 @@ impl App {
                 return vec![];
             }
             _ => {}
+        }
+        // A plan with identical files once compares files first (the duplicate search's events):
+        // that is the plan's progress, not the Duplicates screen's or the scan's.
+        if self.planning() && !self.dupes.searching() {
+            match &ev {
+                CoreEvent::Progress {
+                    task: TaskKind::Hash,
+                    done,
+                    total,
+                    ..
+                } => {
+                    self.plan_progress = Some((*done, *total));
+                    return vec![];
+                }
+                CoreEvent::TaskStarted {
+                    task: TaskKind::Hash,
+                    ..
+                } => {
+                    self.plan_progress = Some((0, None));
+                    return vec![];
+                }
+                CoreEvent::TaskFinished {
+                    task: TaskKind::Hash,
+                    ..
+                }
+                | CoreEvent::Issue(_) => {
+                    self.dirty = false;
+                    return vec![];
+                }
+                _ => {}
+            }
         }
         // The duplicate search has its own progress; it must not disturb the scan gauge.
         match &ev {
@@ -1433,66 +1619,112 @@ impl App {
                 s.phase = None;
                 match result {
                     Ok(sum) => {
-                        self.dupes.reset();
-                        self.organize.reset();
                         s.partial = sum.status == ScanStatus::Partial;
                         s.outcome = Some(outcome_line(&sum));
-                        self.reload_index()
+                        self.dupes.reset();
+                        self.organize.reset();
+                        self.actions.org.reset();
+                        let mut cmds = self.reload_index();
+                        cmds.extend(self.pipeline_on_scan(Ok(&sum)));
+                        cmds
                     }
                     Err(e) => {
+                        let cmds = self.pipeline_on_scan(Err(&e));
                         self.dashboard.error = Some(e);
-                        vec![]
+                        cmds
                     }
                 }
             }
             Bg::DupesFinished(outcome) => {
+                // A job's search: its step says what was found, not the footer.
+                let for_job = self.actions.going(Step::FindIdentical);
                 match outcome {
                     DupOutcome::Done(report) => {
                         let skipped = report.stats.pictures_unsupported;
                         let looked = report.stats.pictures_hashed + report.stats.pictures_cached;
                         self.dupes.finish(*report);
                         let undecided = self.dupes.undecided();
-                        if looked > 0 && skipped > 0 {
-                            self.say(format!(
+                        let note = if looked > 0 && skipped > 0 {
+                            Some(format!(
                                 "{} pictures are in a format that cannot be compared by look",
                                 crate::fmt::thousands(skipped)
-                            ));
+                            ))
                         } else if undecided > 0 {
-                            self.say(format!(
+                            Some(format!(
                                 "{} groups are not identical copies: mark those yourself",
                                 crate::fmt::thousands(undecided as u64)
-                            ));
+                            ))
+                        } else {
+                            None
+                        };
+                        if let Some(note) = note.filter(|_| !for_job) {
+                            self.say(note);
                         }
                     }
                     DupOutcome::Cancelled => self.dupes.cancelled(),
                     DupOutcome::Failed(e) => self.dupes.failed(e),
                 }
-                vec![]
+                self.pipeline_on_dupes()
             }
             Bg::Notice(m) => {
                 self.say(m);
                 vec![]
             }
             Bg::Planned(result) => {
-                self.organize.planned(result);
+                let owner = self.plan_owner.take().unwrap_or(Screen::Organize);
+                self.plan_progress = None;
+                if let Some(st) = self.plan_state(owner) {
+                    st.planned(result);
+                }
+                if owner == Screen::Actions {
+                    self.pipeline_on_planned();
+                }
                 vec![]
             }
             Bg::History(runs) => {
                 self.history.set(runs);
                 vec![]
             }
-            Bg::ExecFinished(outcome) => {
-                let lines = match outcome {
-                    ExecOutcome::Applied(r) => modal::apply_report(&r),
-                    ExecOutcome::Failed(e) => vec![modal::ReportLine {
-                        text: format!("Nothing more was changed: {e}"),
-                        bad: true,
-                    }],
+            Bg::HistoryCleared(result) => {
+                let msg = match result {
+                    Ok(r) => {
+                        let mut msg =
+                            format!("Deleted the history of {}", fmt::runs(r.removed, ""));
+                        if r.kept_incomplete > 0 {
+                            msg.push_str(&format!(
+                                "; kept {} unfinished (apply --resume)",
+                                r.kept_incomplete
+                            ));
+                        }
+                        if !r.failed.is_empty() {
+                            msg.push_str(&format!(
+                                "; {} could not be deleted (see the log)",
+                                r.failed.len()
+                            ));
+                        }
+                        msg
+                    }
+                    Err(e) => format!("Could not delete the history: {e}"),
                 };
-                self.modal = Some(Modal::Report(lines));
+                self.say(msg);
+                vec![Cmd::LoadHistory]
+            }
+            Bg::ExecFinished(outcome) => {
+                // A job shows the result in its Run step; otherwise the Report box.
+                if !self.pipeline_exec_finished(&outcome) {
+                    let lines = match outcome {
+                        ExecOutcome::Applied(r) => modal::apply_report(&r),
+                        ExecOutcome::Failed(e) => vec![modal::ReportLine {
+                            text: format!("Nothing more was changed: {e}"),
+                            bad: true,
+                        }],
+                    };
+                    self.modal = Some(Modal::Report(lines));
+                }
                 // The files on disk changed: what was found is stale, and so is the index.
                 self.dupes.reset();
                 self.organize.reset();
+                self.actions.org.reset();
                 let mut cmds = vec![Cmd::LoadHistory];
                 cmds.extend(self.start_scan());
                 cmds
@@ -1512,7 +1744,9 @@ impl App {
                 self.dashboard.no_index = false;
                 self.dashboard.error = None;
                 self.dashboard.stats = Some(st);
-                self.open_decision()
+                let mut cmds = self.open_decision();
+                cmds.extend(self.pipeline_on_stats());
+                cmds
             }
             Response::NoIndex => {
                 self.dashboard.stats_pending = false;

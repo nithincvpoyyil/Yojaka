@@ -486,6 +486,69 @@ fn history_lists_runs_newest_first_and_finds_by_prefix() {
     assert!(history::find(&lab.env.paths, "zzzz").is_err());
 }
 
+#[test]
+fn clearing_history_keeps_unfinished_runs_and_still_refuses_a_second_apply() {
+    let lab = Lab::new(3);
+    let before = tree_hash(&lab.root);
+
+    // An unfinished run: stopped before its first step.
+    let stopped = lab.plan();
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    apply(
+        &stopped,
+        &lab.env.paths,
+        &lab.trasher(),
+        ApplyOptions::default(),
+        &EventSink::null(),
+        &cancel,
+    )
+    .unwrap();
+    // A finished run.
+    let done = lab.plan();
+    lab.run(&done, ApplyOptions::default()).unwrap();
+    let after_run = tree_hash(&lab.root);
+    assert!(after_run.len() < before.len());
+    assert_eq!(history::list(&lab.env.paths).unwrap().len(), 2);
+
+    let r = history::clear(&lab.env.paths).unwrap();
+    assert_eq!((r.removed, r.kept_incomplete), (1, 1));
+    assert!(r.failed.is_empty(), "{r:?}");
+
+    let left = history::list(&lab.env.paths).unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(
+        (left[0].plan_id, left[0].status),
+        (stopped.id, RunStatus::Incomplete)
+    );
+    let journal_dir = lab.env.paths.journal_dir();
+    assert!(!journal_dir.join(format!("{}.jsonl", done.id)).exists());
+    assert!(!journal_dir.join(format!("{}.plan.json", done.id)).exists());
+    // Only Yojaka's records changed.
+    assert_eq!(tree_hash(&lab.root), after_run);
+
+    // The finished plan still cannot run again; the unfinished one can still be finished.
+    let again = lab.run(&done, ApplyOptions::default()).unwrap_err();
+    assert!(
+        again.to_string().contains("already been applied"),
+        "{again}"
+    );
+    lab.run(
+        &stopped,
+        ApplyOptions {
+            resume: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    // Clearing again removes the now finished run; an empty history is fine.
+    assert_eq!(history::clear(&lab.env.paths).unwrap().removed, 1);
+    let r = history::clear(&lab.env.paths).unwrap();
+    assert_eq!((r.removed, r.kept_incomplete), (0, 0));
+    assert!(history::list(&lab.env.paths).unwrap().is_empty());
+}
+
 /// Uses the real Trash, so it only runs on request:
 /// `cargo nextest run -p yojaka-core --run-ignored only -E 'test(real_trash)'`.
 /// It trashes one small temp file, then puts it back, leaving the Trash as it was.

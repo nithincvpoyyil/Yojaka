@@ -52,6 +52,8 @@ pub struct ApplyReport {
     pub created: usize,
     /// Organize: files left where they were because the same file was already at the destination.
     pub already_there: usize,
+    /// Organize: files left where they were because a file with the same bytes went instead.
+    pub identical: usize,
     /// Bytes freed (dedupe) or transferred (organize) by this run.
     pub bytes: u64,
     /// Ops finished by an earlier run (resume).

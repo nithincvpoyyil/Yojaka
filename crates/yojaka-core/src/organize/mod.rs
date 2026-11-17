@@ -4,7 +4,25 @@ pub mod planner;
 pub mod template;
 
 pub use planner::{OrganizeOptions, OrganizePlan, OrganizeStats, Transfer, plan};
-pub use template::{Facts, PRESETS, Rendered, Template, UNDATED_DIR, Where, Ymd};
+pub use template::{Facts, PRESETS, Rendered, Template, UNDATED_DIR, Where, Ymd, preset};
+
+/// Refuses to copy into the scanned folder or a folder inside it (FR-43a): the next scan would
+/// find every copy as a duplicate of its original. Moving there is allowed (tidying a folder in
+/// place). Both paths must be canonical (or, for a destination that does not exist yet, its
+/// nearest existing folder canonical and the rest as typed).
+pub fn check_dest_outside(
+    dest: &std::path::Path,
+    root: &std::path::Path,
+    transfer: Transfer,
+) -> crate::Result<()> {
+    if transfer == Transfer::Copy && dest.starts_with(root) {
+        return Err(crate::YojakaError::Refused(
+            "copies cannot go inside the scanned folder: choose a folder outside it, or move instead"
+                .into(),
+        ));
+    }
+    Ok(())
+}
 
 /// The folder pattern saved in `config.toml`. One that does not parse is ignored with a warning,
 /// so a bad saved setting never stops the app.

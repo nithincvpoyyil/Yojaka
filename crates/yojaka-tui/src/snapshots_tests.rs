@@ -381,7 +381,7 @@ mod saved_choices {
         assert_eq!(a.organize.preset_label(), "Place");
         let custom = {
             let mut b = app_at(100, 30);
-            b.use_config(&config(&[], "{year}/{name}", "copy"));
+            b.use_config(&config(&[], "{year}/{camera}/{name}", "copy"));
             b.organize.preset_label()
         };
         assert_eq!(custom, "Custom");
@@ -745,14 +745,24 @@ fn the_ui_state_survives_a_scan_finishing() {
 
 #[test]
 fn tab_bar_names_every_screen_and_marks_the_current_one() {
-    let mut a = app_at(80, 24);
+    let mut a = app_at(100, 30);
     a.update(Msg::Goto(Screen::Organize));
-    let out = draw(&a, 80, 24);
+    let out = draw(&a, 100, 30);
     let rows: Vec<&str> = out.lines().skip(1).take(3).collect();
-    for name in ["Dashboard", "File browser", "Duplicates", "History"] {
+    for name in [
+        "Actions",
+        "Dashboard",
+        "File browser",
+        "Duplicates",
+        "History",
+    ] {
         assert!(rows[1].contains(name), "{}", rows[1]);
     }
-    assert!(rows[1].contains("│ 4 Organize │"), "{}", rows[1]);
+    assert!(rows[1].contains("│ 5 Organize │"), "{}", rows[1]);
+    // At 80 columns the six names do not fit: numbers, plus the current screen's name.
+    let at80 = view::tab_bar(Screen::Actions, 80, false);
+    assert!(at80[1].to_string().contains("│ 1 Actions │"));
+    assert!(!at80[1].to_string().contains("Dashboard"));
     // the current tab is open at the bottom, the others stand on the line
     assert!(
         rows[2].contains('┘') && rows[2].contains('└'),
@@ -761,7 +771,7 @@ fn tab_bar_names_every_screen_and_marks_the_current_one() {
     );
     // narrow: numbers only, plus the name of the current screen
     let narrow = view::tab_bar(Screen::Duplicates, 50, false);
-    assert!(narrow[1].to_string().contains("│ 3 Duplicates │"));
+    assert!(narrow[1].to_string().contains("│ 4 Duplicates │"));
     assert!(!narrow[1].to_string().contains("Dashboard"));
     for line in &narrow {
         assert!(line.width() <= 50, "{line}");
@@ -829,12 +839,27 @@ fn angle_keys_and_arrows_walk_through_the_tabs() {
     assert_eq!(a.screen, Screen::Browser);
     a.update(Msg::PrevScreen);
     a.update(Msg::PrevScreen);
+    assert_eq!(a.screen, Screen::Actions);
+    a.update(Msg::PrevScreen);
     assert_eq!(a.screen, Screen::History, "wraps around");
-    // plain arrows switch tabs outside the Browser
-    a.update(Msg::Right);
-    assert_eq!(a.screen, Screen::Dashboard);
+    // plain arrows switch tabs outside the Browser (Organize, and the Actions Destination step,
+    // keep them)
+    a.update(Msg::Goto(Screen::Dashboard));
     a.update(Msg::Left);
-    assert_eq!(a.screen, Screen::History);
+    assert_eq!(a.screen, Screen::Actions);
+    a.update(Msg::Left);
+    assert_eq!(
+        a.screen,
+        Screen::History,
+        "the Actions list has no use for ← →"
+    );
+    a.update(Msg::Right);
+    assert_eq!(a.screen, Screen::Actions);
+    a.update(Msg::Goto(Screen::Dashboard));
+    a.update(Msg::Right);
+    assert_eq!(a.screen, Screen::Browser);
+    a.update(Msg::Left);
+    assert_eq!(a.screen, Screen::Dashboard);
     // the Browser's file table switches tabs too
     a.update(Msg::Goto(Screen::Browser));
     a.update(Msg::Right);
@@ -1822,6 +1847,91 @@ mod write_path {
     }
 
     #[test]
+    fn d_on_history_asks_then_deletes_the_finished_runs_and_reloads() {
+        let mut a = app_at(100, 40);
+        a.update(Msg::Goto(Screen::History));
+        a.update(Msg::Bg(Bg::History(vec![
+            run_summary(10, RunStatus::Applied),
+            run_summary(7, RunStatus::Applied),
+            run_summary(4, RunStatus::Incomplete),
+        ])));
+        assert!(draw(&a, 100, 40).contains("d delete history"));
+
+        // Esc cancels and nothing is asked of the runtime.
+        assert!(a.update(Msg::ClearHistory).is_empty());
+        assert!(matches!(
+            a.modal,
+            Some(Modal::ClearHistory {
+                finished: 2,
+                unfinished: 1
+            })
+        ));
+        let out = draw(&a, 100, 40);
+        assert!(
+            out.contains("Delete the history of 2 finished runs?"),
+            "{out}"
+        );
+        assert!(out.contains("no photo or video is touched"), "{out}");
+        assert!(out.contains("Kept: 1 unfinished run"), "{out}");
+        assert!(a.update(Msg::Back).is_empty());
+        assert!(a.modal.is_none());
+
+        // Other keys leave the question open; y deletes.
+        a.update(Msg::ClearHistory);
+        assert!(a.update(Msg::Char('x')).is_empty());
+        assert!(a.modal.is_some());
+        let cmds = a.update(Msg::Char('y'));
+        assert!(matches!(&cmds[..], [Cmd::ClearHistory]));
+        assert!(a.modal.is_none());
+
+        let report = yojaka_core::exec::ClearReport {
+            removed: 2,
+            kept_incomplete: 1,
+            failed: vec![],
+        };
+        let cmds = a.update(Msg::Bg(Bg::HistoryCleared(Ok(report))));
+        assert!(matches!(&cmds[..], [Cmd::LoadHistory]));
+        let out = draw(&a, 100, 40);
+        assert!(out.contains("Deleted the history of 2 runs"), "{out}");
+        assert!(out.contains("kept 1 unfinished"), "{out}");
+    }
+
+    #[test]
+    fn d_with_nothing_finished_says_so_instead_of_asking() {
+        let mut a = app_at(100, 40);
+        a.update(Msg::Goto(Screen::History));
+        a.update(Msg::Bg(Bg::History(vec![])));
+        assert!(a.update(Msg::ClearHistory).is_empty());
+        assert!(a.modal.is_none());
+        assert!(draw(&a, 100, 40).contains("The history is empty"));
+
+        a.update(Msg::Bg(Bg::History(vec![run_summary(
+            4,
+            RunStatus::Incomplete,
+        )])));
+        a.update(Msg::ClearHistory);
+        assert!(a.modal.is_none());
+        assert!(draw(&a, 100, 40).contains("unfinished runs are kept"));
+
+        // Off the History screen, d does nothing.
+        a.update(Msg::Bg(Bg::History(vec![run_summary(
+            4,
+            RunStatus::Applied,
+        )])));
+        a.update(Msg::Goto(Screen::Dashboard));
+        assert!(a.update(Msg::ClearHistory).is_empty());
+        assert!(a.modal.is_none());
+    }
+
+    #[test]
+    fn a_failed_history_delete_is_reported() {
+        let mut a = app_at(100, 40);
+        a.screen = Screen::History;
+        a.update(Msg::Bg(Bg::HistoryCleared(Err("disk gone".into()))));
+        assert!(draw(&a, 100, 40).contains("Could not delete the history: disk gone"));
+    }
+
+    #[test]
     fn the_new_screens_and_boxes_render_at_every_small_size() {
         for (w, h) in [(20, 6), (40, 12), (60, 16), (80, 24), (120, 40)] {
             let mut a = with_dupes(w, h);
@@ -1829,6 +1939,11 @@ mod write_path {
             a.update(Msg::ReviewPlan);
             let _ = draw(&a, w, h);
             a.modal = Some(Modal::EnableWrite { then_review: true });
+            let _ = draw(&a, w, h);
+            a.modal = Some(Modal::ClearHistory {
+                finished: 3,
+                unfinished: 1,
+            });
             let _ = draw(&a, w, h);
             a.modal = Some(Modal::Report(vec![crate::modal::ReportLine {
                 text: "a very long line ".repeat(10),
@@ -1992,9 +2107,9 @@ mod organize_screen {
 
         a.update(Msg::Enter);
         a.update(Msg::ClearText);
-        type_text(&mut a, "{year}/{name}");
+        type_text(&mut a, "{year}/{camera}/{name}");
         a.update(Msg::FilterAccept);
-        assert_eq!(a.organize.template, "{year}/{name}");
+        assert_eq!(a.organize.template, "{year}/{camera}/{name}");
         assert_eq!(a.organize.preset_label(), "Custom");
     }
 
@@ -2226,5 +2341,625 @@ mod organize_screen {
             select(&mut a, Row::NoGps);
             let _ = draw(&a, w, h);
         }
+    }
+}
+
+mod actions_screen {
+    use yojaka_core::exec::ApplyReport;
+    use yojaka_core::model::Fingerprint;
+    use yojaka_core::organize::{OrganizePlan, OrganizeStats, Transfer};
+    use yojaka_core::plan::{Op, OpMode, Plan, PlanKind};
+    use yojaka_core::scan::{ScanStatus, ScanSummary};
+
+    use super::*;
+    use crate::actions::{DestRow, Job, Step};
+    use crate::modal::Modal;
+    use crate::worker::{Bg, ExecOutcome};
+
+    fn actions_app(w: u16, h: u16) -> App {
+        let mut a = app_at(w, h);
+        a.dashboard_stats(stats());
+        a.screen = Screen::Actions;
+        a
+    }
+
+    fn summary(status: ScanStatus) -> ScanSummary {
+        ScanSummary {
+            scan_id: 2,
+            status,
+            files_seen: 14_210,
+            files_indexed: 12_871,
+            new_or_changed: 1_204,
+            unchanged: 11_667,
+            pruned: 0,
+            cloud_only: 0,
+            bytes: 0,
+            issues: 0,
+            permission_denied: 0,
+            elapsed_ms: 6_000,
+            metadata: None,
+        }
+    }
+
+    /// An organize plan: `n` copies or moves into Photos/ and Videos/, 3 identical files left out.
+    fn organize_plan(n: usize, mode: OpMode) -> Box<OrganizePlan> {
+        let mut p = Plan::from_dupes(Path::new("/photos"), &[]);
+        p.kind = PlanKind::Organize;
+        p.mode = mode;
+        p.dest = Some("/out".into());
+        for i in 0..n {
+            let (dir, ext) = if i % 4 == 3 {
+                ("Videos", "mov")
+            } else {
+                ("Photos", "jpg")
+            };
+            let (id, src) = (
+                i as u64,
+                PathBuf::from(format!("/photos/{i}/IMG_{i}.{ext}")),
+            );
+            let dst = PathBuf::from(format!("/out/{dir}/IMG_{i}.{ext}"));
+            let expect = Fingerprint {
+                size: 1000,
+                mtime_ns: 0,
+                hash: None,
+            };
+            p.ops.push(if mode == OpMode::Move {
+                Op::Move {
+                    id,
+                    src,
+                    dst,
+                    expect,
+                    inferred: false,
+                    pair: None,
+                }
+            } else {
+                Op::Copy {
+                    id,
+                    src,
+                    dst,
+                    expect,
+                    inferred: false,
+                    pair: None,
+                }
+            });
+        }
+        p.summary.bytes = 1000 * n as u64;
+        p.summary.identical = 3;
+        p.summary.identical_bytes = 3000;
+        p.summary.skipped = 3;
+        Box::new(OrganizePlan {
+            plan: p,
+            stats: OrganizeStats {
+                files: n + 3,
+                with_place: 0,
+                inferred: 0,
+            },
+        })
+    }
+
+    fn step(a: &App) -> Option<Step> {
+        a.actions.step()
+    }
+
+    /// Starts the highlighted job: its scan begins.
+    fn start(a: &mut App, job: Job) -> Vec<Cmd> {
+        a.actions.cursor = if job == Job::Organize { 0 } else { 1 };
+        a.update(Msg::Enter)
+    }
+
+    /// The scan ends and the new statistics arrive: Scan and Summary are done.
+    fn scan_done(a: &mut App) -> Vec<Cmd> {
+        let mut cmds = a.update(Msg::Bg(Bg::ScanFinished(Ok(summary(ScanStatus::Complete)))));
+        cmds.extend(a.update(Msg::Bg(Bg::Worker(Response::Stats(Box::new(stats()))))));
+        cmds
+    }
+
+    /// Organize up to its Confirm step with `plan` ready.
+    fn organize_at_confirm(a: &mut App, plan: Box<OrganizePlan>) {
+        start(a, Job::Organize);
+        scan_done(a);
+        a.update(Msg::Enter); // layout: Merge
+        a.update(Msg::Down); // the copy / move row
+        let cmds = a.update(Msg::Enter); // on to Confirm, which works out the plan
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::PlanOrganize(_))));
+        a.update(Msg::Bg(Bg::Planned(Ok(plan))));
+        assert!(a.actions.review.is_some());
+    }
+
+    /// Remove duplicates up to its Keep step, with `report` found.
+    fn dupes_at_keep(a: &mut App, report: DupReport) {
+        start(a, Job::Dupes);
+        let cmds = scan_done(a);
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Cmd::FindDupes { similar: false })),
+            "Find identical starts by itself"
+        );
+        a.update(Msg::Bg(Bg::DupesFinished(DupOutcome::Done(Box::new(
+            report,
+        )))));
+    }
+
+    fn exec_progress(done: u64) -> Msg {
+        Msg::Core(CoreEvent::Progress {
+            task: TaskKind::Execute,
+            done,
+            total: Some(40),
+            bytes: done * 1000,
+            current: Some(format!("/photos/{done}/IMG_{done}.jpg").into()),
+        })
+    }
+
+    #[test]
+    fn the_list_and_every_step_at_both_sizes() {
+        for (w, h) in SIZES {
+            let snap = |name: &str, a: &App| {
+                let out = draw(a, w, h);
+                insta::assert_snapshot!(format!("actions_{name}_{w}x{h}"), out);
+            };
+
+            let a = actions_app(w, h);
+            let out = draw(&a, w, h);
+            for text in [
+                "Organize into folders",
+                "Remove duplicates",
+                "Nothing changes until you",
+                "Look-alikes are left for the Duplicates tab",
+            ] {
+                assert!(out.contains(text), "{text}: {out}");
+            }
+            snap("list", &a);
+
+            let mut a = actions_app(w, h);
+            start(&mut a, Job::Organize);
+            a.update(Msg::Core(CoreEvent::Progress {
+                task: TaskKind::Scan,
+                done: 4_210,
+                total: None,
+                bytes: 0,
+                current: None,
+            }));
+            assert!(draw(&a, w, h).contains("finding files… 4,210 so far"));
+            scan_done(&mut a);
+            let out = draw(&a, w, h);
+            for text in [
+                "✔ Scan",
+                "12,871 files · 1,204 new or changed",
+                "12,480 photos · 391 videos · 144.4 GB · 2019 – 2023",
+                "how should the files be arranged?",
+                "▶ Merge into one folder",
+                "Identical files are copied once.",
+                "○ Destination",
+            ] {
+                assert!(out.contains(text), "{text}: {out}");
+            }
+            snap("layout", &a);
+
+            a.update(Msg::Enter);
+            let out = draw(&a, w, h);
+            assert!(out.contains("Merge into one folder   Photos/"), "{out}");
+            assert!(out.contains("Yojaka Organized"), "{out}");
+            snap("destination", &a);
+
+            let mut a = actions_app(w, h);
+            a.mode = Mode::Write;
+            organize_at_confirm(&mut a, organize_plan(40, OpMode::Copy));
+            let out = draw(&a, w, h);
+            for text in [
+                "check what will happen, then confirm",
+                "Copy 40 files (40.0 KB) to /out",
+                "3 identical files (3.0 KB) stay where they are",
+                "no undo",
+                "y / Enter  copy",
+            ] {
+                assert!(out.contains(text), "{text}: {out}");
+            }
+            snap("confirm", &a);
+
+            a.update(Msg::Char('y'));
+            a.update(exec_progress(17));
+            let out = draw(&a, w, h);
+            assert!(out.contains("copying… 17 of 40"), "{out}");
+            assert!(out.contains("IMG_17.jpg"), "{out}");
+            assert!(out.contains("Ctrl-C stops after this file"), "{out}");
+            snap("run", &a);
+
+            let report = ApplyReport {
+                copied: 40,
+                created: 2,
+                bytes: 40_000,
+                identical: 3,
+                ..Default::default()
+            };
+            a.update(Msg::Bg(Bg::ExecFinished(ExecOutcome::Applied(Box::new(
+                report,
+            )))));
+            assert!(
+                a.modal.is_none(),
+                "the Run step shows the result, not a box"
+            );
+            let out = draw(&a, w, h);
+            assert!(
+                out.contains("40 files copied · 2 folders made · 40.0 KB"),
+                "{out}"
+            );
+            assert!(out.contains("Enter  back to the list"), "{out}");
+            snap("done", &a);
+
+            let mut a = actions_app(w, h);
+            dupes_at_keep(&mut a, report_with_lookalike());
+            let out = draw(&a, w, h);
+            assert!(
+                out.contains("3 groups · 4 extra copies · 106.4 MB"),
+                "{out}"
+            );
+            assert!(out.contains("▶ The oldest"), "{out}");
+            snap("keep", &a);
+
+            let mut a = actions_app(w, h);
+            start(&mut a, Job::Organize);
+            scan_done(&mut a);
+            a.update(Msg::Enter);
+            a.update(Msg::Down);
+            a.update(Msg::Enter);
+            let _ = a.update(Msg::Tick);
+            a.update(Msg::Bg(Bg::Planned(Err(
+                "copies cannot go inside the scanned folder".into(),
+            ))));
+            let out = draw(&a, w, h);
+            assert!(out.contains("✖ Confirm"), "{out}");
+            assert!(
+                out.contains("could not plan: copies cannot go inside"),
+                "{out}"
+            );
+            snap("failed", &a);
+        }
+    }
+
+    #[test]
+    fn every_step_renders_at_small_sizes() {
+        for (w, h) in [(20, 6), (40, 12), (60, 16), (80, 20)] {
+            let mut a = actions_app(w, h);
+            let _ = draw(&a, w, h);
+            a.mode = Mode::Write;
+            start(&mut a, Job::Organize);
+            let _ = draw(&a, w, h);
+            scan_done(&mut a);
+            let _ = draw(&a, w, h);
+            a.update(Msg::Enter);
+            let _ = draw(&a, w, h);
+            a.update(Msg::Down);
+            a.update(Msg::Enter);
+            let _ = a.update(Msg::Tick);
+            a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(400, OpMode::Copy)))));
+            let out = draw(&a, w, h);
+            if h >= 16 {
+                assert!(
+                    out.contains("y / Enter"),
+                    "the answer stays on screen: {out}"
+                );
+            }
+            a.update(Msg::Char('y'));
+            a.update(exec_progress(3));
+            let _ = draw(&a, w, h);
+        }
+    }
+
+    #[test]
+    fn organize_goes_step_by_step_and_plans_identical_files_once() {
+        let mut a = actions_app(100, 30);
+        let cmds = start(&mut a, Job::Organize);
+        assert!(matches!(&cmds[..], [Cmd::StartScan { force: false }]));
+        assert_eq!(step(&a), Some(Step::Scan));
+        let cmds = scan_done(&mut a);
+        assert!(!cmds.iter().any(|c| matches!(c, Cmd::PlanOrganize(_))));
+        assert_eq!(step(&a), Some(Step::Layout), "Summary is done by itself");
+
+        // Layout: By year and place.
+        keys(&mut a, vec![Msg::Down, Msg::Down, Msg::Down]);
+        a.update(Msg::Enter);
+        assert_eq!(step(&a), Some(Step::Destination));
+        assert_eq!(a.actions.org.template, "{year}/{country}/{city}/{name}");
+
+        // Destination: type a folder; Enter keeps it and goes to copy / move.
+        a.update(Msg::Enter);
+        a.update(Msg::ClearText);
+        for c in "/elsewhere".chars() {
+            a.update(Msg::Char(c));
+        }
+        a.update(Msg::FilterAccept);
+        assert_eq!(a.actions.dest_row, DestRow::Transfer);
+        a.update(Msg::Right);
+        assert_eq!(a.actions.org.transfer, Transfer::Move);
+        assert_eq!(a.screen, Screen::Actions, "← → stay on the step");
+        assert!(a.update(Msg::Tick).is_empty(), "no plan before Confirm");
+        let req = a
+            .update(Msg::Enter)
+            .into_iter()
+            .find_map(|c| match c {
+                Cmd::PlanOrganize(r) => Some(*r),
+                _ => None,
+            })
+            .expect("Confirm works out the plan");
+        assert_eq!(step(&a), Some(Step::Confirm));
+        assert_eq!(req.template.source(), "{year}/{country}/{city}/{name}");
+        assert_eq!(req.dest, PathBuf::from("/elsewhere"));
+        assert_eq!(req.transfer, Transfer::Move);
+        assert!(req.skip_identical && !req.infer);
+        assert!(draw(&a, 100, 30).contains("working out the plan"));
+        a.update(Msg::Bg(Bg::Planned(Ok(organize_plan(8, OpMode::Move)))));
+        assert!(a.organize.plan.is_none(), "not the Organize screen's plan");
+
+        // Read-only: y asks for write mode first; the step stays.
+        assert!(a.pipeline_confirming());
+        a.update(Msg::Char('y'));
+        assert!(matches!(
+            a.modal,
+            Some(Modal::EnableWrite { then_review: true })
+        ));
+        a.update(Msg::Char('y'));
+        assert_eq!(a.mode, Mode::Write);
+        assert!(a.modal.is_none());
+        assert_eq!(step(&a), Some(Step::Confirm));
+
+        // A move needs its phrase typed; y is just a letter then.
+        assert!(a.update(Msg::Char('y')).is_empty());
+        a.update(Msg::Backspace);
+        assert!(a.update(Msg::Enter).is_empty(), "not typed yet");
+        for c in "move 8 files".chars() {
+            a.update(Msg::Char(c));
+        }
+        let cmds = a.update(Msg::Enter);
+        let Some(Cmd::ApplyPlan(plan)) = cmds.first() else {
+            panic!("runs the plan: {cmds:?}")
+        };
+        assert_eq!(plan.mode, OpMode::Move);
+        assert_eq!(step(&a), Some(Step::Run));
+        assert!(
+            a.modal.is_none(),
+            "no Running box: the step is the progress"
+        );
+    }
+
+    #[test]
+    fn esc_goes_back_one_step_and_stops_what_runs() {
+        // During the scan: stop it, back to the list.
+        let mut a = actions_app(100, 30);
+        start(&mut a, Job::Organize);
+        let cmds = a.update(Msg::Back);
+        assert!(matches!(&cmds[..], [Cmd::CancelScan]));
+        assert!(a.actions.pipeline.is_none());
+
+        // From the first choice: back to the list.
+        let mut a = actions_app(100, 30);
+        start(&mut a, Job::Organize);
+        scan_done(&mut a);
+        a.update(Msg::Back);
+        assert!(a.actions.pipeline.is_none());
+
+        // From Confirm while planning: back to Destination, and the plan is stopped.
+        let mut a = actions_app(100, 30);
+        start(&mut a, Job::Organize);
+        scan_done(&mut a);
+        keys(&mut a, vec![Msg::Down, Msg::Enter, Msg::Down, Msg::Enter]);
+        assert!(a.planning());
+        let cmds = a.update(Msg::Back);
+        assert!(
+            cmds.iter().any(|c| matches!(c, Cmd::CancelPlan)),
+            "{cmds:?}"
+        );
+        assert_eq!(step(&a), Some(Step::Destination));
+        let p = a.actions.pipeline.as_ref().unwrap();
+        assert_eq!(
+            p.results[2][0], "By year   2022/IMG_0001.heic",
+            "the layout stays"
+        );
+        a.update(Msg::Back);
+        assert_eq!(step(&a), Some(Step::Layout));
+        assert_eq!(a.actions.layout, 1, "the choice stays highlighted");
+
+        // From Confirm with the plan shown: Esc works while keys are text.
+        let mut a = actions_app(100, 30);
+        organize_at_confirm(&mut a, organize_plan(8, OpMode::Copy));
+        a.update(Msg::Back);
+        assert_eq!(step(&a), Some(Step::Destination));
+        assert!(a.actions.review.is_none());
+    }
+
+    /// The test report plus a look-alike group someone marked by hand on the Duplicates tab.
+    fn report_with_lookalike() -> DupReport {
+        let mut r = report();
+        let mut g = DupGroup::new(
+            9,
+            Tier::Likely,
+            vec![
+                single(40, "/photos/x/IMG_9.jpg", 1_000_000, 1),
+                single(41, "/photos/y/IMG_9.jpg", 1_200_000, 2),
+            ],
+        );
+        g.delete[1] = true;
+        r.groups.push(g);
+        r
+    }
+
+    #[test]
+    fn remove_duplicates_plans_only_identical_files_with_the_chosen_copy_kept() {
+        let mut a = actions_app(100, 30);
+        a.mode = Mode::Write;
+        dupes_at_keep(&mut a, report_with_lookalike());
+        assert_eq!(step(&a), Some(Step::Keep));
+        assert!(a.notice.is_none(), "the step says what was found");
+        // The newest copy stays.
+        keys(&mut a, vec![Msg::Down, Msg::Down]);
+        a.update(Msg::Enter);
+        assert_eq!(step(&a), Some(Step::Confirm));
+        let plan = &a.actions.review.as_ref().unwrap().plan;
+        let trashed: Vec<&Path> = plan
+            .ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::Trash { path, .. } => Some(path.as_path()),
+                _ => None,
+            })
+            .collect();
+        assert!(trashed.contains(&Path::new("/photos/2023/Goa/IMG_0001.jpg")));
+        assert!(!trashed.contains(&Path::new("/photos/backup/old/IMG_0001 copy.jpg")));
+        assert!(
+            !trashed.iter().any(|p| p.starts_with("/photos/y")),
+            "the look-alike marked by hand is not part of it"
+        );
+        // The Duplicates tab keeps its own marks (the oldest stays there).
+        let g1 = a.dupes.groups.iter().find(|g| g.id == 1).unwrap();
+        assert_eq!(g1.keeper(), Some(0));
+
+        let out = draw(&a, 100, 30);
+        assert!(out.contains("one copy of each stays: the newest"), "{out}");
+        assert!(
+            out.contains("to the Trash, keeping one copy of each of 3 groups"),
+            "{out}"
+        );
+        let cmds = a.update(Msg::Char('y'));
+        let Some(Cmd::ApplyPlan(plan)) = cmds.first() else {
+            panic!("runs the plan: {cmds:?}")
+        };
+        assert!(plan.ops.iter().all(|o| matches!(o, Op::Trash { .. })));
+    }
+
+    #[test]
+    fn nothing_identical_ends_the_job_early() {
+        let mut a = actions_app(100, 30);
+        dupes_at_keep(
+            &mut a,
+            DupReport {
+                groups: vec![],
+                stats: DupStats::default(),
+                issues: vec![],
+            },
+        );
+        let p = a.actions.pipeline.as_ref().unwrap();
+        assert!(p.finished);
+        let out = draw(&a, 100, 30);
+        assert!(
+            out.contains("no two files are identical: nothing to remove"),
+            "{out}"
+        );
+        a.update(Msg::Enter);
+        assert!(a.actions.pipeline.is_none(), "Enter: back to the list");
+    }
+
+    #[test]
+    fn run_shows_progress_and_only_ctrl_c_does_anything() {
+        let mut a = actions_app(100, 30);
+        a.mode = Mode::Write;
+        organize_at_confirm(&mut a, organize_plan(40, OpMode::Copy));
+        a.update(Msg::Enter);
+        assert!(a.actions.running());
+        a.update(exec_progress(10));
+        assert_eq!(a.actions.pipeline.as_ref().unwrap().run.done, 10);
+        a.update(Msg::Quit);
+        assert!(!a.should_quit, "q waits while files are copied");
+        a.update(Msg::Goto(Screen::Dashboard));
+        assert_eq!(a.screen, Screen::Actions);
+        a.update(Msg::ToggleWrite);
+        assert_eq!(a.mode, Mode::Write);
+        let cmds = a.update(Msg::Interrupt);
+        assert!(matches!(&cmds[..], [Cmd::CancelExec]));
+        assert!(a.update(Msg::Interrupt).is_empty(), "asked once");
+        let report = ApplyReport {
+            copied: 10,
+            cancelled: true,
+            ..Default::default()
+        };
+        let cmds = a.update(Msg::Bg(Bg::ExecFinished(ExecOutcome::Applied(Box::new(
+            report,
+        )))));
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::LoadHistory)));
+        assert!(cmds.iter().any(|c| matches!(c, Cmd::StartScan { .. })));
+        assert!(!a.actions.running());
+        let out = draw(&a, 100, 30);
+        assert!(out.contains("10 files copied · 0 folders made"), "{out}");
+        assert!(out.contains("stopped early"), "{out}");
+        assert!(out.contains("Stopped early. Run `yojaka apply"), "{out}");
+        // The rescan after the run does not disturb the finished job.
+        a.update(Msg::Bg(Bg::ScanFinished(Ok(summary(ScanStatus::Complete)))));
+        assert!(a.actions.pipeline.is_some());
+        a.update(Msg::Back);
+        assert!(a.actions.pipeline.is_none());
+    }
+
+    #[test]
+    fn a_failed_run_is_final_and_says_so() {
+        let mut a = actions_app(100, 30);
+        a.mode = Mode::Write;
+        organize_at_confirm(&mut a, organize_plan(4, OpMode::Copy));
+        a.update(Msg::Char('y'));
+        a.update(Msg::Bg(Bg::ExecFinished(ExecOutcome::Failed(
+            "plan was already applied".into(),
+        ))));
+        let p = a.actions.pipeline.as_ref().unwrap();
+        assert!(p.finished && p.failed.is_some());
+        assert!(draw(&a, 100, 30).contains("Nothing more was changed: plan was already applied"));
+    }
+
+    #[test]
+    fn a_stopped_scan_fails_the_step_and_another_scan_restarts_the_job() {
+        let mut a = actions_app(100, 30);
+        start(&mut a, Job::Organize);
+        a.update(Msg::Bg(Bg::ScanFinished(Ok(summary(ScanStatus::Partial)))));
+        let out = draw(&a, 100, 30);
+        assert!(out.contains("✖ Scan"), "{out}");
+        assert!(out.contains("the scan was stopped before the end"), "{out}");
+        a.update(Msg::Back);
+        assert!(a.actions.pipeline.is_none());
+
+        let mut a = actions_app(100, 30);
+        start(&mut a, Job::Organize);
+        scan_done(&mut a);
+        // `r` from another tab: what the job found is stale.
+        a.update(Msg::Bg(Bg::ScanFinished(Ok(summary(ScanStatus::Complete)))));
+        assert!(a.actions.pipeline.is_none());
+        assert!(draw(&a, 100, 30).contains("start the job again"));
+    }
+
+    #[test]
+    fn a_job_follows_the_scan_already_running() {
+        let mut a = app_at(100, 30);
+        a.screen = Screen::Actions;
+        a.update(Msg::Bg(Bg::Worker(Response::NoIndex)));
+        assert!(
+            a.dashboard.scan.running,
+            "a new folder is scanned by itself"
+        );
+        assert!(draw(&a, 100, 30).contains("a job you start now follows the scan"));
+        let cmds = start(&mut a, Job::Dupes);
+        assert!(cmds.is_empty(), "no second scan");
+        assert_eq!(step(&a), Some(Step::Scan));
+    }
+
+    #[test]
+    fn help_and_keys_for_the_tab() {
+        let lines = crate::screens::help::lines_for(Screen::Actions);
+        assert!(
+            lines
+                .iter()
+                .any(|(k, d)| k.is_empty() && d.starts_with("Actions"))
+        );
+        assert!(lines.iter().any(|(k, _)| *k == "Ctrl-C"));
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let one = crate::keymap::translate(
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+            false,
+            false,
+        );
+        assert!(matches!(one, Some(Msg::Goto(Screen::Actions))));
+        let six = crate::keymap::translate(
+            KeyEvent::new(KeyCode::Char('6'), KeyModifiers::NONE),
+            false,
+            false,
+        );
+        assert!(matches!(six, Some(Msg::Goto(Screen::History))));
+        let a = actions_app(100, 30);
+        let footer = draw(&a, 100, 30).lines().last().unwrap().to_string();
+        assert!(footer.contains("Enter start"), "{footer}");
     }
 }

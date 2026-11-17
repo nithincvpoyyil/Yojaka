@@ -1,0 +1,28 @@
+---
+source: crates/yojaka-tui/src/snapshots_tests.rs
+expression: out
+---
+"Yojaka · [WRITE]                                                   12,871 files "
+" ╭───────────╮╭───╮╭───╮╭───╮╭───╮╭───╮                                         "
+" │ 1 Actions ││ 2 ││ 3 ││ 4 ││ 5 ││ 6 │                                         "
+"─┘           └┴───┴┴───┴┴───┴┴───┴┴───┴─────────────────────────────────────────"
+" Organize into folders · /photos                                                "
+" ────────────────────────────────────────────────────────────────────────────── "
+" ✔ Scan             12,871 files · 1,204 new or changed                    0:00 "
+" ✔ Summary          12,480 photos · 391 videos · 144.4 GB · 2019 – 2023         "
+"                    India 6,100 · France 2,400 · Japan 1,300 · 3,071 without GPS"
+" ✔ Layout           Merge into one folder   Photos/IMG_0001.heic                "
+" ✔ Destination      copy to /Yojaka Organized                                   "
+" ● Confirm          check what will happen, then confirm                        "
+"   │ Copy 40 files (40.0 KB) to /out. The originals stay.                       "
+"   │ 3 identical files (3.0 KB) stay where they are: one of each is copied.     "
+"   │ Files by new folder:                                                       "
+"   │   Photos  +30 files (30.0 KB)                                              "
+"   │   Videos  +10 files (10.0 KB)                                              "
+"   │ Yojaka has no undo. Check the plan before you confirm.                     "
+"   │ y / Enter  copy      Esc  back                                             "
+" ○ Run                                                                          "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"y go ahead  Esc back                                                            "

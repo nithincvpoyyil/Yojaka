@@ -94,6 +94,45 @@ pub fn plan_copy_path(paths: &AppPaths, plan_id: Uuid) -> PathBuf {
     paths.journal_dir().join(format!("{plan_id}.plan.json"))
 }
 
+/// Ids of runs whose history was deleted (`yojaka history delete`), one per line. Their plans
+/// still cannot be applied a second time.
+pub fn cleared_path(paths: &AppPaths) -> PathBuf {
+    paths.journal_dir().join("cleared-runs.txt")
+}
+
+/// The history of this plan's run was deleted. A list that cannot be read is an error, so the
+/// apply-once rule never silently lapses.
+pub fn was_cleared(paths: &AppPaths, plan_id: Uuid) -> Result<bool> {
+    let path = cleared_path(paths);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let id = plan_id.to_string();
+            Ok(text.lines().any(|l| l.trim() == id))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(YojakaError::io(&path, e)),
+    }
+}
+
+/// Adds `ids` to the cleared list and flushes it to disk (before any journal is deleted).
+pub fn remember_cleared(paths: &AppPaths, ids: &[Uuid]) -> Result<()> {
+    let path = cleared_path(paths);
+    let mut text = String::new();
+    for id in ids {
+        text.push_str(&id.to_string());
+        text.push('\n');
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| {
+            f.write_all(text.as_bytes())?;
+            f.sync_data()
+        })
+        .map_err(|e| YojakaError::io(&path, e))
+}
+
 /// An open journal. Every append is flushed to disk before it returns.
 #[derive(Debug)]
 pub struct Journal {
@@ -102,10 +141,17 @@ pub struct Journal {
 }
 
 impl Journal {
-    /// Starts the journal of a plan that has never run. Fails if one already exists.
+    /// Starts the journal of a plan that has never run. Fails if one already exists, or if the
+    /// plan ran before and its history was deleted.
     pub fn create(paths: &AppPaths, plan: &Plan) -> Result<Self> {
         std::fs::create_dir_all(paths.journal_dir())
             .map_err(|e| YojakaError::io(paths.journal_dir(), e))?;
+        if was_cleared(paths, plan.id)? {
+            return Err(YojakaError::Internal(format!(
+                "plan {} has already been applied (its history was deleted)",
+                plan.id
+            )));
+        }
         let path = journal_path(paths, plan.id);
         let file = std::fs::OpenOptions::new()
             .create_new(true)

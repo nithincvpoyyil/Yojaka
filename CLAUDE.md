@@ -10,9 +10,10 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 - `all-specs/04-boilerplate-impl-plan.md`: step-by-step plan for the Iteration 0 skeleton (files, crates, code shapes, CI, done checklist)
 - `all-specs/05-scan-walker-fix-plan.md`: scan hang fix (jwalk → dua-core, honest progress). Done 2026-11-09 (ADR-0005).
 - `all-specs/06-i8-hardening-release-plan.md`: Iteration 8 (hardening: FR audit, saved preferences, fault injection), done; its decisions D1-D9 still apply.
-- `all-specs/09-i9-features-release-plan.md`: Iteration 9 (detailed dashboard, real-library tests, release engineering, performance last, sign-off and v1.0.0).
+- `all-specs/09-i9-features-release-plan.md`: Iteration 9 (Actions tab, detailed dashboard, real-library tests, release engineering, performance last, sign-off and v1.0.0).
 - `all-specs/07-scan-speed-plan.md`: I9 scan speed work (scheduled last) (measure, cheap fixes, pipeline overlap, rescans), with goals.
 - `all-specs/08-homebrew-tap-plan.md`: I9 Homebrew tap, release tarball and the unsigned-binary notes.
+- `all-specs/10-actions-plan.md`: I9 Phase 1A, the Actions tab (ready-made jobs, start screen, identical files copied once). Built 2026-11-18 (ADR-0010), waiting for sign-off.
 - `docs/STATUS.md`: where the work stands, keys, decisions and open items. Read it when resuming.
 
 ## Rules

@@ -172,6 +172,9 @@ pub enum Op {
 pub enum SkipReason {
     DestinationExists,
     AlreadyThere,
+    /// Organize, identical files once (FR-72): another file with the same bytes is copied or
+    /// moved instead, so this one stays where it is.
+    Identical,
     SourceChanged,
     Dataless,
     Other(String),
@@ -205,6 +208,13 @@ pub struct PlanSummary {
     /// Organize plans: files dated by their modification time because they have no recorded date.
     #[serde(default)]
     pub date_fallback: usize,
+    /// Organize plans with identical files once: files left where they are because a file with
+    /// the same bytes goes instead (FR-72).
+    #[serde(default)]
+    pub identical: usize,
+    /// The size of those files.
+    #[serde(default)]
+    pub identical_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

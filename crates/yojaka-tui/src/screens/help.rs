@@ -13,7 +13,9 @@ pub fn lines_for(screen: Screen) -> Vec<(&'static str, &'static str)> {
     HELP.iter()
         .filter(|(k, d)| {
             if k.is_empty() {
-                show = if d.starts_with("File browser") {
+                show = if d.starts_with("Actions") {
+                    screen == Screen::Actions
+                } else if d.starts_with("File browser") {
                     screen == Screen::Browser
                 } else if d.starts_with("Duplicates") {
                     screen == Screen::Duplicates

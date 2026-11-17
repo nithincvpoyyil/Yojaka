@@ -174,6 +174,6 @@ dua-core uses it inside but does not expose flags or birth time (ADR-0005).
 - [ ] Goals in §2 are met, or each miss is explained in `docs/perf.md` with the S1 numbers.
 - [ ] Equivalence test, all scan tests, full check green. Peak RSS is flat from 100k to 1M.
 - [ ] Cancel test at 10/50/99% passes 20 times in a row (`cargo nextest run --retries 0` in a loop).
-- [ ] ADR-0009 "Scan pipeline" records the final shape (stages, channel sizes, thread counts, pragmas) and
+- [ ] ADR-0012 "Scan pipeline" (renumbered 2026-11-17: 0009 is no undo, 0010 Actions, 0011 release) records the final shape (stages, channel sizes, thread counts, pragmas) and
       the numbers.
 - [ ] `docs/STATUS.md` updated. The "scan CPU optimization deferred" open item is closed.

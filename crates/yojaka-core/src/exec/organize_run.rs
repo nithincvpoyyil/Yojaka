@@ -57,6 +57,16 @@ pub(super) fn check(plan: &Plan, opts: ApplyOptions) -> Result<()> {
             reason,
         });
     }
+    // A plan made earlier or edited by hand: copies still never go inside the folder.
+    crate::organize::check_dest_outside(
+        &canon.join(dest.strip_prefix(existing).unwrap_or(dest)),
+        &root,
+        if plan.mode == OpMode::Copy {
+            crate::organize::Transfer::Copy
+        } else {
+            crate::organize::Transfer::Move
+        },
+    )?;
     let want_copy = plan.mode == OpMode::Copy;
     let mut dsts: HashSet<String> = HashSet::new();
     for op in &plan.ops {
@@ -173,6 +183,8 @@ pub(super) fn run(
                 }
                 if *why == SkipReason::AlreadyThere {
                     report.already_there += 1;
+                } else if *why == SkipReason::Identical {
+                    report.identical += 1;
                 } else {
                     report.skipped.push(OpNote {
                         op: *id,

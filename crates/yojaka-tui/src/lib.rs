@@ -1,5 +1,6 @@
 //! Yojaka terminal UI. Never writes to stdout/stderr outside ratatui's own drawing.
 
+mod actions;
 mod app;
 mod browser;
 mod dupes;
@@ -40,7 +41,13 @@ pub struct TuiOptions {
 /// Open the TUI on `root` and block until the user quits.
 pub fn run(engine: Engine, root: PathBuf, opts: TuiOptions) -> std::io::Result<()> {
     tracing::info!(root = %root.display(), "tui starting");
+    // A folder with saved data opens on the Dashboard; a new one on Actions (FR-1), decided
+    // before the first frame so the screen never flashes.
+    let opened_before = engine.has_index(&root, opts.local_index);
     let mut app = app::App::new(root, opts.mode);
+    if !opened_before {
+        app.screen = app::Screen::Actions;
+    }
     app.use_config(&engine.config);
     app.refresh_when_stale = opts.refresh;
     app.confirm_flush = opts.force;

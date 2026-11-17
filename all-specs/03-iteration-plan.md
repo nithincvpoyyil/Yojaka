@@ -265,12 +265,13 @@ The old Iteration 8 was split on 2026-11-12: hardening stayed in 8, and the rest
 ## Iteration 9: Features and release v1.0 (L)
 > Detailed plan: `09-i9-features-release-plan.md`. Scan speed: `07-scan-speed-plan.md`. Homebrew tap: `08-homebrew-tap-plan.md`.
 
+- **Actions tab** (added 2026-11-17, plan `10-actions-plan.md`): ready-made jobs on one page, the start screen for a never-scanned folder; identical files copied once.
 - **Detailed dashboard** (the user describes it; mockup first).
 - Test on real libraries: an iPhone export with Live Photos and 4K videos, an external exFAT or HFS+ drive, an iCloud Drive folder, more than 1M files, and paths with odd Unicode.
 - Release engineering: version 1.0.0, minimum macOS 14, a release workflow and GitHub Release (ad-hoc signed; no Developer ID yet), a Homebrew tap, and a user README with GIF demos.
 - Performance, **last**: scan speed (plan 07), then every target in tech spec §10, published in `docs/perf.md`. Profile with samply and Instruments, then tune the thread counts, batch sizes and read caps.
 
-**Acceptance:** the dashboard is signed off; real-world runs are recorded; every performance target is met or explained; the FR checklist and the fault-injection suite still hold; `v1.0.0-rc.1` installs with brew on a clean account; the user signs off and `v1.0.0` is tagged.
+**Acceptance:** the Actions tab and the dashboard are signed off; real-world runs are recorded; every performance target is met or explained; the FR checklist and the fault-injection suite still hold; `v1.0.0-rc.1` installs with brew on a clean account; the user signs off and `v1.0.0` is tagged.
 
 ---
 

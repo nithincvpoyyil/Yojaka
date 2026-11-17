@@ -127,6 +127,67 @@ pub fn list(paths: &AppPaths) -> Result<Vec<RunSummary>> {
     Ok(out)
 }
 
+/// What [`clear`] did.
+#[derive(Debug, Default, Clone)]
+pub struct ClearReport {
+    /// Runs whose history was deleted.
+    pub removed: usize,
+    /// Runs that stopped before the end. They are kept: `apply --resume` needs their journal.
+    pub kept_incomplete: usize,
+    /// Runs whose history could not be deleted: `(run id, reason)`.
+    pub failed: Vec<(Uuid, String)>,
+}
+
+/// Deletes the history of every finished run (its journal and the copy of its plan), so the
+/// History list starts again. Only Yojaka's own records go; no photo or video is touched.
+///
+/// Runs that stopped before the end are kept, because finishing them needs the journal. The ids of
+/// the deleted runs are written to the cleared list first, so their plans still cannot be applied
+/// a second time. A run that cannot be deleted is reported and the others carry on.
+pub fn clear(paths: &AppPaths) -> Result<ClearReport> {
+    let runs = list(paths)?;
+    let finished: Vec<Uuid> = runs
+        .iter()
+        .filter(|r| r.status == RunStatus::Applied)
+        .map(|r| r.plan_id)
+        .collect();
+    let mut report = ClearReport {
+        kept_incomplete: runs.len() - finished.len(),
+        ..Default::default()
+    };
+    if finished.is_empty() {
+        return Ok(report);
+    }
+    journal::remember_cleared(paths, &finished)?;
+    for id in finished {
+        // The journal first: once it is gone the run has left the list.
+        let problem = [
+            journal::journal_path(paths, id),
+            journal::plan_copy_path(paths, id),
+        ]
+        .into_iter()
+        .find_map(|path| match std::fs::remove_file(&path) {
+            Ok(()) => None,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => Some(format!("{}: {e}", path.display())),
+        });
+        match problem {
+            None => report.removed += 1,
+            Some(why) => {
+                tracing::warn!("cannot delete the history of run {id}: {why}");
+                report.failed.push((id, why));
+            }
+        }
+    }
+    tracing::info!(
+        removed = report.removed,
+        kept = report.kept_incomplete,
+        failed = report.failed.len(),
+        "history deleted"
+    );
+    Ok(report)
+}
+
 /// Finds a run by a full id or a unique prefix of one.
 pub fn find(paths: &AppPaths, wanted: &str) -> Result<RunSummary> {
     let all = list(paths)?;

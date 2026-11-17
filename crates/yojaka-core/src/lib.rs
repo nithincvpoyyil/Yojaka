@@ -1,5 +1,6 @@
 //! Yojaka core: all domain logic. Must never depend on UI crates.
 
+pub mod actions;
 pub mod browse;
 pub mod cancel;
 pub mod config;
@@ -54,6 +55,13 @@ impl Engine {
         } else {
             self.paths.index_for(root)
         }
+    }
+
+    /// Whether `root` has saved data (it was scanned before). False for a folder Yojaka refuses.
+    pub fn has_index(&self, root: &std::path::Path, local: bool) -> bool {
+        Self::protected()
+            .check_root(root)
+            .is_ok_and(|r| self.index_path(&r, local).is_file())
     }
 
     /// Scans `opts.root` and updates its index. Refuses protected locations.
@@ -218,11 +226,32 @@ impl Engine {
                 reason,
             });
         }
+        let dest = canon.join(opts.dest.strip_prefix(existing).unwrap_or(&opts.dest));
+        organize::check_dest_outside(&dest, &root, opts.transfer)?;
         let index = self.index_path(&root, local);
         if !index.is_file() {
             return Err(YojakaError::NoIndex(root));
         }
-        organize::plan(&index, &root, opts, sink, cancel)
+        // Identical files once: the exact tier (cached hashes), then the keep rules choose the
+        // file that goes from each set; the others stay where they are.
+        let mut leave = std::collections::HashSet::new();
+        if opts.skip_identical {
+            let mut found = dupes::find(
+                &self.config,
+                dupes::DupOptions::default(),
+                &index,
+                sink,
+                cancel,
+            )?;
+            let (rules, _) = dupes::configured_rules(&self.config.dupes.keep_rules);
+            found.apply_rules(&rules);
+            for g in &found.groups {
+                for (item, _) in g.members.iter().zip(&g.delete).filter(|(_, d)| **d) {
+                    leave.extend(item.files.iter().map(|f| f.path.clone()));
+                }
+            }
+        }
+        organize::plan(&index, &root, opts, &leave, sink, cancel)
     }
 
     /// A read-only handle for browsing the index of an already scanned `root`.

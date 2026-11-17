@@ -21,6 +21,9 @@ pub enum YojakaError {
     Protected { path: PathBuf, reason: String },
     #[error("{0} has not been scanned yet")]
     NoIndex(PathBuf),
+    /// A request that is understood but not allowed, with the reason in plain words.
+    #[error("{0}")]
+    Refused(String),
     #[error("internal error: {0}")]
     Internal(String),
     #[error("operation cancelled")]

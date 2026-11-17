@@ -70,21 +70,41 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum PresetArg {
+    /// {year}/{month_name}/{name}
     Date,
+    /// {country}/{city}/{name}
     Place,
+    /// {country}/{city}/{year}-{month_name}/{name}
     PlaceDate,
+    /// {kind}/{year}/{month_name}/{name}
     KindDate,
+    /// {year}/{name}
+    Year,
+    /// {year}/{country}/{city}/{name}
+    YearPlace,
+    /// {kind}/{name}: every photo in one folder, every video in another
+    Merge,
+    /// {kind}/{format}/{name}
+    Format,
 }
 
 impl PresetArg {
+    /// The label of the preset in `organize::PRESETS`.
+    fn label(self) -> &'static str {
+        match self {
+            PresetArg::Date => "Date",
+            PresetArg::Place => "Place",
+            PresetArg::PlaceDate => "Place + Date",
+            PresetArg::KindDate => "Kind + Date",
+            PresetArg::Year => "Year",
+            PresetArg::YearPlace => "Year + Place",
+            PresetArg::Merge => "Merge",
+            PresetArg::Format => "Format",
+        }
+    }
+
     pub fn template(self) -> &'static str {
-        let i = match self {
-            PresetArg::Date => 0,
-            PresetArg::Place => 1,
-            PresetArg::PlaceDate => 2,
-            PresetArg::KindDate => 3,
-        };
-        yojaka_core::organize::PRESETS[i].1
+        yojaka_core::organize::preset(self.label()).unwrap_or(yojaka_core::organize::PRESETS[0].1)
     }
 }
 
@@ -229,6 +249,10 @@ pub enum Cmd {
         /// two hours; marked as inferred in the plan
         #[arg(long)]
         infer_location: bool,
+        /// Copy or move identical files once: of each set of files with the same bytes, the
+        /// keep rules pick the one that goes and the others stay where they are
+        #[arg(long)]
+        skip_identical: bool,
         /// Save the plan to this new file (an existing file is never overwritten)
         #[arg(long)]
         plan_out: Option<PathBuf>,
@@ -255,15 +279,30 @@ pub enum Cmd {
         #[arg(long)]
         permanent: bool,
     },
-    /// List what has been run, newest first
+    /// List what has been run, newest first (`history delete` clears the list)
+    #[command(args_conflicts_with_subcommands = true)]
     History {
         #[arg(long)]
         json: bool,
+        #[command(subcommand)]
+        cmd: Option<HistoryCmd>,
     },
     /// Check the environment and print paths
     Doctor {
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HistoryCmd {
+    /// Delete the history of every finished run. Asks first. Only Yojaka's own records go: no
+    /// photo or video is touched, and no --write is needed. Unfinished runs are kept for
+    /// `apply --resume`, and a plan that was run still cannot be run again
+    Delete {
+        /// Do not ask
+        #[arg(long)]
+        yes: bool,
     },
 }
 

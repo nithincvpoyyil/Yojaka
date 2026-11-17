@@ -31,6 +31,34 @@ pub fn render(f: &mut Frame, body: Rect, modal: &Modal) {
             ],
             68,
         ),
+        Modal::ClearHistory {
+            finished,
+            unfinished,
+        } => {
+            let mut v = vec![
+                Line::raw(format!(
+                    "Delete the history of {}?",
+                    fmt::runs(*finished, "finished")
+                )),
+                Line::raw("Only Yojaka's own records go: no photo or video is touched."),
+                Line::raw("A plan that was run still cannot be run again."),
+            ];
+            if *unfinished > 0 {
+                v.push(Line::styled(
+                    format!(
+                        "Kept: {}, for `yojaka apply <plan> --resume`.",
+                        fmt::runs(*unfinished, "unfinished")
+                    ),
+                    theme::dim(),
+                ));
+            }
+            v.push(Line::raw(""));
+            v.push(Line::styled(
+                "y / Enter  delete the history      n / Esc  cancel",
+                theme::accent(),
+            ));
+            popup(f, body, "Delete history?", v, 68);
+        }
         Modal::Running(r) => running(f, body, r),
         Modal::Report(lines) => {
             let mut v: Vec<Line> = lines
@@ -102,7 +130,9 @@ fn running(f: &mut Frame, body: Rect, r: &RunView) {
     );
 }
 
-fn review(f: &mut Frame, body: Rect, r: &Review) {
+/// What a plan will do, for the Review box and the Actions Confirm step: the counts, the size,
+/// identical files left out, look-alikes, warnings, then the heading of the folder list.
+pub(crate) fn review_head(r: &Review) -> Vec<Line<'static>> {
     let p = &r.plan;
     use yojaka_core::plan::OpMode;
     let n = fmt::thousands(p.file_ops() as u64);
@@ -136,6 +166,18 @@ fn review(f: &mut Frame, body: Rect, r: &Review) {
             p.summary.live_pairs
         )));
     }
+    if p.summary.identical > 0 {
+        let verb = if p.mode == OpMode::Move {
+            "moved"
+        } else {
+            "copied"
+        };
+        v.push(Line::raw(format!(
+            "{} identical files ({}) stay where they are: one of each is {verb}.",
+            fmt::thousands(p.summary.identical as u64),
+            fmt::bytes(p.summary.identical_bytes)
+        )));
+    }
     let lookalikes = p.lookalike_ops();
     if lookalikes > 0 {
         v.push(Line::styled(
@@ -160,10 +202,16 @@ fn review(f: &mut Frame, body: Rect, r: &Review) {
         },
         theme::dim(),
     ));
-    // Leave room for the frame, the lines above and the confirmation below.
-    let room = (body.height as usize).saturating_sub(v.len() + 7).max(1);
+    v
+}
+
+/// Up to `room` lines of the folder list (at least one), and how many more there are. Labels are
+/// cut to fit `width`.
+pub(crate) fn review_folders(r: &Review, room: usize, width: usize) -> Vec<Line<'static>> {
+    let p = &r.plan;
+    let room = room.max(1);
     let shown = r.glimpse.len().min(room);
-    let width = 84.min(body.width) as usize;
+    let mut v = Vec::new();
     for l in r.glimpse.iter().take(shown) {
         let sign = if p.dest.is_some() { "+" } else { "−" };
         let tail = format!(
@@ -190,6 +238,16 @@ fn review(f: &mut Frame, body: Rect, r: &Review) {
             theme::dim(),
         ));
     }
+    v
+}
+
+fn review(f: &mut Frame, body: Rect, r: &Review) {
+    let p = &r.plan;
+    let mut v = review_head(r);
+    // Leave room for the frame, the lines above and the confirmation below.
+    let room = (body.height as usize).saturating_sub(v.len() + 7).max(1);
+    let width = 84.min(body.width) as usize;
+    v.extend(review_folders(r, room, width));
     v.push(Line::raw(""));
     if r.needs_typing() {
         v.push(Line::raw(format!(

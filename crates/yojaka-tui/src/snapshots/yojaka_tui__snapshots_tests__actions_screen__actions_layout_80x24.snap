@@ -1,0 +1,28 @@
+---
+source: crates/yojaka-tui/src/snapshots_tests.rs
+expression: out
+---
+"Yojaka · [READ-ONLY]                                               12,871 files "
+" ╭───────────╮╭───╮╭───╮╭───╮╭───╮╭───╮                                         "
+" │ 1 Actions ││ 2 ││ 3 ││ 4 ││ 5 ││ 6 │                                         "
+"─┘           └┴───┴┴───┴┴───┴┴───┴┴───┴─────────────────────────────────────────"
+" Organize into folders · /photos                                                "
+" ────────────────────────────────────────────────────────────────────────────── "
+" ✔ Scan             12,871 files · 1,204 new or changed                    0:00 "
+" ✔ Summary          12,480 photos · 391 videos · 144.4 GB · 2019 – 2023         "
+"                    India 6,100 · France 2,400 · Japan 1,300 · 3,071 without GPS"
+" ● Layout           how should the files be arranged?                           "
+"   │ ▶ Merge into one folder    Photos/IMG_0001.heic                            "
+"   │   By year                  2022/IMG_0001.heic                              "
+"   │   By year and month        2023/Aug/IMG_0001.heic                          "
+"   │   By year and place        2023/India/Panaji/IMG_0001.heic                 "
+"   │   By place                 India/Panaji/IMG_0001.heic                      "
+"   │   By file format           Photos/HEIC/IMG_0001.heic                       "
+"   │ Every photo in one folder, every video in another. No folders inside.      "
+"   │ Identical files are copied once.                                           "
+" ○ Destination                                                                  "
+" ○ Confirm                                                                      "
+" ○ Run                                                                          "
+"                                                                                "
+"                                                                                "
+"↑↓ choose  Enter next  Esc back  q quit                                         "

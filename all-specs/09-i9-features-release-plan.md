@@ -7,6 +7,7 @@ feature phase added in front. LLM assist is now Iteration 10, and GUI is Iterati
 Do one phase at a time. Every phase ends with the full check.
 
 **Acceptance:**
+- The Actions tab (Phase 1A, plan `10-actions-plan.md`) is built and signed off by the user.
 - The detailed dashboard is built and signed off by the user.
 - Real-world runs R1-R5 are recorded in `docs/real-world-tests.md`.
 - Every performance target in tech spec §10 is met or explained in `docs/perf.md`.
@@ -33,7 +34,14 @@ Do one phase at a time. Every phase ends with the full check.
   - a Homebrew tap
   - scan speed is optimised, not just explained
 
-## Phase 1: Detailed dashboard (feature; size once specified)
+## Phase 1A: Actions tab (feature, M; added 2026-11-17)
+
+The user's idea of 2026-11-17: a new first tab of ready-made jobs (scan → what's here → choose a layout →
+destination → review). It changes the start screen, and its summary overlaps the dashboard, so it comes first.
+**Everything is in `10-actions-plan.md`** (decisions A1-A12, mockups, core / CLI / TUI changes, tests). No
+schema change.
+
+## Phase 1B: Detailed dashboard (feature; size once specified)
 
 **Waiting for the user's description.** What exists today and what could be added is listed below, so the user
 can say what to keep, add or drop.
@@ -128,7 +136,8 @@ it and scan the target, as the protected-path check already resolves it, and say
    - Fill the missing demo scripts `docs/demos/iter-4.md` to `iter-6.md`, plus `iter-8.md` and `iter-9.md`.
    - Update the tech spec §10 (final targets) and §15 (distribution as built), and product spec §6 (Q5: macOS
      14, the last 4 majors).
-   - Write ADR-0010 for the release and Homebrew setup. ADR-0009 is the scan pipeline (plan 07).
+   - Write ADR-0011 for the release and Homebrew setup. (ADR-0009 is no undo, ADR-0010 is Actions (plan 10),
+     ADR-0012 is the scan pipeline (plan 07).)
 
 ## Phase 4: Performance (last before the release candidate; 3 days plus 4-6 days for scan speed)
 
@@ -178,6 +187,7 @@ Add a 10k-file scan timed in CI with a generous limit, so a large regression fai
 
 ## Phase 5: Acceptance and sign-off
 
+- [ ] The Actions tab is signed off by the user.
 - [ ] The detailed dashboard is signed off by the user.
 - [ ] `docs/fr-checklist.md`: every FR is done or changed by a recorded decision (FR-52 spec text: the user's,
       D2).
@@ -193,12 +203,12 @@ Add a 10k-file scan timed in CI with a generous limit, so a large regression fai
 
 ## Order and size
 
-Phase 1 (dashboard) → 2 (real libraries) → 3 (release engineering) → **4 (performance: 07 first)** → 5
+Phase 1A (Actions) → 1B (dashboard) → 2 (real libraries) → 3 (release engineering) → **4 (performance: 07 first)** → 5
 (`v1.0.0-rc.1`, sign-off, `v1.0.0`).
 
 Phase 2 needs the user and can start any time. Its findings may add work to Phase 4, or new fault tests.
 
-Rough size: 2½-3 weeks plus the dashboard, so **L**.
+Rough size: 2½-3 weeks plus Actions (4-5 days) and the dashboard, so **L**.
 
 ## Not in I9
 

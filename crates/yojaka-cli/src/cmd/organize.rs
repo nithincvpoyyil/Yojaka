@@ -22,6 +22,7 @@ pub struct Args<'a> {
     pub copy: bool,
     pub remember: bool,
     pub infer_location: bool,
+    pub skip_identical: bool,
     pub plan_out: Option<&'a Path>,
     pub full_tree: bool,
     pub local_index: bool,
@@ -95,6 +96,7 @@ pub fn run(engine: &Engine, a: Args<'_>) -> anyhow::Result<Exit> {
         transfer,
         infer_location: location.infer,
         location,
+        skip_identical: a.skip_identical,
     };
 
     let root = a.path.unwrap_or_else(|| Path::new("."));

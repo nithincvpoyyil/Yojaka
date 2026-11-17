@@ -10,7 +10,7 @@ use unicode_normalization::UnicodeNormalization;
 use super::template::{Facts, Template, Where, Ymd, sanitize};
 use crate::config::LocationConfig;
 use crate::geo::Place;
-use crate::hash::full_hash;
+use crate::hash::{ContentHash, full_hash};
 use crate::index::Index;
 use crate::model::{Fingerprint, MediaKind};
 use crate::plan::{Op, OpMode, Plan, PlanKind, SkipReason, Warning};
@@ -29,6 +29,9 @@ pub struct OrganizeOptions {
     pub transfer: Transfer,
     pub infer_location: bool,
     pub location: LocationConfig,
+    /// Copy or move identical files once (FR-72): of each set of files with the same bytes, the
+    /// keep rules pick the one that goes; the others stay where they are. Always on in Actions.
+    pub skip_identical: bool,
 }
 
 /// What the plan says about the library, for the screen and the CLI.
@@ -64,6 +67,7 @@ struct Row {
     size: u64,
     mtime_ns: i64,
     dev: i64,
+    ino: i64,
     kind: MediaKind,
     format: Option<String>,
     cloud_only: bool,
@@ -81,7 +85,7 @@ fn load(index: &Path) -> Result<Vec<Row>> {
                 f.media_kind, f.format, f.is_cloud_only, \
                 m.taken_at, m.camera_make, m.camera_model, \
                 m.place_country_code, m.place_country, m.place_state, m.place_district, \
-                m.place_city, m.place_dist_km, m.pair_id \
+                m.place_city, m.place_dist_km, m.pair_id, f.inode \
          FROM file f LEFT JOIN meta m ON m.file_id = f.id \
          ORDER BY f.full_path",
     )?;
@@ -123,6 +127,7 @@ fn load(index: &Path) -> Result<Vec<Row>> {
             model: r.get(10)?,
             place,
             pair_id: r.get(17)?,
+            ino: r.get(18)?,
         })
     })?;
     rows.collect::<std::result::Result<_, _>>()
@@ -209,14 +214,86 @@ fn existing_ancestor(p: &Path) -> Option<&Path> {
     p.ancestors().find(|a| a.symlink_metadata().is_ok())
 }
 
-fn same_content(a: &Path, b: &Path, size: u64) -> bool {
-    let Ok(mb) = std::fs::symlink_metadata(b) else {
-        return false;
-    };
-    if !mb.is_file() || mb.len() != size {
-        return false;
+/// The files already in the destination folders, read once per folder, to answer "is this file
+/// already there, under any name?". Hashes are remembered, so each file is read at most once.
+#[derive(Default)]
+struct DestFiles {
+    /// Folder → size → regular files of that size.
+    folders: HashMap<PathBuf, HashMap<u64, Vec<PathBuf>>>,
+    hashes: HashMap<PathBuf, Option<ContentHash>>,
+}
+
+impl DestFiles {
+    fn by_size(&mut self, folder: &Path) -> &HashMap<u64, Vec<PathBuf>> {
+        self.folders.entry(folder.to_path_buf()).or_insert_with(|| {
+            let mut out: HashMap<u64, Vec<PathBuf>> = HashMap::new();
+            if let Ok(rd) = std::fs::read_dir(folder) {
+                for e in rd.flatten() {
+                    // Not followed: a link is never "the same file".
+                    if let Ok(m) = e.path().symlink_metadata()
+                        && m.is_file()
+                    {
+                        out.entry(m.len()).or_default().push(e.path());
+                    }
+                }
+            }
+            out
+        })
     }
-    matches!((full_hash(a, size), full_hash(b, size)), (Ok(x), Ok(y)) if x.hash == y.hash)
+
+    fn hash(&mut self, p: &Path, size: u64) -> Option<ContentHash> {
+        *self
+            .hashes
+            .entry(p.to_path_buf())
+            .or_insert_with(|| full_hash(p, size).ok().map(|h| h.hash))
+    }
+
+    /// A file in `folder` with the same bytes as `src` that no other file of the plan has
+    /// claimed: the one called `name` first, then the others (so `IMG (1).jpg` from an earlier
+    /// run is found too).
+    fn same_bytes(
+        &mut self,
+        folder: &Path,
+        name: &str,
+        src: &Path,
+        size: u64,
+        taken: &HashSet<String>,
+    ) -> Option<PathBuf> {
+        let want = norm_key(&folder.join(name));
+        let mut cands: Vec<PathBuf> = self
+            .by_size(folder)
+            .get(&size)?
+            .iter()
+            .filter(|p| !taken.contains(&norm_key(p)))
+            .cloned()
+            .collect();
+        if cands.is_empty() {
+            return None;
+        }
+        cands.sort_by_cached_key(|p| (norm_key(p) != want, p.clone()));
+        let src_hash = self.hash(src, size)?;
+        cands
+            .into_iter()
+            .find(|c| self.hash(c, size) == Some(src_hash))
+    }
+}
+
+/// `leave` plus every extra name of a hard-linked file. A file with several names whose content
+/// already stays (one name is in `leave`) stays under every name; otherwise one name goes (the
+/// shortest path) and the others stay.
+fn with_hard_links(rows: &[Row], leave: &HashSet<PathBuf>) -> HashSet<PathBuf> {
+    let mut out = leave.clone();
+    let mut names: HashMap<(i64, i64), Vec<&Path>> = HashMap::new();
+    for r in rows {
+        names.entry((r.dev, r.ino)).or_default().push(&r.path);
+    }
+    for mut v in names.into_values().filter(|v| v.len() > 1) {
+        v.sort_by_key(|p| (p.as_os_str().len(), p.to_path_buf()));
+        let keep_one = !v.iter().any(|p| leave.contains(*p));
+        let skip = usize::from(keep_one);
+        out.extend(v.into_iter().skip(skip).map(Path::to_path_buf));
+    }
+    out
 }
 
 /// Places for files that have none: from a geotagged file of the same camera within the window,
@@ -289,10 +366,14 @@ fn cam_key(r: &Row) -> Option<String> {
     }
 }
 
+/// Plans the transfers. `leave` holds the files that stay where they are because a file with the
+/// same bytes goes instead (empty unless `opts.skip_identical`); a Live Photo pair is left only
+/// when both halves are in it.
 pub fn plan(
     index: &Path,
     root: &Path,
     opts: &OrganizeOptions,
+    leave: &HashSet<PathBuf>,
     sink: &EventSink,
     cancel: &CancelToken,
 ) -> Result<OrganizePlan> {
@@ -300,7 +381,7 @@ pub fn plan(
         task: TaskKind::Plan,
         label: "Planning".into(),
     });
-    let result = build(index, root, opts, sink, cancel);
+    let result = build(index, root, opts, leave, sink, cancel);
     sink.important(CoreEvent::TaskFinished {
         task: TaskKind::Plan,
         outcome: match &result {
@@ -316,11 +397,19 @@ fn build(
     index: &Path,
     root: &Path,
     opts: &OrganizeOptions,
+    leave: &HashSet<PathBuf>,
     sink: &EventSink,
     cancel: &CancelToken,
 ) -> Result<OrganizePlan> {
     let rows = load(index)?;
     let units = units(&rows);
+    // Identical files once also covers hard links: several names for one file go once.
+    let leave = if opts.skip_identical {
+        with_hard_links(&rows, leave)
+    } else {
+        leave.clone()
+    };
+    let leave = &leave;
     let loc = &opts.location;
 
     // Place per unit: the photo's, else the video's (FR-47).
@@ -348,6 +437,10 @@ fn build(
     plan.dest = Some(opts.dest.clone());
     let mut stats = OrganizeStats::default();
     let mut taken: HashSet<String> = HashSet::new();
+    let mut existing = DestFiles::default();
+    // Destination name → the smallest " (n)" not yet ruled out, so many files with one name
+    // (a flat Merge folder) are named in linear time.
+    let mut next_suffix: HashMap<String, u32> = HashMap::new();
     let mut moves: Vec<Op> = Vec::new();
     let mut skips: Vec<Op> = Vec::new();
     let mut dirs: BTreeMap<PathBuf, ()> = BTreeMap::new();
@@ -401,6 +494,21 @@ fn build(
             place,
         };
 
+        // Identical files once: another file with the same bytes goes instead.
+        if unit.files.iter().all(|&i| leave.contains(&rows[i].path)) {
+            for &fi in &unit.files {
+                let r = &rows[fi];
+                plan.summary.identical += 1;
+                plan.summary.identical_bytes += r.size;
+                skips.push(Op::Skip {
+                    id: 0,
+                    path: r.path.clone(),
+                    why: SkipReason::Identical,
+                });
+            }
+            continue;
+        }
+
         // Where each half goes, before any " (n)" suffix.
         struct Item {
             row: usize,
@@ -453,18 +561,22 @@ fn build(
             plan.summary.date_fallback += items.len();
         }
 
-        // Files already in place (or already there with the same content) are skipped.
+        // Files already in place, or already in their folder with the same bytes under any name
+        // not claimed by another file of this plan, are skipped. So organizing twice offers
+        // nothing new, even for files that got a " (n)" the first time (FR-74).
         let mut todo: Vec<&Item> = Vec::new();
         for it in &items {
             let r = &rows[it.row];
-            let dest = it.folder.join(&it.name);
-            let key = norm_key(&dest);
-            let already = norm_key(&r.path) == key
-                || (!taken.contains(&key)
-                    && dest.symlink_metadata().is_ok()
-                    && same_content(&r.path, &dest, r.size));
-            if already {
-                taken.insert(key);
+            let key = norm_key(&it.folder.join(&it.name));
+            let claimed = if norm_key(&r.path) == key {
+                Some(key)
+            } else {
+                existing
+                    .same_bytes(&it.folder, &it.name, &r.path, r.size, &taken)
+                    .map(|p| norm_key(&p))
+            };
+            if let Some(claimed) = claimed {
+                taken.insert(claimed);
                 skips.push(Op::Skip {
                     id: 0,
                     path: r.path.clone(),
@@ -479,7 +591,16 @@ fn build(
         }
 
         // The smallest suffix at which every remaining half has a free name (halves share it).
-        let mut suffix = 0u32;
+        let keys: Vec<String> = todo
+            .iter()
+            .map(|it| norm_key(&it.folder.join(&it.name)))
+            .collect();
+        let mut suffix = keys
+            .iter()
+            .filter_map(|k| next_suffix.get(k))
+            .copied()
+            .max()
+            .unwrap_or(0);
         let chosen: Vec<PathBuf> = loop {
             let cand: Vec<PathBuf> = todo
                 .iter()
@@ -495,6 +616,9 @@ fn build(
             }
             suffix += 1;
         };
+        for k in keys {
+            next_suffix.insert(k, suffix + 1);
+        }
         for (it, dst) in todo.iter().zip(chosen) {
             let r = &rows[it.row];
             taken.insert(norm_key(&dst));
@@ -604,6 +728,7 @@ mod tests {
             size: 1,
             mtime_ns: 1,
             dev: 1,
+            ino: 1,
             kind: MediaKind::Image,
             format: None,
             cloud_only: false,

@@ -15,8 +15,10 @@ pub const UNDATED_DIR: &str = "_undated";
 /// Longest folder or file name Yojaka will produce (bytes; APFS allows 255).
 const MAX_NAME_BYTES: usize = 200;
 
-/// Ready-made templates: (label, template). Months are named (`Jan`), not numbered.
-pub const PRESETS: [(&str, &str); 4] = [
+/// Ready-made templates: (label, template). Months are named (`Jan`), not numbered. The first
+/// four keep their places (saved settings and older tests refer to them); the last four came with
+/// the Actions tab (2026-11-17).
+pub const PRESETS: [(&str, &str); 8] = [
     ("Date", "{year}/{month_name}/{name}"),
     ("Place", "{country}/{city}/{name}"),
     (
@@ -24,7 +26,16 @@ pub const PRESETS: [(&str, &str); 4] = [
         "{country}/{city}/{year}-{month_name}/{name}",
     ),
     ("Kind + Date", "{kind}/{year}/{month_name}/{name}"),
+    ("Year", "{year}/{name}"),
+    ("Year + Place", "{year}/{country}/{city}/{name}"),
+    ("Merge", "{kind}/{name}"),
+    ("Format", "{kind}/{format}/{name}"),
 ];
+
+/// The template of the preset called `label` (as in [`PRESETS`]).
+pub fn preset(label: &str) -> Option<&'static str> {
+    PRESETS.iter().find(|(l, _)| *l == label).map(|(_, t)| *t)
+}
 
 /// What `{month_name}` gives, January first.
 const MONTH_NAMES: [&str; 12] = [
@@ -379,7 +390,8 @@ fn value(field: Field, pad: usize, f: &Facts) -> Option<String> {
                 };
             nonempty(&label)
         }
-        Field::Format => f.format.as_deref().and_then(nonempty),
+        // Upper case, as folder names (`HEIC`, `JPEG`, `MOV`).
+        Field::Format => nonempty(&f.format.as_deref()?.to_uppercase()),
         Field::Ext => nonempty(&f.stem_ext().1.to_lowercase()),
         Field::Name => nonempty(&f.name),
         Field::Stem => nonempty(f.stem_ext().0),
@@ -516,7 +528,7 @@ mod tests {
         f.kind = MediaKind::Video;
         assert_eq!(
             render("{kind}/{format}/{parent}/{name}", &f),
-            "Videos/jpeg/Holiday/a.mov"
+            "Videos/JPEG/Holiday/a.mov"
         );
     }
 
@@ -607,6 +619,18 @@ mod tests {
         for (_, t) in PRESETS {
             Template::parse(t).unwrap();
         }
+        assert_eq!(preset("Merge"), Some("{kind}/{name}"));
+        assert_eq!(preset("nope"), None);
+    }
+
+    #[test]
+    fn the_action_presets_render_as_planned() {
+        let f = facts("a.jpg");
+        let r = |label: &str| render(preset(label).unwrap(), &f);
+        assert_eq!(r("Merge"), "Photos/a.jpg");
+        assert_eq!(r("Year"), "2023/a.jpg");
+        assert_eq!(r("Year + Place"), "2023/India/Panaji/a.jpg");
+        assert_eq!(r("Format"), "Photos/JPEG/a.jpg");
     }
 
     use proptest::prelude::*;

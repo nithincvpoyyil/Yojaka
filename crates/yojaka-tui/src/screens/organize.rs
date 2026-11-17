@@ -105,13 +105,13 @@ fn setting(o: &OrganizeState, row: Row, selected: bool, width: usize) -> Line<'s
     Line::from(spans)
 }
 
-fn choice(word: &str) -> Span<'static> {
+pub(crate) fn choice(word: &str) -> Span<'static> {
     Span::styled(format!("‹ {word} ›"), theme::choice())
 }
 
 /// A shaded box `room` wide, so it reads as a field you can type in. While typing it is
 /// brighter and shows the cursor. A long value shows its end, where you type.
-fn text_box(text: &str, editing: bool, room: usize) -> Vec<Span<'static>> {
+pub(crate) fn text_box(text: &str, editing: bool, room: usize) -> Vec<Span<'static>> {
     // A space on each side inside the box.
     let inner = room.saturating_sub(2).max(1);
     if editing {

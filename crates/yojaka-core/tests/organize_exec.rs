@@ -106,6 +106,7 @@ impl Lab {
             transfer,
             infer_location: false,
             location: Config::default().location,
+            skip_identical: false,
         };
         engine(&self.env)
             .organize(
@@ -117,6 +118,55 @@ impl Lab {
             )
             .unwrap()
             .plan
+    }
+
+    fn plan_identical(&self, template: &str, transfer: Transfer) -> Plan {
+        let o = OrganizeOptions {
+            dest: self.dest.clone(),
+            template: Template::parse(template).unwrap(),
+            transfer,
+            infer_location: false,
+            location: Config::default().location,
+            skip_identical: true,
+        };
+        engine(&self.env)
+            .organize(
+                &self.root,
+                false,
+                &o,
+                &EventSink::null(),
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .plan
+    }
+
+    fn rescan(&self) {
+        let o = ScanOptions {
+            root: self.root.clone(),
+            metadata: true,
+            ..Default::default()
+        };
+        engine(&self.env)
+            .scan(&o, &EventSink::null(), &CancelToken::new())
+            .unwrap();
+    }
+
+    /// Copies a few files into `extra/` under the same names: identical files that share a name.
+    fn add_same_name_copies(&self, n: usize) {
+        let extra = self.root.join("extra");
+        std::fs::create_dir_all(&extra).unwrap();
+        let mut done = 0;
+        for (p, _) in tree_hash(&self.root) {
+            let src = self.root.join(&p);
+            let ext = src.extension().map(|e| e.to_ascii_lowercase());
+            if done < n && ext.as_deref() == Some(std::ffi::OsStr::new("jpg")) {
+                std::fs::copy(&src, extra.join(src.file_name().unwrap())).unwrap();
+                done += 1;
+            }
+        }
+        assert_eq!(done, n);
+        self.rescan();
     }
 
     fn run(&self, plan: &Plan, opts: ApplyOptions) -> exec::ApplyReport {
@@ -326,6 +376,20 @@ fn bad_organize_plans_are_refused_before_anything_runs() {
         .is_err()
     );
 
+    // A hand-edited copy plan whose destination is inside the scanned folder.
+    let mut p = good.clone();
+    let inside = lab.root.join("inside");
+    p.dest = Some(inside.clone());
+    for op in &mut p.ops {
+        match op {
+            Op::Copy { dst, .. } => *dst = inside.join(dst.strip_prefix(&lab.dest).unwrap()),
+            Op::MkDir { path, .. } => *path = inside.join(path.strip_prefix(&lab.dest).unwrap()),
+            _ => {}
+        }
+    }
+    let err = exec::check_plan(&p, ApplyOptions::default()).unwrap_err();
+    assert!(err.to_string().contains("inside"), "{err}");
+
     let mut p = good.clone();
     p.dest = None;
     assert!(exec::check_plan(&p, ApplyOptions::default()).is_err());
@@ -435,6 +499,80 @@ fn a_read_only_destination_fails_cleanly_and_touches_nothing() {
         assert!(
             tree_hash(&lab.dest).is_empty(),
             "{transfer:?}: nothing was written into the destination"
+        );
+    }
+}
+
+fn transfers_in(plan: &Plan) -> usize {
+    plan.ops
+        .iter()
+        .filter(|o| matches!(o, Op::Copy { .. } | Op::Move { .. }))
+        .count()
+}
+
+#[test]
+fn organizing_again_after_a_copy_offers_nothing_new_even_for_numbered_names() {
+    let lab = Lab::new();
+    lab.add_same_name_copies(3);
+    let first = lab.plan("{kind}/{name}", Transfer::Copy);
+    let numbered = first
+        .ops
+        .iter()
+        .filter(|o| matches!(o, Op::Copy { dst, .. } if dst.to_string_lossy().contains(" (")))
+        .count();
+    assert!(numbered >= 3, "the same-name copies were numbered");
+    let r = lab.run(&first, ApplyOptions::default());
+    assert!(r.failed.is_empty() && r.skipped.is_empty(), "{r:?}");
+    let again = lab.plan("{kind}/{name}", Transfer::Copy);
+    assert_eq!(transfers_in(&again), 0, "nothing new: {:?}", again.summary);
+}
+
+#[test]
+fn identical_files_once_then_again_offers_nothing_new() {
+    for transfer in [Transfer::Copy, Transfer::Move] {
+        let lab = Lab::new();
+        lab.add_same_name_copies(3);
+        let first = lab.plan_identical("{kind}/{name}", transfer);
+        assert!(first.summary.identical >= 3, "{:?}", first.summary);
+        let r = lab.run(&first, ApplyOptions::default());
+        assert!(r.failed.is_empty() && r.skipped.is_empty(), "{r:?}");
+        assert_eq!(r.identical, first.summary.identical);
+        // No file name in the destination holds the same bytes twice.
+        // No bytes went twice, except a Live Photo half that matches a lone file: a pair only
+        // ever matches a pair, so it is never split.
+        let in_pair: std::collections::HashSet<PathBuf> = first
+            .ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::Copy {
+                    dst, pair: Some(_), ..
+                }
+                | Op::Move {
+                    dst, pair: Some(_), ..
+                } => Some(dst.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut seen = std::collections::HashMap::new();
+        for (p, h) in tree_hash(&lab.dest) {
+            if let Some(other) = seen.insert(h, p.clone()) {
+                let pair_half = in_pair.contains(&lab.dest.join(&p))
+                    || in_pair.contains(&lab.dest.join(&other));
+                assert!(
+                    pair_half,
+                    "an identical file went twice: {} and {}",
+                    p.display(),
+                    other.display()
+                );
+            }
+        }
+        lab.rescan();
+        let again = lab.plan_identical("{kind}/{name}", transfer);
+        assert_eq!(
+            transfers_in(&again),
+            0,
+            "{transfer:?}: nothing new: {:?}",
+            again.summary
         );
     }
 }

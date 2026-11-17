@@ -456,6 +456,47 @@ fn apply_is_a_dry_run_without_write_then_trashes_and_warns_there_is_no_undo() {
         .arg("history")
         .assert()
         .stdout(predicate::str::contains("no undo"));
+
+    // `history delete` asks; "n" keeps everything.
+    yojaka(tmp.path())
+        .args(["history", "delete"])
+        .write_stdin("n\n")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Nothing was deleted"));
+    yojaka(tmp.path())
+        .arg("history")
+        .assert()
+        .stdout(predicate::str::contains("applied"));
+    // "y" empties the list and leaves the photos alone (no --write needed).
+    let after_apply = tree_listing(&tree);
+    yojaka(tmp.path())
+        .args(["history", "delete"])
+        .write_stdin("y\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Deleted the history of 1 run."));
+    assert_eq!(tree_listing(&tree), after_apply);
+    yojaka(tmp.path())
+        .arg("history")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("The history is empty."));
+    yojaka(tmp.path())
+        .args(["history", "delete", "--yes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("The history is empty."));
+    // The plan still cannot be applied a second time.
+    apply(&answer)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("already been applied"));
+    // --json lists; it does not go with delete.
+    yojaka(tmp.path())
+        .args(["history", "--json", "delete"])
+        .assert()
+        .code(2);
 }
 
 #[test]
@@ -556,6 +597,93 @@ fn organize_plans_then_apply_copies() {
         .stdout(predicate::str::contains(format!("{copies} copied")));
     assert_eq!(tree_listing(&tree), before, "originals untouched");
     assert_eq!(tree_listing(&dest).len(), copies);
+}
+
+#[test]
+fn merge_with_identical_files_once_then_again_plans_nothing_new() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    let dest = tmp.path().join("merged");
+    let plan = tmp.path().join("merge.json");
+    yojaka(tmp.path())
+        .args([
+            "organize",
+            "--preset",
+            "merge",
+            "--skip-identical",
+            "--plan-out",
+        ])
+        .arg(&plan)
+        .arg(&tree)
+        .arg(&dest)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Template: {kind}/{name}"))
+        .stdout(predicate::str::contains("stay where they are"));
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+    assert!(saved["summary"]["identical"].as_u64().unwrap() > 0);
+    yojaka(tmp.path())
+        .args(["--write", "apply"])
+        .arg(&plan)
+        .write_stdin("y\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "identical files stayed where they are",
+        ));
+    // Only two folders, nothing inside them.
+    let mut top: Vec<String> = std::fs::read_dir(&dest)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    top.sort();
+    assert!(
+        !top.is_empty() && top.iter().all(|d| d == "Photos" || d == "Videos"),
+        "{top:?}"
+    );
+    for d in &top {
+        for e in std::fs::read_dir(dest.join(d)).unwrap() {
+            assert!(e.unwrap().file_type().unwrap().is_file());
+        }
+    }
+    // The same action again: nothing new to copy.
+    let again = tmp.path().join("again.json");
+    yojaka(tmp.path())
+        .args([
+            "organize",
+            "--preset",
+            "merge",
+            "--skip-identical",
+            "--plan-out",
+        ])
+        .arg(&again)
+        .arg(&tree)
+        .arg(&dest)
+        .assert()
+        .success();
+    let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&again).unwrap()).unwrap();
+    let transfers = saved["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["op"] == "copy")
+        .count();
+    assert_eq!(transfers, 0);
+}
+
+#[test]
+fn organize_copies_into_the_scanned_folder_are_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let tree = fixture(tmp.path());
+    yojaka(tmp.path()).arg("scan").arg(&tree).assert().success();
+    yojaka(tmp.path())
+        .arg("organize")
+        .arg(&tree)
+        .arg(tree.join("sorted"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("inside"));
 }
 
 #[test]

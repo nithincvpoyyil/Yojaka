@@ -330,8 +330,12 @@ Keep rules form a `Vec<KeepRule>` applied in order. Each rule narrows the candid
   - If there is no EXIF date, use mtime, and mark it as fallback in the plan.
   - If there is no date at all, use `_undated/`.
 - **Conflict resolution:** a `HashMap<NormalizedDestPath, ...>` over the planned destinations, plus existence checks on disk.
-  - If the destination already has a file with the same hash, plan `Skip(AlreadyThere)`.
-  - Otherwise add a suffix: ` (1)`, ` (2)`, and so on.
+  - If the destination already has a file with the same hash, plan `Skip(AlreadyThere)`. Since 2026-11-17 this also checks the names with a suffix (` (1)`, ` (2)` …), so organizing twice offers nothing new (FR-74).
+  - Otherwise add a suffix: ` (1)`, ` (2)`, and so on. The next free suffix is remembered per destination name, so many files with one name (a flat Merge folder) plan in linear time.
+- **Presets** (`organize::PRESETS`): Date, Place, Place + Date, Kind + Date, and since 2026-11-17 Year `{year}/{name}`, Year + Place `{year}/{country}/{city}/{name}`, Merge `{kind}/{name}` and Format `{kind}/{format}/{name}`. `{format}` renders upper case.
+- **Identical files once** (`OrganizeOptions.skip_identical`, FR-72; always on in Actions): the exact tier runs first (cached hashes); in each group the keep rules pick one item and the others become `Skip(Identical)`. A Live Photo pair is one item. With move, the skipped copies stay in place.
+- **Destination check** (FR-43a): a **copy** into the scanned folder or a folder inside it is refused, by the planner and again by the executor's validation. A move there is allowed (tidying in place).
+- **Actions** (`yojaka_core::actions`, FR-70): the list of ready-made jobs (id, title, description, template), shared by the TUI, the CLI help and a later GUI. Plan: `10-actions-plan.md`.
 
 ### 6.5 Plan (FR-50)
 ```rust
@@ -391,13 +395,14 @@ pub struct Fingerprint { size: u64, mtime_ns: i64, hash: Option<[u8; 32]> }
 
 | Key | Screen | Content |
 |-----|--------|---------|
-| `1` | **Dashboard** | Scan progress gauge, totals (photos and videos shown separately, plus total video duration), format distribution (bar chart, most used first), year histogram (sparkline or bars), top cameras, error count |
-| `2` | **Browser** | Folder tree (left) and virtualized file table (right). Columns: name, kind, format, dimensions, duration, size, taken, camera, place (`≈` when inferred). `t` cycles the kind filter (all, photos, videos); `k` stays "up" for the vim keys. Sort and filter (`/`). Detail pane shows full metadata. |
-| `3` | **Duplicates** | Groups list (tier badge, count, reclaim), with group members on the right. `f` searches (exact, likely, name); `F` also compares how pictures look. `v` filters by tier. `space` toggles keep/delete, `p` applies the next keep rule to every exact group. Groups of the other tiers show a side-by-side comparison (size, pixels, date, length, camera) and are marked one at a time. Total reclaim in the summary. |
-| `4` | **Organize** | Destination picker, template presets (Date / Place / Place+Date / Kind+Date), template input with a live sample preview (5 example files, including a geotagged one and one without location), an infer-location toggle, coverage ("82% of files have a location"), copy/move toggle, and the proposed tree glimpse. |
+| `1` | **Actions** | Opens first for a folder with no saved data (FR-1). One page: "What's here" (counts, size, years, top countries, without GPS), the six ready-made actions with a description and example paths, destination box, copy/move, "Review and run". The plan follows the settings and copies identical files once. Plan `10-actions-plan.md`. |
+| `2` | **Dashboard** | Scan progress gauge, totals (photos and videos shown separately, plus total video duration), format distribution (bar chart, most used first), year histogram (sparkline or bars), top cameras, error count |
+| `3` | **Browser** | Folder tree (left) and virtualized file table (right). Columns: name, kind, format, dimensions, duration, size, taken, camera, place (`≈` when inferred). `t` cycles the kind filter (all, photos, videos); `k` stays "up" for the vim keys. Sort and filter (`/`). Detail pane shows full metadata. |
+| `4` | **Duplicates** | Groups list (tier badge, count, reclaim), with group members on the right. `f` searches (exact, likely, name); `F` also compares how pictures look. `v` filters by tier. `space` toggles keep/delete, `p` applies the next keep rule to every exact group. Groups of the other tiers show a side-by-side comparison (size, pixels, date, length, camera) and are marked one at a time. Total reclaim in the summary. |
+| `5` | **Organize** | Destination picker, template presets (Date / Place / Place+Date / Kind+Date / Year / Year+Place / Merge / Format), template input with a live sample preview (5 example files, including a geotagged one and one without location), an infer-location toggle, coverage ("82% of files have a location"), copy/move toggle, and the proposed tree glimpse. |
 | — | **Review / Dry-run** (modal) | Summary counts, warnings, before/after trees, op list sample, and a confirmation (typed phrase for large or permanent plans) |
 | — | **Execute** | Progress, current op, error list, `Esc` to stop safely after the current op |
-| `5` | **History** | Past plans from the journal and their status (a note says there is no undo) |
+| `6` | **History** | Past plans from the journal and their status (a note says there is no undo) |
 
 **Global UI:**
 - Header shows the root, the mode badge (**READ-ONLY** green or **WRITE** amber), and the index status.
@@ -415,6 +420,7 @@ yojaka stats [PATH] [--json]
 yojaka dupes [PATH] [--tier exact|likely|name|similar|all] [--similar] [--similar-distance BITS]
              [--keep RULE,...] [--plan-out FILE] [--json]   # only exact groups are marked or planned
 yojaka organize [PATH] --dest DIR --template "{year}/{month:02}" [--copy|--move] [--infer-location] [--plan-out FILE]
+                [--preset date|place|place-date|kind-date|year|year-place|merge|format] [--skip-identical]
                                      # e.g. --template "{country}/{city}/{year}-{month_name}/{name}"
 yojaka plan show FILE [--full-tree]   # dry-run view of a saved plan
 yojaka apply FILE [--yes] [--resume]  # executes; requires --write semantics

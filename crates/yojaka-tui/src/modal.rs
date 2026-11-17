@@ -14,7 +14,11 @@ pub enum Modal {
         then_review: bool,
     },
     Review(Box<Review>),
-    /// "Put back the files of this run?"
+    /// "Delete the history of N finished runs?" (`d` on History). Touches no photos.
+    ClearHistory {
+        finished: usize,
+        unfinished: usize,
+    },
     Running(RunView),
     Report(Vec<ReportLine>),
 }
@@ -102,7 +106,7 @@ fn problems(out: &mut Vec<ReportLine>, label: &str, notes: &[yojaka_core::exec::
 }
 
 pub fn apply_report(r: &ApplyReport) -> Vec<ReportLine> {
-    let organized = r.moved + r.copied + r.created + r.already_there > 0;
+    let organized = r.moved + r.copied + r.created + r.already_there + r.identical > 0;
     let mut out = vec![if organized {
         line(
             format!(
@@ -124,6 +128,15 @@ pub fn apply_report(r: &ApplyReport) -> Vec<ReportLine> {
             false,
         )
     }];
+    if r.identical > 0 {
+        out.push(line(
+            format!(
+                "{} identical files stayed where they are.",
+                fmt::thousands(r.identical as u64)
+            ),
+            false,
+        ));
+    }
     if r.already_there > 0 {
         out.push(line(
             format!("{} were already in place.", r.already_there),

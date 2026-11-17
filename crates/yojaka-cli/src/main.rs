@@ -204,7 +204,11 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
                 trash_dir: cli.trash_dir.as_deref(),
             },
         ),
-        Some(Cmd::History { json }) => cmd::exec::history(&engine, *json),
+        Some(Cmd::History {
+            cmd: Some(cli::HistoryCmd::Delete { yes }),
+            ..
+        }) => cmd::exec::history_delete(&engine, *yes),
+        Some(Cmd::History { json, cmd: None }) => cmd::exec::history(&engine, *json),
         Some(Cmd::Organize {
             path,
             dest,
@@ -214,6 +218,7 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
             r#move,
             remember,
             infer_location,
+            skip_identical,
             plan_out,
             full_tree,
         }) => cmd::organize::run(
@@ -227,6 +232,7 @@ fn run(cli: Cli) -> anyhow::Result<Exit> {
                 copy: *copy,
                 remember: *remember,
                 infer_location: *infer_location,
+                skip_identical: *skip_identical,
                 plan_out: plan_out.as_deref(),
                 full_tree: *full_tree,
                 local_index: cli.local_index,

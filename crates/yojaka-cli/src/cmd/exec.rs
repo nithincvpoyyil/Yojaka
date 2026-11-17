@@ -53,10 +53,17 @@ pub(crate) fn print_summary(plan: &Plan, full_tree: bool) {
                 );
             }
             let s = &plan.summary;
-            if s.skipped > 0 {
+            let already = s.skipped.saturating_sub(s.identical);
+            if already > 0 {
                 println!(
-                    "  left alone: {} (already in place, or already at the destination)",
-                    s.skipped
+                    "  left alone: {already} (already in place, or already at the destination)"
+                );
+            }
+            if s.identical > 0 {
+                println!(
+                    "  identical: {} files ({}) stay where they are; a file with the same bytes goes instead",
+                    s.identical,
+                    bytes(s.identical_bytes)
                 );
             }
             if s.undated > 0 {
@@ -239,6 +246,17 @@ pub fn apply(engine: &Engine, a: &ApplyArgs<'_>) -> anyhow::Result<Exit> {
             report.created,
             bytes(report.bytes)
         );
+        if report.identical > 0 {
+            println!(
+                "{} identical files stayed where they are (one of each was {}).",
+                report.identical,
+                if plan.mode == OpMode::Move {
+                    "moved"
+                } else {
+                    "copied"
+                }
+            );
+        }
         if report.already_there > 0 {
             println!("{} were already in place.", report.already_there);
         }
@@ -309,7 +327,7 @@ pub fn history(engine: &Engine, json: bool) -> anyhow::Result<Exit> {
         return Ok(Exit::Ok);
     }
     if runs.is_empty() {
-        println!("Nothing has been run yet.");
+        println!("The history is empty.");
         return Ok(Exit::Ok);
     }
     println!("Yojaka has no undo: a move or a copy is final.\n");
@@ -326,6 +344,68 @@ pub fn history(engine: &Engine, json: bool) -> anyhow::Result<Exit> {
         );
     }
     Ok(Exit::Ok)
+}
+
+/// `history delete`: asks, then deletes the history of every finished run. Touches no photos.
+pub fn history_delete(engine: &Engine, yes: bool) -> anyhow::Result<Exit> {
+    let runs = hist::list(&engine.paths)?;
+    let unfinished = runs
+        .iter()
+        .filter(|r| r.status == exec::RunStatus::Incomplete)
+        .count();
+    let finished = runs.len() - unfinished;
+    if finished == 0 {
+        if unfinished == 0 {
+            println!("The history is empty.");
+        } else {
+            println!(
+                "Nothing deleted: the history only has {}, kept for `yojaka apply <plan> --resume --write`.",
+                runs_word(unfinished, "unfinished")
+            );
+        }
+        return Ok(Exit::Ok);
+    }
+    println!(
+        "This deletes the history of {}. Only Yojaka's own records go: no photo or video is touched.",
+        runs_word(finished, "finished")
+    );
+    if unfinished > 0 {
+        println!(
+            "{} kept for `yojaka apply <plan> --resume --write`.",
+            runs_word(unfinished, "unfinished")
+        );
+    }
+    println!("A plan that was run still cannot be run again.");
+    if !yes {
+        let answer = ask(&format!(
+            "\nDelete the history of {}? (y/N): ",
+            runs_word(finished, "finished")
+        ))?;
+        if !answer.eq_ignore_ascii_case("y") {
+            println!("Not confirmed. Nothing was deleted.");
+            return Ok(Exit::Error);
+        }
+    }
+    let report = hist::clear(&engine.paths)?;
+    println!("Deleted the history of {}.", runs_word(report.removed, ""));
+    for (id, why) in &report.failed {
+        println!("FAILED  {id}: {why}");
+    }
+    Ok(if report.failed.is_empty() {
+        Exit::Ok
+    } else {
+        Exit::Partial
+    })
+}
+
+/// `1 finished run`, `3 runs`.
+fn runs_word(n: usize, adjective: &str) -> String {
+    let noun = if n == 1 { "run" } else { "runs" };
+    if adjective.is_empty() {
+        format!("{n} {noun}")
+    } else {
+        format!("{n} {adjective} {noun}")
+    }
 }
 
 /// `2026-11-09 14:03` in the local time zone (same as the History screen).

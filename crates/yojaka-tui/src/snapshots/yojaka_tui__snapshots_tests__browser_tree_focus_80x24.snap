@@ -3,9 +3,9 @@ source: crates/yojaka-tui/src/snapshots_tests.rs
 expression: "draw(&a, 80, 24)"
 ---
 "Yojaka · [READ-ONLY]                                                   loading… "
-" ╭─────────────╮╭────────────────╮╭──────────────╮╭────────────╮╭───────────╮   "
-" │ 1 Dashboard ││ 2 File browser ││ 3 Duplicates ││ 4 Organize ││ 5 History │   "
-"─┴─────────────┴┘                └┴──────────────┴┴────────────┴┴───────────┴───"
+" ╭───╮╭───╮╭────────────────╮╭───╮╭───╮╭───╮                                    "
+" │ 1 ││ 2 ││ 3 File browser ││ 4 ││ 5 ││ 6 │                                    "
+"─┴───┴┴───┴┘                └┴───┴┴───┴┴───┴────────────────────────────────────"
 "┌Folders───────────────┐┌Files · all · 12,871 · by size ▼──────────────────────┐"
 "│▾ photos        12,203││Name              Size ▼    Taken      Length  Format │"
 "│   2022          4,100││IMG_1220.jpg         3.2 MB 2023-06-02         jpeg   │"

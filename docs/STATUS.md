@@ -1,6 +1,6 @@
 # Yojaka: project status and hand-off
 
-Last updated: 2026-11-12. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
+Last updated: 2026-11-18. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
 rules are in `CLAUDE.md`.
 
 **Scan walker (after I4), done 2026-11-09** (`all-specs/05-scan-walker-fix-plan.md`, ADR-0005): `dua-core`
@@ -22,7 +22,7 @@ Committed. Iterations 5, 6 and 7 followed (below).
 | 6 | Organize (templates, planner, copy/move, screen, CLI) | Done (`bb1e12e`), signed off 2026-11-11 (ADR-0007) |
 | 7 | More duplicate tiers (likely, name, similar) | Done (`99db741`), signed off 2026-11-11 (ADR-0008) |
 | 8 | Hardening: FR audit, saved preferences, fault injection (`06`) | Done 2026-11-11 (`b93a80b`, `0104cbe`, `eb16c83`, Phase 3 commit) |
-| 9 | Features and release v1.0: detailed dashboard, real libraries, release, performance last (`09`) | **Next** (dashboard: waiting for the user's description) |
+| 9 | Features and release v1.0: Actions tab, detailed dashboard, real libraries, release, performance last (`09`) | **Phase 1A Actions built 2026-11-18, waiting for the user's sign-off** (not committed); then the dashboard (waiting for the user's description) |
 | 10 | LLM assist | Not started |
 | 11 | GUI | Not started |
 
@@ -34,6 +34,36 @@ Checks at the end of the Iteration 7 session: see "Duplicate tiers" below.
 Full check: `source ~/.cargo/env && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo nextest run --workspace && cargo deny check`.
 New insta snapshots: run with `INSTA_UPDATE=always`, then read the `.snap`. The TUI snapshots under
 `crates/yojaka-tui/src/snapshots/` are gitignored; the CLI help snapshot is tracked.
+
+## Actions tab (I9 Phase 1A, plan `all-specs/10-actions-plan.md`, ADR-0010)
+
+The user's idea of 2026-11-17, reviewed against the architecture and decided the same day (A1-A12). **Built
+2026-11-18**; full check green (428 tests, 6 skipped); driven by hand in a pty on a fixture tree. Waiting for the
+user to try it and sign it off. Not committed.
+
+**Redo as a pipeline (2026-11-18, user feedback):** the user did not like the one-page tab ("simple, like a
+pipeline run in CI, not a dashboard"). Chosen from mockups: vertical CI-log steps, a pipeline list first
+(Organize into folders, Remove duplicates), the six layouts, the opened folder only, Confirm as an inline step,
+Run with a progress bar. Plan: `all-specs/10-actions-plan.md` §10 (P1-P9). **Built 2026-11-18** (ADR-0010
+amended): `actions.rs`, `app/pipeline.rs`, `screens/actions.rs`; full check green (441 tests); both jobs driven
+in a pty on a fixture tree. No core or CLI change. Waiting for the user to try it and sign it off. Not committed.
+
+- New first tab **Actions**: one page with "What's here", six ready-made actions with descriptions, destination,
+  copy / move, "Review and run" (the existing Review box and executor). Keys become `1` Actions … `6` History.
+- A folder with no saved data opens on Actions (the scan starts by itself, nothing is asked); otherwise the Dashboard.
+- Actions: Merge `{kind}/{name}` (Photos/ and Videos/, flat), year, year+month, year+place, place, file format.
+- Identical files (exact tier) are copied or moved once in every action; CLI `organize --skip-identical`.
+- Also fixes: a **copy** into the scanned folder is refused (FR-43a; a move there stays allowed, changed while
+  building); organizing twice no longer re-offers `IMG (2)` (a file is skipped when its folder already holds the
+  same bytes under any name); the ` (n)` search is linear.
+- Hard links count as identical (one name goes). A Live Photo pair only matches a pair, so a pair's video can
+  still go next to an identical lone `.MOV` (never split a pair).
+- Code: `yojaka_core::actions`, `organize::{preset, check_dest_outside}`, `OrganizeOptions.skip_identical`,
+  `Engine::has_index`, `SkipReason::Identical`, summary `identical`; TUI `actions.rs`, `screens/actions.rs`,
+  `App::plan_owner` (whose plan is in flight), `App::plan_progress`.
+- Checked before planning: a flat `{name}` plan on a 1,000-file fixture renamed 118 files, 67 of them byte-identical
+  to a file already going in, which is why identical files are skipped.
+- ADR numbers from here: 0010 Actions, 0011 release (plan 09), 0012 scan pipeline (plan 07).
 
 ## What the app does today
 
@@ -49,12 +79,14 @@ automatically in `~/Library` (no user choice, no jargon).
 | `--local-index` | Hidden. For tests and tooling only: keeps the data inside the folder. |
 
 CLI commands: `scan` (`--force` wipes without asking), `stats`, `info`, `places`, `export` (`--kind image|video`, `--year`, `--find TEXT`, `--folder DIR`), `doctor`.
-`dupes` (all tiers; see below), `plan show`, `apply`, `history` (Iteration 5; see below). `organize` (Iteration 6; see below).
+`dupes` (all tiers; see below), `plan show`, `apply`, `history` (Iteration 5; see below), `history delete` (2026-11-18: asks, deletes the history of finished runs, keeps unfinished ones; `d` on History does the same). `organize` (Iteration 6; see below).
 
 ### TUI keys (the `?` overlay is generated from `keymap.rs`)
 
-- Screens: `1`-`5`, `<` `>`, `←` `→`, Shift+`←` `→`. In the file browser's folder pane `←` `→` collapse /
-  expand, and on Organize they step through a choice, so use `<` `>` or Shift+arrows there.
+- Screens: `1`-`6` (Actions, Dashboard, File browser, Duplicates, Organize, History), `<` `>`, `←` `→`,
+  Shift+`←` `→`. In the file browser's folder pane `←` `→` collapse / expand, and on Organize and Actions they
+  step through a choice, so use `<` `>` or Shift+arrows there.
+- Start screen: a folder without saved data opens on Actions (and scans); otherwise the Dashboard.
 - Tab mode: `T` anywhere, or Esc in the File browser or Organize when nothing else needs closing. `←` `→`
   then pick the tab; Enter / Esc / ↑ / ↓ go back. During a scan Esc stops the scan first, so use `T`.
 - Typing in a box (browser filter, Organize pattern / destination): Enter keeps, Esc undoes, Ctrl-U clears.
@@ -155,7 +187,7 @@ The first write-capable release. Off by default: no `--write` means a preview on
 - Journal and plan copy: `<data>/journal/<plan-id>.jsonl` and `.plan.json`.
 - TUI: `W` turns write mode on (asks) or off; on Duplicates `a` opens the Review box (summary, folders
   losing files, typed phrase for large plans; asks to turn on write mode first if it is off); a run shows
-  progress (Ctrl-C stops after the current file), then a report, then rescans. Screen 5 History lists runs.
+  progress (Ctrl-C stops after the current file), then a report, then rescans. Screen 6 History lists runs; `d` deletes the history of the finished runs (asks; touches no photos). Deleted run ids go to `<data>/journal/cleared-runs.txt`, which `Journal::create` checks, so the apply-once rule survives a cleared history.
 - Hidden `--trash-dir DIR` makes tests use a folder as the Trash.
 - Core: `yojaka_core::exec` (`apply`, `history`, `journal`, `trash`), `plan::tree` (`DirTree`
   glimpse, `Plan::removal_tree`). Tests: `crates/yojaka-core/tests/exec.rs` (12 + 1 ignored real-Trash test),
@@ -182,7 +214,7 @@ The first write-capable release. Off by default: no `--write` means a preview on
   cross-volume test is ignored), template proptest, TUI `organize_screen`, CLI `organize_plans_then_apply...`.
 - Not done: re-planning on every key while typing (it re-plans after Enter); a place picker. (`index-only`
   was dropped from FR-41 on 2026-11-11.)
-- Open (found 2026-11-12): organizing the same folder twice re-offers exact duplicates that share a name.
+- Fixed 2026-11-18 (plan 10 §4.3): organizing the same folder twice re-offered exact duplicates that share a name.
   Two identical `IMG_0112.gif` in different source folders become `IMG_0112.gif` and `IMG_0112 (1).gif`;
   the second plan matches both sources against `IMG_0112.gif` only and offers `IMG_0112 (2).gif`.
 

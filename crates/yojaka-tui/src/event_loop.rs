@@ -77,6 +77,7 @@ impl Runtime {
                     }
                 }
                 Cmd::LoadHistory => self.load_history(),
+                Cmd::ClearHistory => self.clear_history(),
                 Cmd::PlanOrganize(req) => self.start_plan(*req),
                 Cmd::SavePlan(plan) => self.save_plan(&plan),
                 Cmd::Remember(what) => self.remember(&what),
@@ -403,6 +404,7 @@ impl Runtime {
                     transfer: req.transfer,
                     infer_location: req.infer,
                     location,
+                    skip_identical: req.skip_identical,
                 };
                 let result = engine
                     .organize(&root, local, &opts, &sink, &token)
@@ -442,6 +444,18 @@ impl Runtime {
                 Err(e) => {
                     let _ = tx.send(Bg::Notice(format!("Cannot read the history: {e}")));
                 }
+            });
+    }
+
+    /// Deletes the history of the finished runs (Yojaka's journal folder only; no photo is
+    /// touched), then the app reloads the list.
+    fn clear_history(&self) {
+        let (engine, tx) = (self.engine.clone(), self.bg_tx.clone());
+        let _ = std::thread::Builder::new()
+            .name("history-clear".into())
+            .spawn(move || {
+                let result = exec::history::clear(&engine.paths).map_err(|e| e.to_string());
+                let _ = tx.send(Bg::HistoryCleared(result));
             });
     }
 
@@ -564,9 +578,11 @@ pub fn run(
                 Ok(Event::Key(k)) => {
                     let editing = (app.screen == crate::app::Screen::Browser
                         && app.browser.editing_filter)
-                        || (app.screen == crate::app::Screen::Organize
-                            && app.organize.editing.is_some());
-                    if app.modal.is_some() {
+                        || app
+                            .plan_state_of(app.screen)
+                            .is_some_and(|o| o.editing.is_some());
+                    // A question box, or the Actions Confirm step: keys are text (y, or the phrase).
+                    if app.modal.is_some() || app.pipeline_confirming() {
                         msgs.extend(keymap::translate_modal(k));
                     } else {
                         msgs.extend(keymap::translate(k, editing, app.confirm_flush));

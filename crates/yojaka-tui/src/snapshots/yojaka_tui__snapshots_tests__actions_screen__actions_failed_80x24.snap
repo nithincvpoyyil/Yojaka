@@ -1,0 +1,28 @@
+---
+source: crates/yojaka-tui/src/snapshots_tests.rs
+expression: out
+---
+"Yojaka · [READ-ONLY]                                               12,871 files "
+" ╭───────────╮╭───╮╭───╮╭───╮╭───╮╭───╮                                         "
+" │ 1 Actions ││ 2 ││ 3 ││ 4 ││ 5 ││ 6 │                                         "
+"─┘           └┴───┴┴───┴┴───┴┴───┴┴───┴─────────────────────────────────────────"
+" Organize into folders · /photos                                                "
+" ────────────────────────────────────────────────────────────────────────────── "
+" ✔ Scan             12,871 files · 1,204 new or changed                    0:00 "
+" ✔ Summary          12,480 photos · 391 videos · 144.4 GB · 2019 – 2023         "
+"                    India 6,100 · France 2,400 · Japan 1,300 · 3,071 without GPS"
+" ✔ Layout           Merge into one folder   Photos/IMG_0001.heic                "
+" ✔ Destination      copy to /Yojaka Organized                                   "
+" ✖ Confirm          could not plan: copies cannot go inside the scanned fold…   "
+"   │ Esc goes back to change it.                                                "
+" ○ Run                                                                          "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"Esc go back  q quit                                                             "

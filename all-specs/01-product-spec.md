@@ -38,11 +38,12 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 | S3 | "Organize this mess": choose a layout such as `YYYY/MM/` or **by place** (`India/Goa/2023-08/`), see the proposed folder tree, and move or copy files into it. |
 | S4 | ~~"Undo that": revert the last operation completely.~~ Dropped 2026-11-12 (ADR-0009): a move or a copy is the user's decision, and Yojaka warns about it. |
 | S5 | "Just tell me, don't touch anything": read-only analysis and export (CSV/JSON). This is the default mode. |
+| S6 | "Just tidy it for me" (added 2026-11-17): open a new folder, see what is in it, pick a ready-made action (for example merge everything into one folder, or sort by year and place), pick a destination, review and run (§4.8). |
 
 ## 4. Functional requirements
 
 ### 4.1 Launch and modes
-- **FR-1** `yojaka` with no arguments opens the TUI on the current directory. `yojaka <path>` opens it on that path, which may be a whole volume such as `/Volumes/Backup`.
+- **FR-1** `yojaka` with no arguments opens the TUI on the current directory. `yojaka <path>` opens it on that path, which may be a whole volume such as `/Volumes/Backup`. A folder Yojaka has no saved data for opens on the **Actions** tab (§4.8) and is scanned by itself; a folder with saved data opens on the **Dashboard**. Nothing is asked (added 2026-11-17).
 - **FR-2** Two operating modes:
   - **Read-only** (default): scan, index, analyze and export. No filesystem writes outside Yojaka's own data folder.
   - **Write** (`--write` flag, or switching in the TUI with a confirmation): allows delete, move and copy operations. Even in write mode, every change goes through Plan → Dry-run → Confirm (FR-30).
@@ -128,6 +129,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   - `{format}/{name}`
   - `{kind}/{year}/{month_name}/{name}`, which puts photos and videos in separate folders
   - `{country}/{city}/{year}-{month_name}/{name}`, which sorts by location (FR-44)
+  - `{year}/{name}`, `{year}/{country}/{city}/{name}`, `{kind}/{name}` (photos in one folder and videos in another, with no folders inside) and `{kind}/{format}/{name}` (`Photos/HEIC`, `Videos/MOV`). These four presets were added on 2026-11-17 for the Actions tab (§4.8). `{format}` gives upper-case names.
 
   The date comes from EXIF (photos) or the container creation date (videos), and falls back to file mtime. Files with no date go to `_undated/`.
 - **FR-41** Choose the operation: **copy** (originals untouched) or **move**. (Index-only was dropped on 2026-11-11: planning already changes nothing until the plan is applied.)
@@ -136,6 +138,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   - The top N folders, with file counts and sizes.
   - Collapsed nodes ("… 1,284 more folders").
   - Expand on demand in the TUI.
+- **FR-43a** **Copies** may not go into the scanned folder or a folder inside it (added 2026-11-17): the next scan would find every copy as a duplicate of its original. The planner refuses it, and `apply` refuses it again for a plan made earlier or edited by hand. **Moving** inside the folder stays allowed, because tidying a folder in place is a normal use (changed 2026-11-18 while building; refusing it would have removed that).
 
 ### 4.5a Organize by location (GPS → approximate place)
 - **FR-44** Turn GPS latitude and longitude into an **approximate place name** for both photos (EXIF GPS) and videos (QuickTime ISO 6709 location). The lookup is **fully offline**, using a place database built into the app (GeoNames, towns with population ≥ 1,000). Each file gets:
@@ -183,6 +186,24 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
   2. Remembering the user's choices (preferred keep rules, templates, excluded folders) in a config file so they become defaults next time.
 
   Please confirm this is what you meant.
+
+### 4.8 Actions: ready-made jobs (added 2026-11-17, plan `10-actions-plan.md`)
+- **FR-70** An **Actions** tab, first in the tab strip, offers ready-made jobs on the one folder Yojaka was opened on. Each runs the same steps on one page: scan → what is in the folder (photo and video counts, size, years, top countries and the number without GPS) → choose an action (each with a short description) → choose the destination and copy or move → the usual Review box (FR-50..56). There is no other way to write files.
+- **FR-71** The actions:
+
+  | Action | Pattern |
+  |---|---|
+  | Merge into one folder | `{kind}/{name}`: `Photos/` and `Videos/`, no folders inside |
+  | By year | `{year}/{name}` |
+  | By year and month | `{year}/{month_name}/{name}` |
+  | By year and place | `{year}/{country}/{city}/{name}` |
+  | By place | `{country}/{city}/{name}` |
+  | By file format | `{kind}/{format}/{name}` |
+
+  A Live Photo's video stays next to its photo (FR-20b), so in Merge it is in `Photos/`.
+- **FR-72** In every action, **identical files are copied or moved once**. Only files with the same bytes count (the exact tier, FR-30); the keep rules (FR-31) choose which copy goes. With move, the other copies stay where they are; nothing is deleted. The Review box says how many were left out. `yojaka organize --skip-identical` does the same in the CLI.
+- **FR-73** Places in Actions come from GPS only. Files without GPS go to `No Location`; Actions never infers a place (FR-46 stays on the Organize screen and CLI).
+- **FR-74** Running the same action again after it was applied plans no new copies, including for files that were given a ` (n)` suffix.
 
 ## 5. Non-functional requirements
 

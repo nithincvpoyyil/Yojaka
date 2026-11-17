@@ -1,0 +1,28 @@
+---
+source: crates/yojaka-tui/src/snapshots_tests.rs
+expression: out
+---
+"Yojaka · [READ-ONLY]                                               12,871 files "
+" ╭───────────╮╭───╮╭───╮╭───╮╭───╮╭───╮                                         "
+" │ 1 Actions ││ 2 ││ 3 ││ 4 ││ 5 ││ 6 │                                         "
+"─┘           └┴───┴┴───┴┴───┴┴───┴┴───┴─────────────────────────────────────────"
+" Ready-made jobs for /photos. Each one scans the folder, shows what is in it,   "
+" asks a few questions, then runs with a progress bar. Nothing changes until you "
+" confirm.                                                                       "
+"                                                                                "
+" ▶ Organize into folders                                                        "
+"     Copies or moves every photo and video into new folders: by place, by year, "
+"     or all in one. Identical files are copied once.                            "
+"                                                                                "
+"   Remove duplicates                                                            "
+"     Finds files with exactly the same bytes and moves the extra copies to the  "
+"     Trash, keeping one of each. Look-alikes are left for the Duplicates tab.   "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"q quit  ? help  ↑↓ choose  Enter start  < > tabs                                "

@@ -8,5 +8,5 @@ pub mod transfer;
 pub mod trash;
 
 pub use apply::{ApplyOptions, ApplyReport, OpNote, apply, check_plan};
-pub use history::{RunStatus, RunSummary};
+pub use history::{ClearReport, RunStatus, RunSummary};
 pub use trash::{DirTrash, SystemTrash, Trasher};
