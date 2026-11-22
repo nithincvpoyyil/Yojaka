@@ -44,6 +44,7 @@ pub fn run(engine: Engine, root: PathBuf, opts: TuiOptions) -> std::io::Result<(
     // A folder with saved data opens on the Dashboard; a new one on Actions (FR-1), decided
     // before the first frame so the screen never flashes.
     let opened_before = engine.has_index(&root, opts.local_index);
+    let stale = engine.stale_index(&root, opts.local_index);
     let mut app = app::App::new(root, opts.mode);
     if !opened_before {
         app.screen = app::Screen::Actions;
@@ -51,6 +52,13 @@ pub fn run(engine: Engine, root: PathBuf, opts: TuiOptions) -> std::io::Result<(
     app.use_config(&engine.config);
     app.refresh_when_stale = opts.refresh;
     app.confirm_flush = opts.force;
+    // Saved data this build cannot use (made by an older or a newer one): ask to scan from
+    // scratch, as `--force` does, and say why.
+    if let Some(why) = stale {
+        tracing::warn!(%why, "saved data cannot be used; asking to scan from scratch");
+        app.confirm_flush = true;
+        app.stale_index = true;
+    }
     let mut guard = terminal::TerminalGuard::enter()?;
     let result = event_loop::run(
         &mut guard,

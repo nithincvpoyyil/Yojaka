@@ -64,6 +64,20 @@ impl Engine {
             .is_ok_and(|r| self.index_path(&r, local).is_file())
     }
 
+    /// Why `root`'s saved data cannot be used by this build (it was made by an older or a newer
+    /// one), so it must be scanned from scratch. `None` when it can be used, or there is none.
+    pub fn stale_index(&self, root: &std::path::Path, local: bool) -> Option<String> {
+        let root = Self::protected().check_root(root).ok()?;
+        let index = self.index_path(&root, local);
+        if !index.is_file() {
+            return None;
+        }
+        match index::Index::open(&index) {
+            Err(e @ YojakaError::IndexVersion(_)) => Some(e.to_string()),
+            _ => None,
+        }
+    }
+
     /// Scans `opts.root` and updates its index. Refuses protected locations.
     pub fn scan(
         &self,

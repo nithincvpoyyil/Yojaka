@@ -956,6 +956,33 @@ fn force_asks_at_start_up_and_waits_for_the_answer() {
 }
 
 #[test]
+fn saved_data_from_another_build_asks_to_scan_from_scratch() {
+    // Found at start-up (`lib::run`): the `--force` prompt opens and says why.
+    let mut a = app_at(80, 24);
+    a.confirm_flush = true;
+    a.stale_index = true;
+    insta::assert_snapshot!("stale_index_prompt_80x24", draw(&a, 80, 24));
+    // N: the saved data cannot be read, and the dashboard says how to fix it
+    a.update(Msg::Bg(Bg::Worker(Response::Error(
+        "the saved data for this folder is from an older Yojaka build (it has no file.color_signature)"
+            .into(),
+    ))));
+    assert!(a.update(Msg::ConfirmNo).is_empty());
+    assert!(!a.dashboard.scan.running);
+    let screen = draw(&a, 80, 24);
+    assert!(
+        screen.contains("Press R to scan this folder from scratch"),
+        "{screen}"
+    );
+    // R, then Y: wiped and scanned from scratch; the hint goes
+    a.update(Msg::FullRescan);
+    assert!(a.confirm_flush);
+    let cmds = a.update(Msg::ConfirmYes);
+    assert!(matches!(cmds.as_slice(), [Cmd::StartScan { force: true }]));
+    assert!(!a.stale_index && a.dashboard.error.is_none());
+}
+
+#[test]
 fn force_yes_wipes_and_scans_once() {
     let mut a = app_at(80, 24);
     a.confirm_flush = true;
@@ -2505,6 +2532,8 @@ mod actions_screen {
                 "Remove duplicates",
                 "Nothing changes until you",
                 "Look-alikes are left for the Duplicates tab",
+                "Scan → Summary → Layout → Destination → Confirm → Run",
+                "Scan → Summary → Find identical → Keep which copy → Confirm → Run",
             ] {
                 assert!(out.contains(text), "{text}: {out}");
             }
@@ -2530,9 +2559,16 @@ mod actions_screen {
                 "▶ Merge into one folder",
                 "Identical files are copied once.",
                 "○ Destination",
+                "● Waiting for you · 0:00",
             ] {
                 assert!(out.contains(text), "{text}: {out}");
             }
+            let boxes = if w < 88 {
+                "│✔ Summary│─▶│● Layout│─▶│○ Destination│"
+            } else {
+                "│ ✔ Summary │─▶│ ● Layout │─▶│ ○ Destination │"
+            };
+            assert!(out.contains(boxes), "{out}");
             snap("layout", &a);
 
             a.update(Msg::Enter);
@@ -2562,6 +2598,8 @@ mod actions_screen {
             assert!(out.contains("copying… 17 of 40"), "{out}");
             assert!(out.contains("IMG_17.jpg"), "{out}");
             assert!(out.contains("Ctrl-C stops after this file"), "{out}");
+            assert!(out.contains(" Running · 0:00"), "{out}");
+            assert!(out.contains("42%──"), "the Run box shows how far: {out}");
             snap("run", &a);
 
             let report = ApplyReport {
@@ -2584,6 +2622,7 @@ mod actions_screen {
                 "{out}"
             );
             assert!(out.contains("Enter  back to the list"), "{out}");
+            assert!(out.contains("✔ Done · 0:00"), "{out}");
             snap("done", &a);
 
             let mut a = actions_app(w, h);
@@ -2594,6 +2633,12 @@ mod actions_screen {
                 "{out}"
             );
             assert!(out.contains("▶ The oldest"), "{out}");
+            let boxes = if w < 88 {
+                "│✔ Find │─▶│● Keep │─▶│○ Confirm│"
+            } else {
+                "│ ✔ Find identical │─▶│ ● Keep which copy │─▶│ ○ Confirm │"
+            };
+            assert!(out.contains(boxes), "short names when narrow: {out}");
             snap("keep", &a);
 
             let mut a = actions_app(w, h);
@@ -2610,6 +2655,11 @@ mod actions_screen {
             assert!(out.contains("✖ Confirm"), "{out}");
             assert!(
                 out.contains("could not plan: copies cannot go inside"),
+                "{out}"
+            );
+            assert!(out.contains("✖ Failed · 0:00"), "{out}");
+            assert!(
+                out.contains("│✖ Confirm│") || out.contains("│ ✖ Confirm │"),
                 "{out}"
             );
             snap("failed", &a);
@@ -2643,6 +2693,38 @@ mod actions_screen {
             a.update(exec_progress(3));
             let _ = draw(&a, w, h);
         }
+    }
+
+    #[test]
+    fn the_stage_boxes_become_one_line_then_go_when_room_is_short() {
+        let at_destination = |w: u16, h: u16| {
+            let mut a = actions_app(w, h);
+            start(&mut a, Job::Organize);
+            scan_done(&mut a);
+            a.update(Msg::Enter);
+            draw(&a, w, h)
+        };
+        let out = at_destination(80, 24);
+        assert!(out.contains("╭───────╮"), "boxes: {out}");
+        // Too narrow for boxes: one line of icons and the current step's name.
+        let out = at_destination(60, 16);
+        assert!(!out.contains("╭───────╮"), "{out}");
+        assert!(out.contains("✔─✔─✔─●─○─○  Destination"), "{out}");
+        assert!(out.contains("Organize into folders"), "{out}");
+        assert!(out.contains("Waiting for you"), "{out}");
+        // Too short: the steps and the choice stay, the top goes.
+        let out = at_destination(80, 14);
+        assert!(!out.contains("Waiting for you"), "{out}");
+        assert!(out.contains("● Destination"), "{out}");
+        assert!(out.contains("▶ Folder"), "{out}");
+
+        // Confirm keeps the boxes from the step before: its folder list gives way first.
+        let mut a = actions_app(80, 20);
+        a.mode = Mode::Write;
+        organize_at_confirm(&mut a, organize_plan(40, OpMode::Copy));
+        let out = draw(&a, 80, 20);
+        assert!(out.contains("│● Confirm│"), "{out}");
+        assert!(out.contains("y / Enter  copy"), "{out}");
     }
 
     #[test]

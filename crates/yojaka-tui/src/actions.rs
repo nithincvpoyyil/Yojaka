@@ -92,6 +92,15 @@ impl Step {
         }
     }
 
+    /// The name in a stage box when the full names do not fit across the screen.
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Step::FindIdentical => "Find",
+            Step::Keep => "Keep",
+            s => s.label(),
+        }
+    }
+
     /// Waits for a choice. The other steps run by themselves.
     pub fn asks(self) -> bool {
         matches!(
@@ -153,6 +162,9 @@ pub struct Pipeline {
     pub took: Vec<Option<Duration>>,
     /// When the current step began.
     pub since: Instant,
+    /// When the job began, and how long it took once it finished or a step failed.
+    pub started: Instant,
+    pub ended: Option<Duration>,
     /// Why the current step failed.
     pub failed: Option<String>,
     /// Nothing is left to do: the last step finished, the job ended early, or Run failed.
@@ -171,6 +183,8 @@ impl Pipeline {
             results: vec![Vec::new(); n],
             took: vec![None; n],
             since: Instant::now(),
+            started: Instant::now(),
+            ended: None,
             failed: None,
             finished: false,
             run: RunProgress::default(),
@@ -180,6 +194,11 @@ impl Pipeline {
 
     pub fn step(&self) -> Step {
         self.job.steps()[self.at]
+    }
+
+    /// How long the job has been going, choices included; it stops when the job ends or fails.
+    pub fn elapsed(&self) -> Duration {
+        self.ended.unwrap_or_else(|| self.started.elapsed())
     }
 
     /// The current step, while the job still needs it.
@@ -208,6 +227,7 @@ impl Pipeline {
             self.since = Instant::now();
         } else {
             self.finished = true;
+            self.ended = Some(self.started.elapsed());
         }
     }
 
@@ -217,11 +237,13 @@ impl Pipeline {
         self.results[self.at] = result;
         self.took[self.at] = Some(self.since.elapsed());
         self.finished = true;
+        self.ended = Some(self.started.elapsed());
     }
 
     pub fn fail(&mut self, why: String) {
         self.took[self.at] = Some(self.since.elapsed());
         self.failed = Some(why);
+        self.ended = Some(self.started.elapsed());
     }
 
     /// Esc: back to the step before that asks for a choice, forgetting what came after it.
@@ -238,6 +260,7 @@ impl Pipeline {
         self.at = i;
         self.failed = None;
         self.finished = false;
+        self.ended = None;
         self.since = Instant::now();
         true
     }
@@ -405,6 +428,26 @@ mod tests {
         assert_eq!(p.status(4), Status::Failed);
         assert!(p.back());
         assert_eq!((p.step(), p.failed.as_deref()), (Step::Keep, None));
+    }
+
+    #[test]
+    fn the_job_clock_stops_when_it_ends_or_fails_and_goes_on_after_back() {
+        let mut p = Pipeline::new(Job::Dupes);
+        assert!(p.ended.is_none());
+        p.complete(vec![]);
+        assert!(p.ended.is_none(), "a step done is not the job done");
+        for _ in 0..3 {
+            p.complete(vec![]);
+        }
+        p.fail("no".into());
+        let stopped = p.elapsed();
+        assert_eq!(p.ended, Some(stopped));
+        assert!(p.back());
+        assert!(p.ended.is_none(), "back to a choice: the clock goes on");
+        p.finish_early(vec![]);
+        assert!(p.ended.is_some());
+        assert_eq!(Step::Keep.short_label(), "Keep");
+        assert_eq!(Step::Destination.short_label(), "Destination");
     }
 
     #[test]

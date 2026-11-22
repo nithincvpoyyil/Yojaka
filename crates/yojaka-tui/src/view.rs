@@ -158,7 +158,7 @@ pub fn render(app: &App, f: &mut Frame) {
         screens::help::render(f, body, app.screen);
     }
     if app.confirm_flush {
-        render_confirm(f, body);
+        render_confirm(f, body, app.stale_index);
     }
     if let Some(m) = &app.modal {
         screens::modal::render(f, body, m);
@@ -233,10 +233,22 @@ pub fn tab_bar(current: Screen, width: u16, active: bool) -> Vec<Line<'static>> 
     vec![Line::from(top), Line::from(mid), Line::from(low)]
 }
 
-fn render_confirm(f: &mut Frame, body: Rect) {
-    let lines = vec![
+fn render_confirm(f: &mut Frame, body: Rect, stale: bool) {
+    let mut lines = vec![
         Line::styled("Scan this folder from scratch?", theme::title()),
         Line::raw(""),
+    ];
+    if stale {
+        lines.extend([
+            Line::styled(
+                "This folder's saved data was made by another Yojaka build,",
+                theme::accent(),
+            ),
+            Line::styled("and this one cannot use it.", theme::accent()),
+            Line::raw(""),
+        ]);
+    }
+    lines.extend([
         Line::raw("Yojaka forgets what it saved about this folder and reads it all"),
         Line::raw("again, so it takes longer than a normal scan. Your photos and"),
         Line::raw("videos are not touched."),
@@ -245,7 +257,7 @@ fn render_confirm(f: &mut Frame, body: Rect) {
             "y / Enter  scan from scratch      n / Esc  cancel",
             theme::accent(),
         ),
-    ];
+    ]);
     let height = (lines.len() as u16 + 2).min(body.height);
     let width = 66.min(body.width);
     let rect = Rect::new(

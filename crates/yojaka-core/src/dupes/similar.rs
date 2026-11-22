@@ -598,18 +598,7 @@ pub(super) fn cluster(pics: &[Pic], max_bits: u32) -> Vec<Vec<i64>> {
 
 /// Candidate groups (file ids) for the similar tier. Decodes pictures not hashed before.
 pub(super) fn candidates(run: &mut Run<'_>, max_bits: u32) -> Result<Vec<Vec<i64>>> {
-    // An index made before this tier existed has nowhere to keep what a picture looks like.
-    let has_column: bool = run.conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('file') WHERE name = 'color_signature'",
-        [],
-        |r| Ok(r.get::<_, i64>(0)? > 0),
-    )?;
-    if !has_column {
-        return Err(crate::YojakaError::IndexVersion(
-            "this folder was scanned by an older Yojaka; scan it from scratch (--force) to compare pictures"
-                .into(),
-        ));
-    }
+    // An index made before this tier existed is refused when it is opened (`Index::open`).
     forget_old_looks(&mut run.conn)?;
     let unsupported: i64 = run.conn.query_row(
         &format!(

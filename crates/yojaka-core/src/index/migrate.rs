@@ -1,5 +1,8 @@
 //! `PRAGMA user_version` based migration runner.
 
+use std::collections::HashSet;
+use std::sync::OnceLock;
+
 use rusqlite::Connection;
 
 use crate::{Result, YojakaError};
@@ -25,4 +28,38 @@ pub(crate) fn run(conn: &mut Connection, migrations: &[(u32, &str)]) -> Result<(
         tx.commit()?;
     }
     Ok(())
+}
+
+/// Until v1.0 a migration is changed in place (no fix-up migrations), so an index made by an
+/// older build can be at the latest version and still lack a column. Say so plainly here,
+/// instead of failing later with "no such column".
+pub(crate) fn check_columns(conn: &Connection) -> Result<()> {
+    let have: HashSet<(String, String)> = columns(conn)?.into_iter().collect();
+    match fresh_columns()?.iter().find(|c| !have.contains(*c)) {
+        None => Ok(()),
+        Some((table, column)) => Err(YojakaError::IndexVersion(format!(
+            "the saved data for this folder is from an older Yojaka build (it has no {table}.{column})"
+        ))),
+    }
+}
+
+/// Every `(table, column)` of a fresh index, worked out once from [`MIGRATIONS`].
+fn fresh_columns() -> Result<&'static [(String, String)]> {
+    static FRESH: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    if let Some(cols) = FRESH.get() {
+        return Ok(cols);
+    }
+    let mut conn = Connection::open_in_memory()?;
+    run(&mut conn, MIGRATIONS)?;
+    let cols = columns(&conn)?;
+    Ok(FRESH.get_or_init(|| cols))
+}
+
+fn columns(conn: &Connection) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.name, p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p \
+         WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' ORDER BY m.name, p.cid",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }

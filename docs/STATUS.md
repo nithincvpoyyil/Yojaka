@@ -1,6 +1,6 @@
 # Yojaka: project status and hand-off
 
-Last updated: 2026-11-18. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
+Last updated: 2026-11-22. Read this first when resuming. The plan is `all-specs/03-iteration-plan.md`;
 rules are in `CLAUDE.md`.
 
 **Scan walker (after I4), done 2026-11-09** (`all-specs/05-scan-walker-fix-plan.md`, ADR-0005): `dua-core`
@@ -22,7 +22,7 @@ Committed. Iterations 5, 6 and 7 followed (below).
 | 6 | Organize (templates, planner, copy/move, screen, CLI) | Done (`bb1e12e`), signed off 2026-11-11 (ADR-0007) |
 | 7 | More duplicate tiers (likely, name, similar) | Done (`99db741`), signed off 2026-11-11 (ADR-0008) |
 | 8 | Hardening: FR audit, saved preferences, fault injection (`06`) | Done 2026-11-11 (`b93a80b`, `0104cbe`, `eb16c83`, Phase 3 commit) |
-| 9 | Features and release v1.0: Actions tab, detailed dashboard, real libraries, release, performance last (`09`) | **Phase 1A Actions built 2026-11-18, waiting for the user's sign-off** (not committed); then the dashboard (waiting for the user's description) |
+| 9 | Features and release v1.0: Actions tab, detailed dashboard, real libraries, release, performance last (`09`) | **Phase 1A Actions committed (`37513ce`); stage strip on top added 2026-11-18, committed 2026-11-22; waiting for the user's sign-off**; then the dashboard (waiting for the user's description) |
 | 10 | LLM assist | Not started |
 | 11 | GUI | Not started |
 
@@ -33,20 +33,28 @@ Checks at the end of the Iteration 7 session: see "Duplicate tiers" below.
 
 Full check: `source ~/.cargo/env && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo nextest run --workspace && cargo deny check`.
 New insta snapshots: run with `INSTA_UPDATE=always`, then read the `.snap`. The TUI snapshots under
-`crates/yojaka-tui/src/snapshots/` are gitignored; the CLI help snapshot is tracked.
+`crates/yojaka-tui/src/snapshots/` are tracked since `429fc92`, like the CLI help snapshot.
 
 ## Actions tab (I9 Phase 1A, plan `all-specs/10-actions-plan.md`, ADR-0010)
 
 The user's idea of 2026-11-17, reviewed against the architecture and decided the same day (A1-A12). **Built
-2026-11-18**; full check green (428 tests, 6 skipped); driven by hand in a pty on a fixture tree. Waiting for the
-user to try it and sign it off. Not committed.
+2026-11-18**; full check green (428 tests, 6 skipped); driven by hand in a pty on a fixture tree. The user did not
+like it; it was rebuilt as a pipeline (next paragraph).
 
 **Redo as a pipeline (2026-11-18, user feedback):** the user did not like the one-page tab ("simple, like a
 pipeline run in CI, not a dashboard"). Chosen from mockups: vertical CI-log steps, a pipeline list first
 (Organize into folders, Remove duplicates), the six layouts, the opened folder only, Confirm as an inline step,
 Run with a progress bar. Plan: `all-specs/10-actions-plan.md` §10 (P1-P9). **Built 2026-11-18** (ADR-0010
 amended): `actions.rs`, `app/pipeline.rs`, `screens/actions.rs`; full check green (441 tests); both jobs driven
-in a pty on a fixture tree. No core or CLI change. Waiting for the user to try it and sign it off. Not committed.
+in a pty on a fixture tree. No core or CLI change. Committed by the user in `37513ce` (with history delete).
+
+**Stage strip on top (2026-11-18, user feedback, plan §10.1):** "arrow-based UI on top: which pipeline is running
+and its status". The user chose boxed stages joined by `─▶` arrows from three mockups. Above the steps: the job, the
+folder, a status badge (`Running` / `Waiting for you` / `Done` / `Failed`) with the job's time, then one box per stage
+coloured by state, the percentage on the lower edge of a step at work. Shorter names (`Find`, `Keep`) at 80 columns,
+one line of icons when narrower; on short screens the rule, then the second result lines, then the boxes give way, but
+Confirm's folder list shrinks first. The job list shows each job's stages (`Scan → Summary → …`). 443 tests green,
+driven in a pty. Committed 2026-11-22; waiting for the user's sign-off.
 
 - New first tab **Actions**: one page with "What's here", six ready-made actions with descriptions, destination,
   copy / move, "Review and run" (the existing Review box and executor). Keys become `1` Actions … `6` History.
@@ -156,8 +164,9 @@ marked by hand. Measured precision and recall: `docs/dupes-accuracy.md`.
   badge; a non-exact group shows `? review` and a comparison table (size, pixels, taken, length, camera). `p` changes
   the rule for exact groups only.
 - Index: new column `file.color_signature` (in `0002_scan_file.sql`, no new migration; bit 60 = the upright
-  picture is portrait). **Saved data from before 2026-11-10 needs `--force` before the similar tier works**; the
-  other tiers work on old data. `meta_kv.picture_look_version` (now `2`): when the code's `LOOK_VERSION` differs,
+  picture is portrait). **Saved data from before 2026-11-10 needs a scan from scratch**: not only the similar tier,
+  any rescan that found a new or changed file failed with "no such column: color_signature" (the scan's upsert clears
+  it). Since 2026-11-22 the app says so (see "Stale saved data" under Decisions). `meta_kv.picture_look_version` (now `2`): when the code's `LOOK_VERSION` differs,
   every saved picture hash is dropped once and made again (no `--force` needed).
 - `fixturegen --variants N` writes the look-alike sets and decoys; the manifest has `variant` and
   `expected.same_content`.
@@ -235,6 +244,14 @@ The first write-capable release. Off by default: no `--write` means a preview on
 - MIT license. Binary-size goal under 100 MB (release binary was 7.4 MB after I3).
 - Before v1.0 edit original migrations; do not stack fix-up migrations (a changed schema means rebuilding
   the saved data with `--force`).
+- **Stale saved data (2026-11-22):** `Index::open` compares the index's columns with a fresh one built from the
+  migrations (`index/migrate.rs` `check_columns`). A missing column is an `IndexVersion` error naming it ("the saved
+  data for this folder is from an older Yojaka build (it has no file.color_signature)"); the CLI hints
+  `yojaka scan --force`. The TUI checks at start-up (`Engine::stale_index`) and opens the "Scan this folder from
+  scratch?" question with a line saying why; after `n` the dashboard and a job's Scan step say "press R". The similar
+  tier's own column check went. Tests: `an_index_missing_a_column_is_called_older`,
+  `saved_data_from_an_older_build_is_refused_clearly_until_scanned_from_scratch`,
+  `saved_data_from_another_build_asks_to_scan_from_scratch` (snapshot `stale_index_prompt_80x24`).
 - `/private/var/folders` is exempt from the protected paths; `/private/tmp` stays protected, so perf
   fixtures go in the repo's `out/` dir.
 - Own ISO-BMFF / EBML walkers and own k-d tree (ADR-0002, ADR-0003). TUI architecture: ADR-0004.

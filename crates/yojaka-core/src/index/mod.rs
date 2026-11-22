@@ -34,6 +34,7 @@ impl Index {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         migrate::run(&mut conn, migrate::MIGRATIONS)?;
+        migrate::check_columns(&conn)?;
         Ok(Self { conn })
     }
 
@@ -98,5 +99,23 @@ mod tests {
             err.to_string().contains("created by a newer Yojaka"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn an_index_missing_a_column_is_called_older() {
+        // Before v1.0 migrations are edited in place, so an old index can be at the latest
+        // version without a column (here: one made before the similar tier).
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("i.db");
+        drop(Index::open(&p).unwrap());
+        Connection::open(&p)
+            .unwrap()
+            .execute_batch("ALTER TABLE file DROP COLUMN color_signature")
+            .unwrap();
+        let err = Index::open(&p).unwrap_err();
+        assert!(matches!(err, YojakaError::IndexVersion(_)), "{err:?}");
+        let text = err.to_string();
+        assert!(text.contains("older Yojaka build"), "{text}");
+        assert!(text.contains("file.color_signature"), "{text}");
     }
 }

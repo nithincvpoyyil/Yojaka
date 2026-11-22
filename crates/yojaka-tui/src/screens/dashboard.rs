@@ -51,9 +51,13 @@ fn render_scan(app: &App, f: &mut Frame, area: Rect) {
             Paragraph::new(fmt::truncate(e, inner.width as usize)).style(theme::error()),
             line1,
         );
+        let hint = if app.stale_index {
+            "Press R to scan this folder from scratch. Your files are not touched."
+        } else {
+            "Open a folder with your photos, such as ~/Pictures."
+        };
         f.render_widget(
-            Paragraph::new("Open a folder with your photos, such as ~/Pictures.")
-                .style(theme::dim()),
+            Paragraph::new(fmt::truncate(hint, inner.width as usize)).style(theme::dim()),
             line2,
         );
         return;

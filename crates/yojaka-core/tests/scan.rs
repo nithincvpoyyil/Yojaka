@@ -391,3 +391,34 @@ fn a_root_named_like_a_skipped_folder_is_still_scanned() {
         "a.jpg only; node_modules inside is still skipped"
     );
 }
+
+#[test]
+fn saved_data_from_an_older_build_is_refused_clearly_until_scanned_from_scratch() {
+    // Before v1.0 migrations are edited in place: an index made before the similar tier is at
+    // the latest version but has no `file.color_signature`. A rescan used to fail with
+    // "no such column"; now the index is refused by name, and a scan from scratch fixes it.
+    let env = TestEnv::with_fixture(7, 40);
+    let e = engine(&env);
+    let o = opts(&env);
+    scan(&e, &o);
+    assert_eq!(e.stale_index(&o.root, false), None);
+
+    let index = e.index_path(&o.root.canonicalize().unwrap(), false);
+    rusqlite::Connection::open(&index)
+        .unwrap()
+        .execute_batch("ALTER TABLE file DROP COLUMN color_signature")
+        .unwrap();
+    let why = e
+        .stale_index(&o.root, false)
+        .expect("the old index is noticed");
+    assert!(why.contains("older Yojaka build"), "{why}");
+    let err = e
+        .scan(&o, &EventSink::null(), &CancelToken::new())
+        .unwrap_err();
+    assert!(matches!(err, YojakaError::IndexVersion(_)), "{err:?}");
+
+    e.flush(&o.root, false).unwrap();
+    let s = scan(&e, &o);
+    assert_eq!(s.status, ScanStatus::Complete);
+    assert_eq!(e.stale_index(&o.root, false), None);
+}

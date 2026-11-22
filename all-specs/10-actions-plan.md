@@ -362,3 +362,43 @@ Built as planned, with these details settled while building:
   the rest of the report goes under it.
 
 Size: **M**, about 3 days.
+
+### 10.1 Stage strip on top (2026-11-18, user feedback)
+
+The user asked for "a bit more TUI for actions, like an arrow-based UI on top of the current UI: which
+pipeline is running and its status". Three mockups were shown; the user chose **boxed stages joined by
+arrows** (like Jenkins Blue Ocean or GitHub Actions). The vertical steps below stay as they are.
+
+```
+ Organize into folders · ~/Pictures                    ● Waiting for you · 0:41
+ ╭───────╮  ╭─────────╮  ╭────────╮  ╭─────────────╮  ╭─────────╮  ╭───────╮
+ │✔ Scan │─▶│✔ Summary│─▶│✔ Layout│─▶│● Destination│─▶│○ Confirm│─▶│○ Run  │
+ ╰───────╯  ╰─────────╯  ╰────────╯  ╰─────────────╯  ╰─────────╯  ╰───────╯
+ ──────────────────────────────────────────────────────────────────────────────
+ ✔ Scan             12,871 files · 1,204 new or changed                    0:06
+ …
+```
+
+- **Title line:** the job, the folder, and a status badge on the right: `⠹ Running`, `● Waiting for you`,
+  `✔ Done` or `✖ Failed`, with the job's time so far (choices included). The clock stops when the job ends
+  or fails and goes on after Esc. While a step waits for a choice the screen redraws once a second, so the
+  clock moves.
+- **Boxes:** one per stage, coloured by state (done green, current yellow edge with the step's icon, failed
+  red, waiting and skipped grey). An arrow is green once the stage before it is done. A step at work with a
+  known amount shows its percentage on the lower edge (`╰──42%──╯`): the scan's reading part, Find identical,
+  Confirm working out the plan, Run.
+- **Width:** names get a space either side when they fit (160 columns), none when tight; then Remove
+  duplicates shortens `Find identical` and `Keep which copy` to `Find` and `Keep` (80 columns). Narrower than
+  that, the stages become one line of icons and the current step's name: ` ✔─✔─✔─●─○─○  Destination`.
+- **Height:** when rows are short the rule goes first, then the second result lines, then the boxes become
+  the one line, then the top goes. The boxes stay from step to step: Confirm's folder list shrinks before
+  they go (one row short, its "Files by new folder:" heading gives up its row).
+- **The list** shows each job's stages under its description: `Scan → Summary → Layout → … → Run`.
+- No new keys; no core, CLI or write-path change.
+
+Code: `screens/actions.rs` (`title_line`, `stage_boxes`, `stage_chain`, `step_ratio`, `confirm_tail`),
+`actions.rs` (`Pipeline::started` / `ended` / `elapsed`, `Step::short_label`), `app/pipeline.rs`
+(`pipeline_busy` redraws the clock). Tests: `the_stage_boxes_become_one_line_then_go_when_room_is_short`,
+`the_job_clock_stops_when_it_ends_or_fails_and_goes_on_after_back`, and checks in the 80×24 / 160×48
+snapshot test. Driven in a pty on a fixture tree (copy, write mode asked at Confirm): **done 2026-11-18**,
+443 tests green. Waiting for the user's sign-off.

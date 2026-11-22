@@ -351,6 +351,9 @@ pub struct App {
     pub show_help: bool,
     /// The "flush index and rescan?" prompt is open.
     pub confirm_flush: bool,
+    /// The folder's saved data was made by another Yojaka build and cannot be used until it is
+    /// scanned from scratch (found at start-up; the prompt says why, the screens say `R`).
+    pub stale_index: bool,
     /// The tab strip has the keyboard: ←/→ switch screens, Enter / Esc / ↓ go back in.
     pub tab_mode: bool,
     /// A short message in the footer, and the tick at which it goes away.
@@ -393,6 +396,7 @@ impl App {
             screen: Screen::Dashboard,
             show_help: false,
             confirm_flush: false,
+            stale_index: false,
             tab_mode: false,
             notice: None,
             refresh_when_stale: false,
@@ -706,6 +710,7 @@ impl App {
             self.dashboard.no_index = true;
             self.dashboard.error = None;
             self.dashboard.scan.partial = false;
+            self.stale_index = false;
             self.browser.reset();
             self.dupes.reset();
         }

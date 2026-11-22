@@ -22,6 +22,8 @@ use crate::worker::ExecOutcome;
 
 /// Countries named in the summary.
 const TOP_COUNTRIES: usize = 3;
+/// Ticks between redraws of the job's clock while a step waits for a choice (4 × 250 ms).
+const CLOCK_TICKS: u64 = 4;
 
 impl App {
     /// The Confirm step has its plan on screen: keys are text (the phrase, or `y`).
@@ -32,11 +34,15 @@ impl App {
             && self.actions.review.is_some()
     }
 
-    /// Something on the Actions tab is moving (a spinner, a progress bar, the clock).
+    /// Something on the Actions tab is moving (a spinner, a progress bar, the clock). While a
+    /// step waits for a choice only the job's clock moves, so once a second is enough.
     pub(super) fn pipeline_busy(&self) -> bool {
         self.screen == Screen::Actions
             && self.actions.pipeline.as_ref().is_some_and(|p| {
-                p.going(p.step()) && (!p.step().asks() || self.actions.wants_plan())
+                p.going(p.step())
+                    && (!p.step().asks()
+                        || self.actions.wants_plan()
+                        || self.ticks.is_multiple_of(CLOCK_TICKS))
             })
     }
 
@@ -406,6 +412,10 @@ impl App {
                 };
                 let line = format!("{} files · {changed}", fmt::thousands(sum.files_indexed));
                 self.pipeline_complete(vec![line])
+            }
+            Err(e) if self.stale_index => {
+                p.fail(format!("{e}; press R to scan from scratch"));
+                vec![]
             }
             Err(e) => {
                 p.fail(e.to_string());
