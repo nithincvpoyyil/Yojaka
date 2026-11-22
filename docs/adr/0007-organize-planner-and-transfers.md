@@ -41,7 +41,9 @@ Live Photo pair. (It was meant to be undoable too; undo was dropped in ADR-0009.
   always needs `move N files` typed, whatever N; trash plans type a phrase at 50 (`file_ops()` counts
   only files, not folders or skips).
 - **Month names** (2026-11-12): `{month_name}` gives `Jan` … `Dec` and the presets and default use it;
-  `{month}` / `{month:02}` still give numbers.
+  `{month}` / `{month:02}` still give numbers. **Changed 2026-11-22** (UX review, the user's choice):
+  `{month_name}` gives whole names, `January` … `December`, knowing Finder sorts them A-Z. Previews and
+  the dry-run folder list show date folders in calendar order (`plan::tree::calendar_key`).
 
 ## Consequences
 - Plans got fields: `dest`, `inferred`, `pair`, and summary counters (all `serde(default)`).

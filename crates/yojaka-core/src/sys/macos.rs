@@ -19,8 +19,35 @@ pub fn open_nofollow(path: &std::path::Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
+/// Bytes free for this user on the disk that holds `path`, or would hold it: a folder that does
+/// not exist yet is measured at its nearest existing parent. `None` when that cannot be read.
+pub fn free_space(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let existing = path.ancestors().find(|p| p.exists())?;
+    let c = std::ffi::CString::new(existing.as_os_str().as_bytes()).ok()?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    // SAFETY: `c` is a valid NUL-terminated path and `st` points to writable memory of the right
+    // size; statvfs only writes into it.
+    #[allow(unsafe_code)]
+    let rc = unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) };
+    if rc != 0 {
+        return None;
+    }
+    // SAFETY: statvfs returned 0, so it filled `st`.
+    #[allow(unsafe_code)]
+    let st = unsafe { st.assume_init() };
+    Some(u64::from(st.f_bavail).saturating_mul(st.f_frsize))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn free_space_is_read_for_a_folder_that_does_not_exist_yet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let free = super::free_space(&tmp.path().join("not/yet/made"));
+        assert!(free.is_some_and(|b| b > 0), "{free:?}");
+    }
+
     #[test]
     fn a_symlink_is_refused() {
         let tmp = tempfile::tempdir().unwrap();

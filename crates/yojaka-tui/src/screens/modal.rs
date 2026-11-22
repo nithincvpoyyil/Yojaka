@@ -140,18 +140,12 @@ pub(crate) fn review_head(r: &Review) -> Vec<Line<'static>> {
         OpMode::Copy => format!(
             "Copy {n} files ({}) to {}. The originals stay.",
             fmt::bytes(p.summary.bytes),
-            p.dest
-                .as_deref()
-                .map(|d| d.display().to_string())
-                .unwrap_or_default()
+            p.dest.as_deref().map(fmt::home).unwrap_or_default()
         ),
         OpMode::Move => format!(
             "Move {n} files ({}) to {}.",
             fmt::bytes(p.summary.bytes),
-            p.dest
-                .as_deref()
-                .map(|d| d.display().to_string())
-                .unwrap_or_default()
+            p.dest.as_deref().map(fmt::home).unwrap_or_default()
         ),
         _ => format!(
             "Move {n} files ({}) to the Trash, keeping one copy of each of {} groups.",

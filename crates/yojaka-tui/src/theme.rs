@@ -23,8 +23,9 @@ const MAGENTA: (u8, u8, u8) = (0xfb, 0x94, 0xff);
 const CYAN: (u8, u8, u8) = (0x80, 0xfc, 0xff);
 /// Secondary text: the background lightened towards the selection blue (not in the palette).
 const MUTED: (u8, u8, u8) = (0x7f, 0x9d, 0xb8);
-/// A text box: between the background and the selection blue, so it reads as a field.
-const INPUT: (u8, u8, u8) = (0x1f, 0x46, 0x62);
+/// A text box: lighter than the background (2.1:1), so it reads as a field; white text on it
+/// stays at 7.3:1.
+const INPUT: (u8, u8, u8) = (0x2a, 0x5a, 0x80);
 
 fn truecolor() -> bool {
     static TRUE: OnceLock<bool> = OnceLock::new();
@@ -35,13 +36,46 @@ fn truecolor() -> bool {
     })
 }
 
-fn c((r, g, b): (u8, u8, u8)) -> Color {
+fn c(rgb: (u8, u8, u8)) -> Color {
     if truecolor() {
-        return Color::Rgb(r, g, b);
+        return Color::Rgb(rgb.0, rgb.1, rgb.2);
     }
-    // Nearest entry of the 6×6×6 color cube (indices 16..=231).
-    let level = |v: u8| ((u16::from(v) * 5 + 127) / 255) as u8;
-    Color::Indexed(16 + 36 * level(r) + 6 * level(g) + level(b))
+    Color::Indexed(xterm_index(rgb))
+}
+
+/// The six steps of each channel in xterm's 6×6×6 colour cube (indices 16..=231).
+const CUBE: [u8; 6] = [0, 95, 135, 175, 215, 255];
+
+/// The nearest of the 256 fixed colours. Each channel goes to its nearest cube step (the steps
+/// are not evenly spaced). A colour that is nearly grey may use the 24-step grey ramp
+/// (232..=255) instead, when that is closer; a coloured one keeps its hue.
+pub(crate) fn xterm_index((r, g, b): (u8, u8, u8)) -> u8 {
+    let step = |v: u8| {
+        (0..CUBE.len())
+            .min_by_key(|&i| CUBE[i].abs_diff(v))
+            .unwrap_or(0) as u8
+    };
+    let (ri, gi, bi) = (step(r), step(g), step(b));
+    let cube = 16 + 36 * ri + 6 * gi + bi;
+    let dist = |x: (u8, u8, u8)| {
+        [(x.0, r), (x.1, g), (x.2, b)]
+            .iter()
+            .map(|&(a, b)| u32::from(a.abs_diff(b)).pow(2))
+            .sum::<u32>()
+    };
+    let cube_rgb = (CUBE[ri as usize], CUBE[gi as usize], CUBE[bi as usize]);
+    let (lo, hi) = (r.min(g).min(b), r.max(g).max(b));
+    if hi - lo > 24 {
+        return cube;
+    }
+    let avg = (u16::from(r) + u16::from(g) + u16::from(b)) / 3;
+    let gi = ((avg.saturating_sub(8) + 5) / 10).min(23) as u8;
+    let level = 8 + 10 * gi;
+    if dist((level, level, level)) < dist(cube_rgb) {
+        232 + gi
+    } else {
+        cube
+    }
 }
 
 /// Background and default text of the whole screen.
@@ -49,13 +83,14 @@ pub fn base() -> Style {
     Style::new().fg(c(FOREGROUND)).bg(c(BACKGROUND))
 }
 
-/// A bordered panel with a yellow title; the border is yellow when `focused`.
+/// A bordered panel. Focused: yellow border and yellow title; otherwise a blue border and a
+/// white title, so focus shows in two ways, not by colour alone.
 pub fn panel<'a>(title: impl Into<ratatui::text::Line<'a>>, focused: bool) -> Block<'a> {
     let title: ratatui::text::Line = title.into();
     Block::default()
         .borders(ratatui::widgets::Borders::ALL)
         .border_style(border(focused))
-        .title(title.patch_style(self::title()))
+        .title(title.patch_style(if focused { self::title() } else { header() }))
 }
 
 /// Empties `area` (for popups) and repaints it with the base colors.
@@ -85,6 +120,13 @@ pub fn footer() -> Style {
 /// A key in the hint line: `q`, `Tab`, `R`.
 pub fn key_hint() -> Style {
     Style::new().fg(c(YELLOW)).add_modifier(Modifier::BOLD)
+}
+/// The one main next step in the hint line, drawn as a chip: ` a  review 77 files `.
+pub fn key_chip() -> Style {
+    Style::new()
+        .fg(c(BLACK))
+        .bg(c(YELLOW))
+        .add_modifier(Modifier::BOLD)
 }
 pub fn dim() -> Style {
     Style::new().fg(c(MUTED))
@@ -167,4 +209,78 @@ pub fn tab_active() -> Style {
         .fg(c(FOREGROUND))
         .bg(c(SELECTION))
         .add_modifier(Modifier::BOLD)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WCAG contrast ratio of two colours.
+    fn contrast(a: (u8, u8, u8), b: (u8, u8, u8)) -> f64 {
+        let lum = |(r, g, b): (u8, u8, u8)| {
+            let f = |v: u8| {
+                let x = f64::from(v) / 255.0;
+                if x <= 0.03928 {
+                    x / 12.92
+                } else {
+                    ((x + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    /// The RGB value of a 256-colour index (cube and grey ramp only).
+    fn rgb(i: u8) -> (u8, u8, u8) {
+        if i >= 232 {
+            let v = 8 + 10 * (i - 232);
+            return (v, v, v);
+        }
+        let i = i - 16;
+        (
+            CUBE[usize::from(i / 36)],
+            CUBE[usize::from(i / 6 % 6)],
+            CUBE[usize::from(i % 6)],
+        )
+    }
+
+    #[test]
+    fn fixed_colours_keep_the_hue_and_exact_values() {
+        assert_eq!(rgb(xterm_index(BACKGROUND)), (0, 0, 95), "navy, not teal");
+        assert_eq!(rgb(xterm_index(FOREGROUND)), (255, 255, 255));
+        assert_eq!(rgb(xterm_index(YELLOW)), (255, 215, 0));
+        assert_eq!(
+            rgb(xterm_index((0x30, 0x30, 0x30))),
+            (48, 48, 48),
+            "greys use the ramp"
+        );
+        assert_eq!(rgb(xterm_index((0, 0, 0))), (0, 0, 0));
+    }
+
+    #[test]
+    fn text_stays_readable_with_256_colours() {
+        let bg = rgb(xterm_index(BACKGROUND));
+        for (name, fg) in [
+            ("foreground", FOREGROUND),
+            ("muted", MUTED),
+            ("red", RED),
+            ("green", GREEN),
+            ("yellow", YELLOW),
+            ("cyan", CYAN),
+        ] {
+            let ratio = contrast(rgb(xterm_index(fg)), bg);
+            assert!(ratio >= 4.5, "{name}: {ratio:.2}");
+        }
+        let sel = rgb(xterm_index(SELECTION));
+        assert!(contrast(rgb(xterm_index(FOREGROUND)), sel) >= 4.5);
+    }
+
+    #[test]
+    fn text_boxes_stand_out_and_stay_readable() {
+        assert!(contrast(INPUT, BACKGROUND) >= 2.0);
+        assert!(contrast(FOREGROUND, INPUT) >= 4.5);
+        assert!(contrast(MUTED, BACKGROUND) >= 4.5);
+    }
 }

@@ -6,6 +6,23 @@ use std::path::{Path, PathBuf};
 
 use yojaka_core::organize::{OrganizePlan, PRESETS, Template, Transfer};
 
+/// What a layout (an organize preset, by its label) is called on screen. The Actions tab's
+/// names where an action uses it, so both tabs say the same thing.
+pub fn layout_title(label: &str) -> &'static str {
+    if let Some(a) = yojaka_core::actions::ACTIONS
+        .iter()
+        .find(|a| a.preset == label)
+    {
+        return a.title;
+    }
+    match label {
+        "Place + Date" => "By place, then year and month",
+        "Kind + Date" => "Photos and videos, then year and month",
+        "Custom" => "Your own pattern",
+        _ => "Ready-made layout",
+    }
+}
+
 /// The rows of the settings form, top to bottom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row {
@@ -84,6 +101,8 @@ pub struct OrganizeState {
     backup: String,
     pub phase: Phase,
     pub plan: Option<Box<OrganizePlan>>,
+    /// Bytes free on the disk the plan writes to, read when the plan came back.
+    pub free: Option<u64>,
     /// Why the template or folder cannot be used, shown under the settings.
     pub problem: Option<String>,
     /// The settings changed while a plan was being worked out: drop that plan when it comes.
@@ -94,13 +113,9 @@ pub struct OrganizeState {
 
 impl OrganizeState {
     pub fn new(root: &Path) -> Self {
-        // Next to the scanned folder, never inside it.
-        let dest = root
-            .parent()
-            .unwrap_or(root)
-            .join("Yojaka Organized")
-            .display()
-            .to_string();
+        // Next to the scanned folder, never inside it. Shown with `~` for the home folder, which
+        // `request` turns back into the full path.
+        let dest = crate::fmt::home(&root.parent().unwrap_or(root).join("Yojaka Organized"));
         Self {
             template: PRESETS[0].1.to_string(),
             preset: Some(0),
@@ -113,6 +128,7 @@ impl OrganizeState {
             backup: String::new(),
             phase: Phase::Idle,
             plan: None,
+            free: None,
             problem: None,
             stale: false,
             cancel_sent: false,
@@ -155,6 +171,11 @@ impl OrganizeState {
         }
         match result {
             Ok(p) => {
+                self.free = p
+                    .plan
+                    .dest
+                    .as_deref()
+                    .and_then(yojaka_core::sys::macos::free_space);
                 self.plan = Some(p);
                 self.phase = Phase::Ready;
             }
@@ -320,6 +341,11 @@ impl OrganizeState {
         self.preset.map_or("Custom", |i| PRESETS[i].0)
     }
 
+    /// The layout's name on screen: the same words as the Actions tab (`By year and month`).
+    pub fn layout_title(&self) -> &'static str {
+        layout_title(self.preset_label())
+    }
+
     /// False when the pattern has no place folders, so the GPS choice changes nothing.
     pub fn uses_place(&self) -> bool {
         Template::parse(&self.template).map_or(true, |t| t.uses_place())
@@ -394,6 +420,15 @@ fn expand_home(s: &str) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_layout_has_a_name_like_the_actions_tab() {
+        for (label, _) in PRESETS {
+            assert_ne!(layout_title(label), "Ready-made layout", "{label}");
+        }
+        assert_eq!(layout_title("Date"), "By year and month");
+        assert_eq!(layout_title("Merge"), "Merge into one folder");
+    }
 
     #[test]
     fn a_tilde_means_the_home_folder() {

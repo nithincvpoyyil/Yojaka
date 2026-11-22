@@ -18,7 +18,8 @@ const LABEL_W: usize = 15;
 const BOX_MAX_W: usize = 72;
 /// Example lines under the folder overview.
 const EXAMPLES: usize = 3;
-/// The folder overview's counts end at this column on wide terminals.
+/// The folder overview's counts end at most at this column on wide terminals (sooner when the
+/// folder names are short, so the counts stay near them).
 const TREE_W: usize = 72;
 
 pub fn render(app: &App, f: &mut Frame, area: Rect) {
@@ -65,7 +66,15 @@ fn setting(o: &OrganizeState, row: Row, selected: bool, width: usize) -> Line<'s
     ];
     let room = width.saturating_sub(LABEL_W).min(BOX_MAX_W);
     match row {
-        Row::Layout => spans.push(choice(o.preset_label())),
+        Row::Layout => spans.push(choice(o.layout_title())),
+        // A ready-made layout's pattern is shown as plain text: it is there to read, and to
+        // start from when you want your own.
+        Row::Pattern if o.preset.is_some() && o.editing != Some(Editing::Template) => {
+            spans.push(Span::styled(format!(" {}", o.template), theme::dim()));
+            if selected {
+                spans.push(Span::styled("   Enter: write your own", theme::dim()));
+            }
+        }
         Row::Pattern => spans.extend(text_box(
             &o.template,
             o.editing == Some(Editing::Template),
@@ -93,13 +102,14 @@ fn setting(o: &OrganizeState, row: Row, selected: bool, width: usize) -> Line<'s
             } else {
                 ("No Location folder", "they go into one folder")
             };
-            let note = if o.uses_place() {
-                note
+            if o.uses_place() {
+                spans.push(choice(word));
+                spans.push(Span::styled(format!("  {note}"), theme::dim()));
             } else {
-                "not used: this pattern has no place folders"
-            };
-            spans.push(choice(word));
-            spans.push(Span::styled(format!("  {note}"), theme::dim()));
+                // Nothing to choose: this layout has no place folders.
+                spans.push(Span::styled(format!("‹ {word} ›"), theme::dim()));
+                spans.push(Span::styled("  not used by this layout", theme::dim()));
+            }
         }
     }
     Line::from(spans)
@@ -163,6 +173,41 @@ fn render_preview(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// Room on the destination disk: `needs 7.6 GB · 120.3 GB free there`, in red when it will
+/// not fit. A move on the same disk needs no room; nothing is shown when the free space is
+/// unknown.
+fn space_line(o: &OrganizeState, bytes: u64, mode: OpMode) -> Line<'static> {
+    let Some(free) = o.free else {
+        return Line::raw("");
+    };
+    let moves_on_disk = mode == OpMode::Move
+        && o.plan
+            .as_ref()
+            .is_some_and(|p| p.plan.summary.cross_volume == 0);
+    if moves_on_disk {
+        return Line::raw("");
+    }
+    if bytes > free {
+        Line::styled(
+            format!(
+                "Not enough room: needs {}, {} free on that disk",
+                fmt::bytes(bytes),
+                fmt::bytes(free)
+            ),
+            theme::error(),
+        )
+    } else {
+        Line::styled(
+            format!(
+                "needs {} · {} free on that disk",
+                fmt::bytes(bytes),
+                fmt::bytes(free)
+            ),
+            theme::dim(),
+        )
+    }
+}
+
 /// The summary, the folders that will be made, and a few examples.
 fn ready(o: &OrganizeState, inner: Rect) -> Vec<Line<'static>> {
     let Some(p) = &o.plan else {
@@ -205,6 +250,18 @@ fn ready(o: &OrganizeState, inner: Rect) -> Vec<Line<'static>> {
             fmt::thousands(s.undated as u64)
         ));
     }
+    if s.date_fallback > 0 {
+        more.push(format!(
+            "{} dated by file date",
+            fmt::thousands(s.date_fallback as u64)
+        ));
+    }
+    if s.identical > 0 {
+        more.push(format!(
+            "{} identical left out",
+            fmt::thousands(s.identical as u64)
+        ));
+    }
     if s.skipped > 0 {
         more.push(format!("{} left alone", fmt::thousands(s.skipped as u64)));
     }
@@ -229,14 +286,22 @@ fn ready(o: &OrganizeState, inner: Rect) -> Vec<Line<'static>> {
     };
     let tree_rows = height.saturating_sub(3 + ex_rows).max(1);
 
-    let mut lines = vec![
-        Line::from(head),
-        Line::raw(""),
-        Line::styled("Folders", theme::dim()),
-    ];
-    // Counts end in one column, so they read as a table.
-    let col = width.min(TREE_W);
-    for l in p.plan.destination_tree().glimpse(tree_rows, 8) {
+    let mut lines = vec![Line::from(head), space_line(o, s.bytes, p.plan.mode)];
+    lines.push(Line::styled("Folders", theme::dim()));
+    // Counts end in one column, so they read as a table, close to the longest name.
+    let glimpse = p.plan.destination_tree().glimpse(tree_rows, 8);
+    let natural = glimpse
+        .iter()
+        .map(|l| {
+            2 * (l.depth + 1)
+                + l.label.chars().count()
+                + format!("  {} ({})", fmt::files(l.files), fmt::bytes(l.bytes)).len()
+                + 4
+        })
+        .max()
+        .unwrap_or(0);
+    let col = width.min(TREE_W).min(natural.max(40));
+    for l in glimpse {
         let tail = format!("  {} ({})", fmt::files(l.files), fmt::bytes(l.bytes));
         let indent = "  ".repeat(l.depth + 1);
         let label_w = col.saturating_sub(indent.len() + tail.chars().count());

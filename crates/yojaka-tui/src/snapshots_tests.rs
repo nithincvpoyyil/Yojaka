@@ -28,6 +28,7 @@ fn draw(app: &App, w: u16, h: u16) -> String {
 
 fn app_at(w: u16, h: u16) -> App {
     let mut a = App::new("/photos".into(), Mode::ReadOnly);
+    a.tz = None;
     a.size = (w, h);
     let _ = a.init();
     a
@@ -1212,13 +1213,13 @@ fn duplicates_help_lists_its_own_keys_and_not_the_browsers() {
     let mut a = with_dupes(80, 40);
     a.show_help = true;
     let out = draw(&a, 80, 40);
-    assert!(out.contains("mark / unmark"), "{out}");
+    assert!(out.contains("trash / keep the selected copy"), "{out}");
     assert!(!out.contains("filter by name"), "{out}");
     let mut b = loaded_browser(80, 40);
     b.show_help = true;
     let out = draw(&b, 80, 40);
     assert!(out.contains("filter by name"));
-    assert!(!out.contains("mark / unmark"));
+    assert!(!out.contains("trash / keep the selected copy"));
 }
 
 #[test]
@@ -1515,9 +1516,12 @@ fn look_alike_groups_show_a_comparison() {
         let mut a = with_tiers(w, h);
         keys(&mut a, vec![Msg::CycleTier, Msg::CycleTier]);
         let screen = draw(&a, w, h);
-        assert!(screen.contains("3 exact · 2 likely · 1 name"), "{screen}");
+        assert!(
+            screen.contains("3 identical · 2 likely · 1 same name"),
+            "{screen}"
+        );
         assert!(screen.contains("showing likely"), "{screen}");
-        assert!(screen.contains("? review"), "{screen}");
+        assert!(screen.contains("? decide"), "{screen}");
         // Both files, their sizes and what they share.
         for fact in [
             "3.8 MB",
@@ -1536,8 +1540,8 @@ fn look_alike_groups_show_a_comparison() {
         // After a decision the rows say keep / delete.
         keys(&mut a, vec![Msg::Enter, Msg::Enter]);
         let screen = draw(&a, w, h);
-        assert!(screen.contains("✓ keep") && screen.contains("✕ delete"));
-        assert!(!screen.contains("? review"));
+        assert!(screen.contains("✓ keep") && screen.contains("✕ trash"));
+        assert!(!screen.contains("? decide"));
     }
 }
 
@@ -2019,6 +2023,65 @@ mod organize_screen {
         }
     }
 
+    /// A plan over a few years and months, with files dated by their file date and identical
+    /// copies left out, as the preview shows it.
+    fn dated_plan() -> Box<OrganizePlan> {
+        let mut p = organize_plan(0);
+        let months = [
+            ("2025", "September", 5),
+            ("2025", "July", 4),
+            ("2025", "April", 2),
+            ("2026", "January", 3),
+        ];
+        let mut id = 0;
+        for (year, month, n) in months {
+            for _ in 0..n {
+                p.plan.ops.push(Op::Copy {
+                    id,
+                    src: format!("/photos/DSC_{id}.JPG").into(),
+                    dst: format!("/out/{year}/{month}/DSC_{id}.JPG").into(),
+                    expect: Fingerprint {
+                        size: 1_000_000,
+                        mtime_ns: 0,
+                        hash: None,
+                    },
+                    inferred: false,
+                    pair: None,
+                });
+                id += 1;
+            }
+        }
+        p.plan.summary.bytes = 1_000_000 * id;
+        p.plan.summary.date_fallback = 2;
+        p.plan.summary.identical = 3;
+        p
+    }
+
+    #[test]
+    fn the_preview_reads_in_calendar_order_and_says_what_is_left_out() {
+        for (w, h) in SIZES {
+            let mut a = organize_app(w, h);
+            a.update(Msg::Tick);
+            a.update(Msg::Bg(Bg::Planned(Ok(dated_plan()))));
+            a.organize.free = Some(120_000_000_000);
+            let out = draw(&a, w, h);
+            assert!(out.contains("By year and month"), "{out}");
+            let (apr, jul, sep) = (
+                out.find("April").unwrap(),
+                out.find("July").unwrap(),
+                out.find("September").unwrap(),
+            );
+            assert!(apr < jul && jul < sep, "calendar order:\n{out}");
+            insta::assert_snapshot!(format!("organize_ready_{w}x{h}"), out);
+        }
+        // Not enough room is said in red words, not only colour.
+        let mut a = organize_app(160, 48);
+        a.update(Msg::Tick);
+        a.update(Msg::Bg(Bg::Planned(Ok(dated_plan()))));
+        a.organize.free = Some(1_000);
+        assert!(draw(&a, 160, 48).contains("Not enough room"));
+    }
+
     fn organize_plan(n: usize) -> Box<OrganizePlan> {
         let mut p = Plan::from_dupes(std::path::Path::new("/photos"), &[]);
         p.kind = PlanKind::Organize;
@@ -2073,7 +2136,7 @@ mod organize_screen {
                 for text in [
                     "{year}/{month_name}/{name}",
                     "Yojaka Organized",
-                    "‹ Date ›",
+                    "‹ By year and month ›",
                     "‹ Copy ›",
                     "‹ No Location folder ›",
                     "Destination",
@@ -2528,7 +2591,7 @@ mod actions_screen {
             let a = actions_app(w, h);
             let out = draw(&a, w, h);
             for text in [
-                "Organize into folders",
+                "Organize or merge into folders",
                 "Remove duplicates",
                 "Nothing changes until you",
                 "Look-alikes are left for the Duplicates tab",
@@ -2559,10 +2622,14 @@ mod actions_screen {
                 "▶ Merge into one folder",
                 "Identical files are copied once.",
                 "○ Destination",
-                "● Waiting for you · 0:00",
+                "● Waiting for you",
             ] {
                 assert!(out.contains(text), "{text}: {out}");
             }
+            assert!(
+                !out.contains("Waiting for you ·"),
+                "no clock while it waits: {out}"
+            );
             let boxes = if w < 88 {
                 "│✔ Summary│─▶│● Layout│─▶│○ Destination│"
             } else {
@@ -2633,6 +2700,10 @@ mod actions_screen {
                 "{out}"
             );
             assert!(out.contains("▶ The oldest"), "{out}");
+            assert!(
+                !out.contains("Waiting for you ·"),
+                "no clock while it waits: {out}"
+            );
             let boxes = if w < 88 {
                 "│✔ Find │─▶│● Keep │─▶│○ Confirm│"
             } else {
@@ -2710,7 +2781,7 @@ mod actions_screen {
         let out = at_destination(60, 16);
         assert!(!out.contains("╭───────╮"), "{out}");
         assert!(out.contains("✔─✔─✔─●─○─○  Destination"), "{out}");
-        assert!(out.contains("Organize into folders"), "{out}");
+        assert!(out.contains("Organize or merge into folders"), "{out}");
         assert!(out.contains("Waiting for you"), "{out}");
         // Too short: the steps and the choice stay, the top goes.
         let out = at_destination(80, 14);

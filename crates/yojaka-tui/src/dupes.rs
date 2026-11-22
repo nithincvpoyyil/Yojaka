@@ -9,12 +9,12 @@ use yojaka_core::dupes::{DupGroup, DupReport, DupStats, KeepRule, Tier, parse_ru
 /// Keep-rule chains `p` cycles through: (label, `--keep` text).
 pub const PRESETS: [(&str, &str); 4] = [
     (
-        "oldest, then shortest path",
+        "oldest modified, then shortest path",
         "oldest-modified,shortest-path",
     ),
     ("shortest path", "shortest-path,oldest-modified"),
     (
-        "newest, then shortest path",
+        "newest modified, then shortest path",
         "newest-modified,shortest-path",
     ),
     (
@@ -22,6 +22,16 @@ pub const PRESETS: [(&str, &str); 4] = [
         "highest-resolution,oldest-modified,shortest-path",
     ),
 ];
+
+/// What the screen calls a tier: plain words, not the CLI's `exact` / `name`.
+pub fn tier_name(t: Tier) -> &'static str {
+    match t {
+        Tier::Exact => "identical",
+        Tier::Likely => "likely",
+        Tier::Similar => "similar",
+        Tier::Name => "same name",
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -247,7 +257,7 @@ impl DupesState {
     }
 
     pub fn filter_label(&self) -> &'static str {
-        self.filter.map_or("all", Tier::label)
+        self.filter.map_or("all", tier_name)
     }
 
     /// Bytes freed if every mark were carried out.

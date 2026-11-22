@@ -222,7 +222,7 @@ impl App {
                 o.problem = None;
                 o.invalidate();
                 let verb = yojaka_core::organize::transfer_word(req.transfer);
-                let line = format!("{verb} to {}", req.dest.display());
+                let line = format!("{verb} to {}", fmt::home(&req.dest));
                 self.pipeline_complete(vec![line])
             }
         }
@@ -519,7 +519,7 @@ fn summary_lines(st: &Stats) -> Vec<String> {
     }
     let loc = &st.location;
     let places = if loc.countries.is_empty() {
-        "none of the files has GPS".to_string()
+        "no files have location (GPS) data".to_string()
     } else {
         let mut parts: Vec<String> = loc
             .countries
@@ -572,11 +572,7 @@ fn run_line(job: Job, r: &ApplyReport) -> String {
 fn confirm_line(plan: &Plan) -> String {
     let n = fmt::files(plan.file_ops() as u64);
     let size = fmt::bytes(plan.summary.bytes);
-    let dest = plan
-        .dest
-        .as_deref()
-        .map(|d| d.display().to_string())
-        .unwrap_or_default();
+    let dest = plan.dest.as_deref().map(fmt::home).unwrap_or_default();
     match plan.mode {
         OpMode::Copy => format!("copy {n} ({size}) → {dest}"),
         OpMode::Move => format!("move {n} ({size}) → {dest}"),

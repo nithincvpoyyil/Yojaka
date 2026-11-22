@@ -23,7 +23,8 @@ pub const ACTIONS: [Action; 6] = [
     Action {
         id: "merge",
         title: "Merge into one folder",
-        description: "Every photo in one folder, every video in another. No folders inside.",
+        description: "Every photo in one folder, every video in another. A second file with the \
+                      same name gets (1).",
         preset: "Merge",
         examples: [
             "Photos/IMG_0001.heic",
@@ -34,13 +35,10 @@ pub const ACTIONS: [Action; 6] = [
     Action {
         id: "year",
         title: "By year",
-        description: "One folder per year. Files with no date go to _undated.",
+        description: "One folder per year, from the date taken (a file without one goes by its \
+                      file date).",
         preset: "Year",
-        examples: [
-            "2022/IMG_0001.heic",
-            "2023/DSC_0042.jpg",
-            "_undated/scan.png",
-        ],
+        examples: ["2022/IMG_0001.heic", "2023/DSC_0042.jpg", "2024/scan.png"],
     },
     Action {
         id: "date",
@@ -48,9 +46,9 @@ pub const ACTIONS: [Action; 6] = [
         description: "A folder per year, with a folder per month inside.",
         preset: "Date",
         examples: [
-            "2023/Aug/IMG_0001.heic",
-            "2023/Sep/DSC_0042.jpg",
-            "2024/Jan/MVI_0007.mov",
+            "2023/August/IMG_0001.heic",
+            "2023/September/DSC_0042.jpg",
+            "2024/January/MVI_0007.mov",
         ],
     },
     Action {

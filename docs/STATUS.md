@@ -35,6 +35,33 @@ Full check: `source ~/.cargo/env && cargo fmt && cargo clippy --workspace --all-
 New insta snapshots: run with `INSTA_UPDATE=always`, then read the `.snap`. The TUI snapshots under
 `crates/yojaka-tui/src/snapshots/` are tracked since `429fc92`, like the CLI help snapshot.
 
+## UX review pass (2026-11-22, `all-specs/11-ux-review.md` §10)
+
+The user asked for a UX review of seven screenshots, then "execute UX review". Decisions (asked first): drop
+`W` from the footers (the review asks for write mode, on Duplicates too); Duplicates gets fixes only, not the
+form rework (U29); month folders use whole names (`2026/April`); photo preview after v1.0. **Built, not
+committed, waiting for the user's sign-off.** Full check green (457 tests, 6 skipped); driven in a pty on a
+fixture tree at 80×24 and 120×36.
+
+- One footer on every screen (`view::footer_hints`): this screen's keys left, the main one as a black-on-yellow
+  chip, `1-6 tabs · ? help · q quit` right; on a narrow screen `1-6 tabs` goes first, then the screen's last keys.
+- Theme: the 256-colour fallback picks the nearest real xterm colour (the background was teal, now navy; text
+  passes 4.5:1, with tests); lighter text boxes (2.1:1); unfocused panel titles are white, focused yellow.
+- Duplicates: two-line summary (identical / to decide), column headers, `identical / likely / similar / same
+  name`, `✕ trash` / `? decide`, ▶ cursor in both panes, paths relative to the folder (shared part dim),
+  identical groups compare `modified` (local time; `App::tz`, UTC in tests).
+- Dashboard: one line when up to date (`scanned … ago`, files seen vs photos and videos), Next steps panel,
+  panels sized to content, upper-case formats. File browser: empty columns hidden (no videos, no places), ▶ row,
+  `Enter open` in the footer, `(from camera)`. History: empty text, no details panel when empty, the mode
+  (`Moved to the Trash`) and the Put Back tip.
+- Organize: layouts named as on Actions, a ready-made pattern shown as plain text, free space on the destination
+  (`sys::macos::free_space`), files dated by file date and identical copies counted, folders in calendar order.
+- Actions: `Organize or merge into folders`, how to use another folder (a warning for the home folder or `/`),
+  place layouts greyed when no file has GPS, no clock while waiting, step times under a second hidden; "By year"
+  no longer claims `_undated` (files go by their file date).
+- Not done: U12 (both progress displays were the user's choice in plan 10 §10.1), U14 (real example file),
+  U24 (preview, after v1.0), U29 (form rework).
+
 ## Actions tab (I9 Phase 1A, plan `all-specs/10-actions-plan.md`, ADR-0010)
 
 The user's idea of 2026-11-17, reviewed against the architecture and decided the same day (A1-A12). **Built
@@ -209,8 +236,9 @@ The first write-capable release. Off by default: no `--write` means a preview on
 - `yojaka organize PATH DEST [--template T | --preset date|place|place-date|kind-date] [--move] [--infer-location]
   [--plan-out FILE] [--full-tree]` plans only (copy is the default). Run the plan with `yojaka --write apply FILE`.
   Placeholders: `year month month_name day camera make model format ext name stem parent kind country
-  country_code state district city`; `{month:02}` pads, `{month_name}` is `Jan` … `Dec` (the presets and
-  the default use it since 2026-11-12). See the ADR for the folder-dropping rules.
+  country_code state district city`; `{month:02}` pads, `{month_name}` is `January` … `December` (the presets
+  and the default use it since 2026-11-12; whole names since 2026-11-22). See the ADR for the folder-dropping
+  rules.
 - Confirmation (2026-11-12, CLI and TUI): a copy asks only y/n; a move always needs `move N files` typed.
 - TUI screen 4 is a form (2026-11-12, user feedback): rows Layout (preset or Custom), Pattern, Destination,
   Action (copy / move), Without GPS (No Location folder / guess the place). `↑ ↓` choose a row, Enter

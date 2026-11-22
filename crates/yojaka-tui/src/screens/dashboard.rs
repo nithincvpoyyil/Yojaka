@@ -1,4 +1,5 @@
-//! Dashboard: live scan gauge, totals, and the format / year / camera charts.
+//! Dashboard: the scan (a gauge while it runs, one line when up to date), totals, the
+//! format / year / camera / place charts, and the next steps this folder suggests.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -6,7 +7,6 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use yojaka_core::TaskKind;
-use yojaka_core::stats::Stats;
 
 use crate::app::{App, ScanView};
 use crate::{fmt, theme};
@@ -14,15 +14,75 @@ use crate::{fmt, theme};
 pub(crate) const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 pub fn render(app: &App, f: &mut Frame, area: Rect) {
+    let idle = up_to_date(app);
     let [scan, totals, panels] = Layout::vertical([
-        Constraint::Length(4),
+        Constraint::Length(if idle { 3 } else { 4 }),
         Constraint::Length(4),
         Constraint::Min(4),
     ])
     .areas(area);
-    render_scan(app, f, scan);
+    if idle {
+        render_up_to_date(app, f, scan);
+    } else {
+        render_scan(app, f, scan);
+    }
     render_totals(app, f, totals);
-    render_panels(app.dashboard.stats.as_deref(), f, panels);
+    render_panels(app, f, panels);
+}
+
+/// Nothing to watch: no scan running, nothing wrong, the last scan finished.
+fn up_to_date(app: &App) -> bool {
+    let d = &app.dashboard;
+    let Some(st) = d.stats.as_ref() else {
+        return false;
+    };
+    !d.scan.running
+        && d.error.is_none()
+        && !d.scan.partial
+        && st.last_scan.as_ref().is_some_and(|l| l.status != "partial")
+}
+
+/// `✓ Up to date · scanned 5 min ago · 1,355 files seen: 1,316 photos and videos, 39 other files`
+fn render_up_to_date(app: &App, f: &mut Frame, area: Rect) {
+    let d = &app.dashboard;
+    let block = theme::panel("Scan", false);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let mut spans = vec![Span::styled("✓ Up to date", theme::good())];
+    let detail = match (&d.scan.outcome, d.stats.as_ref()) {
+        (Some(o), _) => o.clone(),
+        (None, Some(st)) => match &st.last_scan {
+            Some(last) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |t| t.as_secs() as i64);
+                let when = fmt::ago(now, last.finished_at.unwrap_or(last.started_at));
+                let media = st.photos.count + st.videos.count;
+                let other = last.files_seen.saturating_sub(media);
+                let mut t = format!(
+                    "scanned {when} · {} seen: {} photos and videos",
+                    fmt::files(last.files_seen),
+                    fmt::thousands(media)
+                );
+                if other > 0 {
+                    t.push_str(&format!(
+                        ", {} other file{}",
+                        fmt::thousands(other),
+                        if other == 1 { "" } else { "s" }
+                    ));
+                }
+                t
+            }
+            None => String::new(),
+        },
+        _ => String::new(),
+    };
+    if !detail.is_empty() {
+        spans.push(Span::styled(" · ", theme::dim()));
+        let room = (inner.width as usize).saturating_sub(15);
+        spans.push(Span::styled(fmt::truncate(&detail, room), theme::dim()));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn phase_name(s: &ScanView) -> &'static str {
@@ -138,11 +198,7 @@ fn render_scan(app: &App, f: &mut Frame, area: Rect) {
 /// Second line while working: counts, speed, time spent and the folder; or a plain warning
 /// when nothing has moved for a while.
 fn running_line(s: &ScanView, w: usize) -> Line<'static> {
-    let dir = s
-        .current
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
+    let dir = s.current.as_ref().map(|p| fmt::home(p)).unwrap_or_default();
     if let Some(stuck) = s.stalled_for() {
         let msg = format!(
             "No progress for {}s. Still working in {} · Esc stops and keeps what is done",
@@ -252,13 +308,13 @@ fn render_totals(app: &App, f: &mut Frame, area: Rect) {
                         theme::good()
                     },
                 ),
-                Span::styled(" · iCloud-only ", theme::dim()),
+                Span::styled("   iCloud only ", theme::title()),
                 Span::raw(fmt::thousands(st.cloud_only)),
-                Span::styled(" · located ", theme::dim()),
+                Span::styled("   With location ", theme::title()),
                 Span::raw(format!("{}%", st.location.with_place * 100 / all)),
             ];
             if st.metadata_pending > 0 {
-                l2.push(Span::styled(" · metadata pending ", theme::dim()));
+                l2.push(Span::styled("   Details still to read ", theme::title()));
                 l2.push(Span::raw(fmt::thousands(st.metadata_pending)));
             }
             vec![Line::from(l1), Line::from(l2)]
@@ -267,7 +323,8 @@ fn render_totals(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn render_panels(st: Option<&Stats>, f: &mut Frame, area: Rect) {
+fn render_panels(app: &App, f: &mut Frame, area: Rect) {
+    let st = app.dashboard.stats.as_deref();
     let [a, b, c] = Layout::horizontal([
         Constraint::Percentage(34),
         Constraint::Percentage(33),
@@ -276,23 +333,33 @@ fn render_panels(st: Option<&Stats>, f: &mut Frame, area: Rect) {
     .areas(area);
     let rows = area.height.saturating_sub(2) as usize;
 
+    // Left column: the formats, as tall as they need, then the next steps.
     let formats: Vec<(String, u64)> = st
         .map(|s| {
             s.formats
                 .iter()
-                .map(|x| (x.format.clone(), x.count))
+                .map(|x| (x.format.to_uppercase(), x.count))
                 .collect()
         })
         .unwrap_or_default();
+    let format_rows = (formats.len().max(1) as u16 + 2).min(a.height / 2).max(3);
+    let [fmt_area, next_area] =
+        Layout::vertical([Constraint::Length(format_rows), Constraint::Min(3)]).areas(a);
     panel(
         f,
-        a,
+        fmt_area,
         "Formats",
         st.is_some(),
-        bars(&formats, a.width.saturating_sub(2) as usize, rows),
+        bars(
+            &formats,
+            fmt_area.width.saturating_sub(2) as usize,
+            fmt_area.height.saturating_sub(2) as usize,
+        ),
     );
+    let next = next_steps(app, next_area.width.saturating_sub(2) as usize);
+    panel(f, next_area, "Next steps", st.is_some(), next);
 
-    let (years, title, undated) = match st {
+    let (years, title) = match st {
         Some(s) => {
             let mut v: Vec<(String, u64)> = s
                 .by_year
@@ -304,26 +371,21 @@ fn render_panels(st: Option<&Stats>, f: &mut Frame, area: Rect) {
             if cut {
                 v = v.split_off(v.len() - room);
             }
-            (
-                v,
-                if cut { "By year (latest)" } else { "By year" },
-                s.undated,
-            )
+            if s.undated > 0 {
+                v.push(("no date".to_string(), s.undated));
+            }
+            (v, if cut { "By year (latest)" } else { "By year" })
         }
-        None => (vec![], "By year", 0),
+        None => (vec![], "By year"),
     };
-    let mut year_lines = bars(&years, b.width.saturating_sub(2) as usize, rows);
-    if undated > 0 && year_lines.len() < rows {
-        year_lines.push(Line::styled(
-            format!("no date  {}", fmt::thousands(undated)),
-            theme::dim(),
-        ));
-    }
+    let year_lines = bars(&years, b.width.saturating_sub(2) as usize, rows);
     panel(f, b, title, st.is_some(), year_lines);
 
-    // Right column: cameras above, places below.
+    // Right column: cameras above (as tall as they need), places below.
+    let cam_count = st.map_or(0, |s| s.cameras.len());
+    let cam_rows = (cam_count.max(1) as u16 + 2).min(c.height / 2).max(3);
     let [cam_area, place_area] =
-        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(c);
+        Layout::vertical([Constraint::Length(cam_rows), Constraint::Min(3)]).areas(c);
     let cam_rows = cam_area.height.saturating_sub(2) as usize;
     let cams: Vec<Line> = st
         .map(|s| {
@@ -347,14 +409,81 @@ fn render_panels(st: Option<&Stats>, f: &mut Frame, area: Rect) {
     );
 }
 
-/// `name        1,234`: the name is cut to fit, the count is right-aligned in the accent color.
+/// What this folder suggests doing next, each with the key that goes there:
+/// `254 duplicate groups, 229 MB can be freed   4`.
+fn next_steps(app: &App, width: usize) -> Vec<Line<'static>> {
+    use crate::dupes::Phase;
+    let Some(st) = app.dashboard.stats.as_deref() else {
+        return vec![];
+    };
+    let mut steps: Vec<(String, &'static str)> = vec![];
+    let d = &app.dupes;
+    match d.phase {
+        Phase::Done if !d.groups.is_empty() => {
+            let n = d.groups.len() as u64;
+            steps.push((
+                format!(
+                    "{} duplicate group{}, {} can be freed",
+                    fmt::thousands(n),
+                    if n == 1 { "" } else { "s" },
+                    fmt::bytes(d.total_reclaim())
+                ),
+                "4",
+            ));
+        }
+        Phase::Done => {}
+        _ if st.photos.count + st.videos.count > 1 => {
+            steps.push(("Look for duplicates".into(), "4"));
+        }
+        _ => {}
+    }
+    if st.photos.count + st.videos.count > 0 {
+        steps.push(("Tidy into folders or merge them".into(), "1"));
+    }
+    if st.undated > 0 {
+        steps.push((
+            format!(
+                "{} with no date taken (file date used)",
+                fmt::thousands(st.undated)
+            ),
+            "",
+        ));
+    }
+    let loc = &st.location;
+    if loc.with_gps == 0 && loc.with_place == 0 && st.photos.count + st.videos.count > 0 {
+        steps.push(("No GPS in any file: place layouts won't help".into(), ""));
+    }
+    if st.cloud_only > 0 {
+        steps.push((
+            format!(
+                "{} only in iCloud (left alone)",
+                fmt::thousands(st.cloud_only)
+            ),
+            "",
+        ));
+    }
+    steps
+        .into_iter()
+        .map(|(text, key)| {
+            let key_w = if key.is_empty() { 0 } else { key.len() + 2 };
+            let text = fmt::truncate(&text, width.saturating_sub(key_w));
+            let mut spans = vec![Span::raw(text.clone())];
+            if !key.is_empty() {
+                let pad = width.saturating_sub(text.chars().count() + key.len());
+                spans.push(Span::raw(" ".repeat(pad)));
+                spans.push(Span::styled(key, theme::key_hint()));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// `name        1,234`: the name is cut to fit, the count is right-aligned (plain, like the
+/// counts next to the bars).
 fn count_line(name: &str, count: u64, width: u16) -> Line<'static> {
     let n = fmt::thousands(count);
     let w = usize::from(width.saturating_sub(2)).saturating_sub(n.len() + 1);
-    Line::from(vec![
-        Span::raw(format!("{:<w$} ", fmt::truncate(name, w))),
-        Span::styled(n, theme::accent()),
-    ])
+    Line::raw(format!("{:<w$} {n}", fmt::truncate(name, w)))
 }
 
 /// The most photographed cities as `City, Country  count`. When there is room, a last line

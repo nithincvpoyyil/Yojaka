@@ -4,7 +4,9 @@ pub mod planner;
 pub mod template;
 
 pub use planner::{OrganizeOptions, OrganizePlan, OrganizeStats, Transfer, plan};
-pub use template::{Facts, PRESETS, Rendered, Template, UNDATED_DIR, Where, Ymd, preset};
+pub use template::{
+    Facts, PRESETS, Rendered, Template, UNDATED_DIR, Where, Ymd, month_number, preset,
+};
 
 /// Refuses to copy into the scanned folder or a folder inside it (FR-43a): the next scan would
 /// find every copy as a duplicate of its original. Moving there is allowed (tidying a folder in

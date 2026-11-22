@@ -348,6 +348,9 @@ pub struct DebugInfo {
 #[derive(Debug)]
 pub struct App {
     pub screen: Screen,
+    /// The local time zone, for dates the file system keeps in UTC (date modified). Tests use
+    /// UTC (`None`), so the screens look the same on every machine.
+    pub tz: Option<time::UtcOffset>,
     pub show_help: bool,
     /// The "flush index and rescan?" prompt is open.
     pub confirm_flush: bool,
@@ -394,6 +397,7 @@ impl App {
     pub fn new(root: PathBuf, mode: Mode) -> Self {
         Self {
             screen: Screen::Dashboard,
+            tz: time::UtcOffset::current_local_offset().ok(),
             show_help: false,
             confirm_flush: false,
             stale_index: false,

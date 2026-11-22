@@ -219,7 +219,7 @@ Source: `what-is-it.md`. This document turns that note into concrete requirement
 
 ## 6. Open questions (please answer)
 
-1. ~~**Default organize template:**~~ **DECIDED (2026-10-30):** `{year}/{month:02}/{name}` for photos and videos alike. Files with no date go to `_undated/`. **CHANGED (2026-11-12):** months are named, so the default is `{year}/{month_name}/{name}`, for example `2023/Aug/IMG_1234.jpg`. The user chose plain `Jan` … `Dec` knowing Finder sorts them by name, not by month.
+1. ~~**Default organize template:**~~ **DECIDED (2026-10-30):** `{year}/{month:02}/{name}` for photos and videos alike. Files with no date go to `_undated/`. **CHANGED (2026-11-12):** months are named, so the default is `{year}/{month_name}/{name}`, for example `2023/Aug/IMG_1234.jpg`. The user chose plain `Jan` … `Dec` knowing Finder sorts them by name, not by month. **CHANGED (2026-11-22):** whole names, `2023/August/IMG_1234.jpg` (the user's choice in the UX review, `11-ux-review.md`), again knowing Finder sorts them by name.
 2. ~~**Videos:**~~ **DECIDED (2026-10-30):** included in v1. That covers indexing, metadata, exact, likely and name duplicates, organizing, and Live Photo pairing. Similar-video detection comes later.
 3. **Index location:** central (`~/Library/Application Support/yojaka/`, which keeps scanned drives untouched) or next to the data (`<root>/.yojaka/`, which travels with an external drive)? *Proposed: central by default, with a flag to store next to the data.*
 4. **Permanent delete:** should it exist at all, or Trash only?

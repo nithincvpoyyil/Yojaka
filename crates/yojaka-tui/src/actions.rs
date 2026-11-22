@@ -25,7 +25,7 @@ pub const JOBS: [Job; 2] = [Job::Organize, Job::Dupes];
 impl Job {
     pub fn title(self) -> &'static str {
         match self {
-            Job::Organize => "Organize into folders",
+            Job::Organize => "Organize or merge into folders",
             Job::Dupes => "Remove duplicates",
         }
     }
@@ -124,9 +124,9 @@ pub enum Status {
 /// The Keep step's choices: (name, what it means). Same order as the keep rules `p` cycles on the
 /// Duplicates tab ([`crate::dupes::PRESETS`]), which hold the rules themselves.
 pub const KEEP_CHOICES: [(&str, &str); 4] = [
-    ("The oldest", "the copy with the oldest change date"),
+    ("The oldest", "the copy modified longest ago"),
     ("The shortest path", "the copy closest to the top folder"),
-    ("The newest", "the copy with the latest change date"),
+    ("The newest", "the copy modified most recently"),
     (
         "The largest picture",
         "the copy with the highest resolution",

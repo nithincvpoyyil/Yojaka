@@ -21,6 +21,7 @@ use crate::organize::{Editing, Phase};
 use crate::screens::dashboard::{SPINNER, ratio_bar};
 use crate::screens::modal::{review_folders, review_head};
 use crate::screens::organize::{choice, text_box};
+use crate::view::{Hint, hint, main_hint};
 use crate::{fmt, theme};
 
 /// Width of the step-name column (after the icon).
@@ -47,7 +48,7 @@ pub fn render(app: &App, f: &mut Frame, area: Rect) {
 /// The jobs, each with what it does.
 fn list_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let text_w = width.saturating_sub(2).max(10);
-    let root = fmt::truncate_start(&app.root.display().to_string(), 40);
+    let root = fmt::truncate_start(&fmt::home(&app.root), 40);
     let intro = format!(
         "Ready-made jobs for {root}. Each one scans the folder, shows what is in it, asks a few \
          questions, then runs with a progress bar. Nothing changes until you confirm."
@@ -56,6 +57,26 @@ fn list_lines(app: &App, width: usize) -> Vec<Line<'static>> {
         .into_iter()
         .map(|l| Line::raw(format!(" {l}")))
         .collect();
+    // The folder is chosen when Yojaka starts: say how to pick another, and warn when it is the
+    // whole home folder (easy to get by starting with no folder).
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let everything = app.root == std::path::Path::new("/") || home.as_deref() == Some(&app.root);
+    if everything {
+        for l in wrap(
+            "This is your whole home folder (or the whole disk): a scan reads everything in it. \
+             To tidy one folder, quit and run: yojaka <folder>",
+            text_w,
+        ) {
+            v.push(Line::styled(format!(" {l}"), theme::error()));
+        }
+    } else {
+        for l in wrap(
+            "To work on another folder, quit and run: yojaka <folder>",
+            text_w,
+        ) {
+            v.push(Line::styled(format!(" {l}"), theme::dim()));
+        }
+    }
     for (i, job) in JOBS.iter().enumerate() {
         v.push(Line::raw(""));
         let chosen = i == app.actions.cursor;
@@ -66,7 +87,7 @@ fn list_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             if chosen {
                 theme::selected()
             } else {
-                theme::title()
+                theme::header()
             },
         ));
         for l in wrap(job.description(), width.saturating_sub(6).max(10)) {
@@ -78,7 +99,7 @@ fn list_lines(app: &App, width: usize) -> Vec<Line<'static>> {
                 "     {}",
                 fmt::truncate(&flow.join(" → "), width.saturating_sub(6))
             ),
-            theme::accent(),
+            theme::dim(),
         ));
     }
     let scan = &app.dashboard.scan;
@@ -183,8 +204,11 @@ fn step_line(app: &App, p: &Pipeline, i: usize, step: Step, width: usize) -> Lin
         Status::Current => (current_text(app, p, step), theme::dim()),
         Status::Waiting | Status::Skipped => (String::new(), theme::dim()),
     };
+    // How long a step took, when that is worth saying (a second or more).
     let took = match (status, step, p.took[i]) {
-        (Status::Done, Step::Scan | Step::FindIdentical | Step::Run, Some(d)) => {
+        (Status::Done, Step::Scan | Step::FindIdentical | Step::Run, Some(d))
+            if d.as_millis() >= 1000 =>
+        {
             fmt::clock(d.as_millis() as u64)
         }
         _ => String::new(),
@@ -246,7 +270,7 @@ fn waits_for_you(app: &App, p: &Pipeline) -> bool {
     p.going(p.step()) && p.step().asks() && !app.actions.wants_plan()
 }
 
-/// ` Organize into folders · ~/Pictures                    ● Waiting for you · 0:41`
+/// ` Organize or merge into folders · ~/Pictures          ● Waiting for you`
 fn title_line(app: &App, p: &Pipeline, width: usize) -> Line<'static> {
     let clock = fmt::clock(p.elapsed().as_millis() as u64);
     let (status, style) = if p.failed.is_some() {
@@ -258,13 +282,18 @@ fn title_line(app: &App, p: &Pipeline, width: usize) -> Line<'static> {
     } else {
         (format!("{} Running", spinner(app)), theme::accent())
     };
-    let badge = format!("{status} · {clock}");
+    // No clock while it waits for you: the time you take to choose is not the job's.
+    let badge = if waits_for_you(app, p) {
+        status
+    } else {
+        format!("{status} · {clock}")
+    };
     let mut name = format!(" {}", p.job.title());
     // The folder fills what the name and the badge leave; on a narrow screen it goes.
     let room = width.saturating_sub(name.chars().count() + 3 + badge.chars().count() + 2);
     if room >= 8 {
         name.push_str(" · ");
-        name.push_str(&fmt::truncate_start(&app.root.display().to_string(), room));
+        name.push_str(&fmt::truncate_start(&fmt::home(&app.root), room));
     }
     let gap = width
         .saturating_sub(name.chars().count() + badge.chars().count() + 1)
@@ -530,26 +559,46 @@ fn scan_body(app: &App) -> Vec<Line<'static>> {
     }
 }
 
-/// The six layouts with an example path each, then what the highlighted one does.
+/// The six layouts with an example path each, then what the highlighted one does. Layouts by
+/// place are greyed out when no file has GPS: every file would land in No Location.
 fn layout_body(app: &App, width: usize) -> Vec<Line<'static>> {
     let a = &app.actions;
+    let no_gps = app
+        .dashboard
+        .stats
+        .as_deref()
+        .is_some_and(|st| st.location.with_gps == 0 && st.location.with_place == 0);
     let mut v: Vec<Line> = ACTIONS
         .iter()
         .enumerate()
         .map(|(i, act)| {
             let chosen = i == a.layout;
+            let useless = no_gps && act.uses_place();
             let name = format!("{}{:<24}", if chosen { "▶ " } else { "  " }, act.title);
-            Line::from(vec![
+            let mut spans = vec![
                 Span::styled(
                     name,
                     if chosen {
                         theme::selected()
+                    } else if useless {
+                        theme::dim()
                     } else {
                         theme::base()
                     },
                 ),
-                Span::styled(format!(" {}", act.examples[0]), theme::accent()),
-            ])
+                Span::styled(
+                    format!(" {}", act.examples[0]),
+                    if useless {
+                        theme::dim()
+                    } else {
+                        theme::accent()
+                    },
+                ),
+            ];
+            if useless {
+                spans.push(Span::styled("  no file has GPS", theme::dim()));
+            }
+            Line::from(spans)
         })
         .collect();
     let act: &Action = &ACTIONS[a.layout.min(ACTIONS.len() - 1)];
@@ -753,62 +802,69 @@ fn tail_lines(p: &Pipeline) -> Vec<Line<'static>> {
     v
 }
 
-/// The footer keys for the Actions tab (not while typing in a box).
-pub fn footer(app: &App) -> Vec<(&'static str, &'static str)> {
+/// The footer keys for the Actions tab (not while typing in a box), and whether the keys that
+/// work everywhere follow (not while a job runs or a confirmation is asked).
+pub fn footer(app: &App) -> (Vec<Hint>, bool) {
     let a = &app.actions;
     let Some(p) = &a.pipeline else {
-        return vec![
-            ("q", "quit"),
-            ("?", "help"),
-            ("↑↓", "choose"),
-            ("Enter", "start"),
-            ("< >", "tabs"),
-        ];
+        return (
+            vec![main_hint("Enter", "start"), hint("↑↓", "choose")],
+            true,
+        );
     };
     if p.finished {
-        return vec![
-            ("Enter", "back to the list"),
-            ("6", "History"),
-            ("q", "quit"),
-        ];
+        return (
+            vec![main_hint("Enter", "back to the list"), hint("6", "History")],
+            true,
+        );
     }
     if p.failed.is_some() {
-        return vec![("Esc", "go back"), ("q", "quit")];
+        return (vec![hint("Esc", "go back")], true);
     }
     match p.step() {
-        Step::Run => vec![("Ctrl-C", "stop after this file")],
+        Step::Run => (vec![hint("Ctrl-C", "stop after this file")], false),
         Step::Scan | Step::Summary | Step::FindIdentical => {
-            vec![("Esc", "stop and go back"), ("q", "quit")]
+            (vec![hint("Esc", "stop and go back")], true)
         }
-        Step::Layout | Step::Keep => vec![
-            ("↑↓", "choose"),
-            ("Enter", "next"),
-            ("Esc", "back"),
-            ("q", "quit"),
-        ],
-        Step::Destination if a.dest_row == DestRow::Folder => vec![
-            ("↑↓", "choose"),
-            ("Enter", "type the folder"),
-            ("Esc", "back"),
-        ],
-        Step::Destination => vec![
-            ("← →", "copy / move"),
-            ("Enter", "next"),
-            ("↑", "folder"),
-            ("Esc", "back"),
-        ],
+        Step::Layout | Step::Keep => (
+            vec![
+                main_hint("Enter", "next"),
+                hint("↑↓", "choose"),
+                hint("Esc", "back"),
+            ],
+            true,
+        ),
+        Step::Destination if a.dest_row == DestRow::Folder => (
+            vec![
+                main_hint("Enter", "type the folder"),
+                hint("↑↓", "choose"),
+                hint("Esc", "back"),
+            ],
+            false,
+        ),
+        Step::Destination => (
+            vec![
+                main_hint("Enter", "next"),
+                hint("← →", "copy / move"),
+                hint("↑", "folder"),
+                hint("Esc", "back"),
+            ],
+            false,
+        ),
         Step::Confirm => match &a.review {
-            None => vec![("Esc", "back"), ("q", "quit")],
-            Some(_) if app.mode != crate::app::Mode::Write => {
-                vec![("y", "turn on write mode"), ("Esc", "back")]
-            }
-            Some(r) if r.needs_typing() => {
+            None => (vec![hint("Esc", "back")], true),
+            Some(_) if app.mode != crate::app::Mode::Write => (
+                vec![main_hint("y", "turn on write mode"), hint("Esc", "back")],
+                false,
+            ),
+            Some(r) if r.needs_typing() => (
                 vec![
-                    ("Enter", "confirm (once the phrase matches)"),
-                    ("Esc", "back"),
-                ]
-            }
-            Some(_) => vec![("y", "go ahead"), ("Esc", "back")],
+                    hint("Enter", "confirm (once the phrase matches)"),
+                    hint("Esc", "back"),
+                ],
+                false,
+            ),
+            Some(_) => (vec![main_hint("y", "go ahead"), hint("Esc", "back")], false),
         },
     }
 }

@@ -35,8 +35,10 @@ pub struct DupesLayout {
 }
 
 pub fn dupes_layout(body: Rect) -> DupesLayout {
-    let [summary, rest] = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).areas(body);
-    let left_w = if body.width >= 120 { 40 } else { 30 };
+    // The summary has two lines: identical groups, then the groups to decide by hand.
+    let [summary, rest] = Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(body);
+    // Room for `▶ 1234 same name  12×  123.4 MB`.
+    let left_w = if body.width >= 120 { 40 } else { 34 };
     let [groups, copies] =
         Layout::horizontal([Constraint::Length(left_w), Constraint::Min(10)]).areas(rest);
     DupesLayout {
@@ -65,12 +67,12 @@ pub fn history_rows(w: u16, h: u16) -> u16 {
         .saturating_sub(2)
 }
 
-/// Rows the group list shows at `w` × `h` (borders excluded).
+/// Rows the group list shows at `w` × `h` (borders and the header row excluded).
 pub fn dupes_rows(w: u16, h: u16) -> u16 {
     dupes_layout(body_area(Rect::new(0, 0, w, h)))
         .groups
         .height
-        .saturating_sub(2)
+        .saturating_sub(3)
 }
 
 /// (tree rows, table rows) that fit a terminal of `w` × `h` cells.
@@ -167,7 +169,7 @@ pub fn render(app: &App, f: &mut Frame) {
         render_debug(app, f, body);
     }
 
-    f.render_widget(Paragraph::new(footer_line(app)), footer);
+    f.render_widget(Paragraph::new(footer_line(app, footer.width)), footer);
 }
 
 const SCREENS: [Screen; 6] = Screen::ALL;
@@ -271,8 +273,178 @@ fn render_confirm(f: &mut Frame, body: Rect, stale: bool) {
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
-/// Bottom hint line: each key in yellow, what it does in the muted color.
-fn footer_line(app: &App) -> Line<'static> {
+/// One key in the footer: the key, what it does, and whether it is the one main next step
+/// (drawn as a chip).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hint {
+    pub key: &'static str,
+    pub what: String,
+    pub main: bool,
+}
+
+/// A key and what it does.
+pub fn hint(key: &'static str, what: impl Into<String>) -> Hint {
+    Hint {
+        key,
+        what: what.into(),
+        main: false,
+    }
+}
+
+/// The one main next step on a screen.
+pub fn main_hint(key: &'static str, what: impl Into<String>) -> Hint {
+    Hint {
+        main: true,
+        ..hint(key, what)
+    }
+}
+
+/// The keys of the current state: this screen's keys (main one first), and whether the keys
+/// that work everywhere (`1-6 tabs  ? help  q quit`) follow on the right.
+pub fn footer_hints(app: &App) -> (Vec<Hint>, bool) {
+    if let Some(m) = &app.modal {
+        use crate::modal::Modal;
+        let keys = match m {
+            Modal::Running(_) => vec![hint("Ctrl-C", "stop after this file")],
+            Modal::Report(_) => vec![hint("any key", "close")],
+            Modal::Review(r) if r.needs_typing() => vec![
+                hint("Enter", "confirm (once the phrase matches)"),
+                hint("Esc", "cancel"),
+            ],
+            _ => vec![hint("y", "yes"), hint("n", "cancel")],
+        };
+        return (keys, false);
+    }
+    if app.confirm_flush {
+        return (
+            vec![hint("y", "scan from scratch"), hint("n", "cancel")],
+            false,
+        );
+    }
+    if app.tab_mode {
+        return (
+            vec![
+                hint("← →", "switch tab"),
+                hint("Enter", "back to the screen"),
+                hint("Esc", "back"),
+            ],
+            false,
+        );
+    }
+    if app
+        .plan_state_of(app.screen)
+        .is_some_and(|o| o.editing.is_some())
+    {
+        return (
+            vec![
+                hint("Enter", "keep"),
+                hint("Esc", "undo the edit"),
+                hint("Ctrl-U", "clear"),
+            ],
+            false,
+        );
+    }
+    let scan = if app.dashboard.scan.running {
+        hint("Esc", "stop scan")
+    } else {
+        hint("r", "rescan")
+    };
+    let keys = match app.screen {
+        Screen::Actions => return crate::screens::actions::footer(app),
+        Screen::Dashboard => vec![scan, hint("R", "full rescan")],
+        Screen::Browser => vec![
+            hint("Tab", "folders / files"),
+            hint("Enter", "open"),
+            hint("/", "filter"),
+            hint("t", "photos / videos"),
+            hint("s", "sort"),
+            scan,
+        ],
+        Screen::Duplicates => dupes_hints(app),
+        Screen::Organize => {
+            use crate::organize::Row;
+            let change = match app.organize.row() {
+                Row::Pattern | Row::Dest => hint("Enter", "edit"),
+                _ => hint("Enter ← →", "change"),
+            };
+            vec![main_hint("a", "review & run"), hint("↑↓", "choose"), change]
+        }
+        Screen::History if app.history.runs.is_empty() => vec![],
+        Screen::History => vec![hint("↑↓", "move"), hint("d", "delete history")],
+    };
+    (keys, true)
+}
+
+fn dupes_hints(app: &App) -> Vec<Hint> {
+    use crate::dupes::{Pane, Phase};
+    let d = &app.dupes;
+    if d.searching() {
+        return vec![hint("c", "stop the search")];
+    }
+    if d.phase != Phase::Done || d.groups.is_empty() {
+        return vec![
+            main_hint("f", "look for duplicates"),
+            hint("F", "also compare pictures"),
+        ];
+    }
+    let mut v = vec![];
+    let marked = d.marked_files();
+    if marked > 0 {
+        v.push(main_hint(
+            "a",
+            format!("review {}", fmt::files(marked as u64)),
+        ));
+    }
+    v.push(hint("Tab", "groups / copies"));
+    v.push(hint("Space", "trash / keep"));
+    v.push(if d.pane == Pane::Groups {
+        hint("Enter", "open group")
+    } else {
+        hint("Enter", "keep only this")
+    });
+    v.push(hint("p", "keep rule"));
+    v.push(hint("v", "show"));
+    v.push(hint("↑↓", "move"));
+    v.push(hint("f", "look again"));
+    v
+}
+
+/// The keys that work everywhere, on the right of the footer.
+fn global_hints() -> Vec<Hint> {
+    vec![hint("1-6", "tabs"), hint("?", "help"), hint("q", "quit")]
+}
+
+fn hint_spans(hints: &[Hint]) -> Vec<Span<'static>> {
+    let mut spans = vec![];
+    for (i, h) in hints.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        if h.main {
+            spans.push(Span::styled(
+                format!(" {} {} ", h.key, h.what),
+                theme::key_chip(),
+            ));
+        } else {
+            spans.push(Span::styled(h.key, theme::key_hint()));
+            spans.push(Span::styled(format!(" {}", h.what), theme::footer()));
+        }
+    }
+    spans
+}
+
+fn hints_width(hints: &[Hint]) -> usize {
+    hint_spans(hints)
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum()
+}
+
+/// Bottom hint line, `width` cells wide: this screen's keys on the left, the keys that work
+/// everywhere on the right. When it does not fit, the least useful keys go first: `1-6 tabs`
+/// (the tab strip shows the numbers), then this screen's last keys (never the main one), then
+/// `? help`. `q quit` stays.
+fn footer_line(app: &App, width: u16) -> Line<'static> {
     if let Some((msg, _)) = &app.notice {
         return Line::styled(msg.clone(), theme::accent());
     }
@@ -287,108 +459,29 @@ fn footer_line(app: &App) -> Line<'static> {
             Span::styled(" clear", theme::footer()),
         ]);
     }
-    let hints: Vec<(&str, &str)> = if let Some(m) = &app.modal {
-        use crate::modal::Modal;
-        match m {
-            Modal::Running(_) => vec![("Ctrl-C", "stop after this file")],
-            Modal::Report(_) => vec![("any key", "close")],
-            Modal::Review(r) if r.needs_typing() => {
-                vec![
-                    ("Enter", "confirm (once the phrase matches)"),
-                    ("Esc", "cancel"),
-                ]
-            }
-            _ => vec![("y", "yes"), ("n", "cancel")],
-        }
-    } else if app.confirm_flush {
-        vec![("y", "scan from scratch"), ("n", "cancel")]
-    } else if app.tab_mode {
-        vec![
-            ("← →", "switch tab"),
-            ("Enter", "back to the screen"),
-            ("Esc", "back"),
-        ]
-    } else {
-        let scan = if app.dashboard.scan.running {
-            ("Esc", "stop scan")
-        } else {
-            ("r", "rescan")
-        };
-        match app.screen {
-            Screen::Duplicates if app.dupes.searching() => {
-                vec![("q", "quit"), ("?", "help"), ("c", "stop the search")]
-            }
-            Screen::Duplicates => vec![
-                ("q", "quit"),
-                ("?", "help"),
-                ("f", "find"),
-                ("v", "tier"),
-                ("Space", "mark"),
-                ("Enter", "keep"),
-                ("p", "rule"),
-                ("a", "review"),
-                ("W", "write"),
-            ],
-            Screen::Organize | Screen::Actions
-                if app
-                    .plan_state_of(app.screen)
-                    .is_some_and(|o| o.editing.is_some()) =>
-            {
-                vec![
-                    ("Enter", "keep"),
-                    ("Esc", "undo the edit"),
-                    ("Ctrl-U", "clear"),
-                ]
-            }
-            Screen::Actions => crate::screens::actions::footer(app),
-            Screen::Organize if app.organize.editing.is_some() => vec![
-                ("Enter", "keep"),
-                ("Esc", "undo the edit"),
-                ("Ctrl-U", "clear"),
-            ],
-            Screen::Organize => vec![
-                ("q", "quit"),
-                ("?", "help"),
-                ("↑↓", "choose"),
-                ("Enter", "change"),
-                ("a", "review & run"),
-                ("< >", "tabs"),
-            ],
-            Screen::History => vec![
-                ("q", "quit"),
-                ("?", "help"),
-                ("j k", "move"),
-                ("d", "delete history"),
-                ("W", "write"),
-                ("< >", "tabs"),
-            ],
-            Screen::Browser => vec![
-                ("q", "quit"),
-                ("?", "help"),
-                ("Tab", "pane"),
-                ("< >", "tabs"),
-                ("/", "find"),
-                ("t", "kind"),
-                ("s", "sort"),
-                scan,
-                ("R", "scratch"),
-            ],
-            _ => vec![
-                ("q", "quit"),
-                ("?", "help"),
-                ("1-6 < >", "screens"),
-                scan,
-                ("R", "from scratch"),
-            ],
-        }
+    let width = usize::from(width);
+    let (mut left, global) = footer_hints(app);
+    let mut right = if global { global_hints() } else { vec![] };
+    let fits = |l: &[Hint], r: &[Hint]| {
+        let gap = if l.is_empty() || r.is_empty() { 0 } else { 3 };
+        hints_width(l) + gap + hints_width(r) <= width
     };
-    let mut spans = vec![];
-    for (i, (key, what)) in hints.into_iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
+    while !fits(&left, &right) {
+        if right.len() > 2 {
+            right.remove(0);
+        } else if let Some(i) = left.iter().rposition(|h| !h.main) {
+            left.remove(i);
+        } else if right.len() > 1 {
+            right.remove(0);
+        } else {
+            break;
         }
-        spans.push(Span::styled(key, theme::key_hint()));
-        spans.push(Span::styled(format!(" {what}"), theme::footer()));
+    }
+    let mut spans = hint_spans(&left);
+    if !right.is_empty() {
+        let used = hints_width(&left) + hints_width(&right);
+        spans.push(Span::raw(" ".repeat(width.saturating_sub(used).max(3))));
+        spans.extend(hint_spans(&right));
     }
     Line::from(spans)
 }

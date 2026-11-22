@@ -95,6 +95,51 @@ pub fn truncate_start(s: &str, width: usize) -> String {
     out
 }
 
+/// A path for the screen: the home folder becomes `~` (`/Users/ana/Desktop` → `~/Desktop`).
+/// Display only; the real path is unchanged everywhere else.
+pub fn home(path: &std::path::Path) -> String {
+    home_in(
+        path,
+        std::env::var_os("HOME")
+            .as_deref()
+            .map(std::path::Path::new),
+    )
+}
+
+fn home_in(path: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    match home.filter(|h| h.as_os_str().len() > 1) {
+        Some(h) if path == h => "~".into(),
+        Some(h) => match path.strip_prefix(h) {
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        },
+        None => path.display().to_string(),
+    }
+}
+
+/// A path inside the opened folder, relative to it (`BLUE-MOUNTAINS/DSC05310.JPG`); any other
+/// path as [`home`] shows it.
+pub fn rel(path: &std::path::Path, root: &std::path::Path) -> String {
+    match path.strip_prefix(root) {
+        Ok(rest) if !rest.as_os_str().is_empty() => rest.display().to_string(),
+        _ => home(path),
+    }
+}
+
+/// How long ago `then` was, from `now` (both Unix seconds): `just now`, `5 min ago`,
+/// `3 h ago`, `2 days ago`; anything older than a month is `over a month ago`.
+pub fn ago(now: i64, then: i64) -> String {
+    let s = now.saturating_sub(then).max(0);
+    match s {
+        0..60 => "just now".into(),
+        60..3600 => format!("{} min ago", s / 60),
+        3600..86_400 => format!("{} h ago", s / 3600),
+        86_400..172_800 => "yesterday".into(),
+        172_800..2_592_000 => format!("{} days ago", s / 86_400),
+        _ => "over a month ago".into(),
+    }
+}
+
 /// A horizontal bar `width` cells wide for `value / max`, in eighth-block steps.
 pub fn bar(value: u64, max: u64, width: usize) -> String {
     const PARTIAL: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
@@ -143,6 +188,31 @@ mod tests {
         assert_eq!(truncate("héllo wörld", 5), "héll…");
         assert_eq!(truncate_start("/a/b/c/d.jpg", 7), "…/d.jpg");
         assert_eq!(truncate("abc", 0), "");
+    }
+
+    #[test]
+    fn paths_use_tilde_and_the_opened_folder() {
+        use std::path::Path;
+        let h = Some(Path::new("/Users/ana"));
+        assert_eq!(home_in(Path::new("/Users/ana/Desktop"), h), "~/Desktop");
+        assert_eq!(home_in(Path::new("/Users/ana"), h), "~");
+        assert_eq!(home_in(Path::new("/Users/anabel/x"), h), "/Users/anabel/x");
+        assert_eq!(home_in(Path::new("/Volumes/x"), None), "/Volumes/x");
+        assert_eq!(home_in(Path::new("/x"), Some(Path::new("/"))), "/x");
+        let root = Path::new("/photos");
+        assert_eq!(rel(Path::new("/photos/a/b.jpg"), root), "a/b.jpg");
+        assert_eq!(rel(Path::new("/elsewhere/b.jpg"), root), "/elsewhere/b.jpg");
+    }
+
+    #[test]
+    fn ages_read_like_speech() {
+        assert_eq!(ago(100, 100), "just now");
+        assert_eq!(ago(400, 100), "5 min ago");
+        assert_eq!(ago(3 * 3600, 0), "3 h ago");
+        assert_eq!(ago(90_000, 0), "yesterday");
+        assert_eq!(ago(3 * 86_400, 0), "3 days ago");
+        assert_eq!(ago(1_000_000_000, 2), "over a month ago");
+        assert_eq!(ago(0, 50), "just now", "a clock that went back");
     }
 
     #[test]

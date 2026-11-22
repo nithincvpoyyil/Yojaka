@@ -146,12 +146,13 @@ impl Col {
 const MIN_NAME: u16 = 16;
 
 /// The columns that fit `inner_w` cells next to a name column of at least [`MIN_NAME`], and the
-/// width that is left for the name.
-fn pick_columns(inner_w: u16) -> (Vec<Col>, u16) {
+/// width that is left for the name. Columns in `empty` hold nothing in this folder's library
+/// (no videos: no length; no places) and are left out.
+fn pick_columns(inner_w: u16, empty: &[Col]) -> (Vec<Col>, u16) {
     let narrow = inner_w < 100;
     let mut used = MIN_NAME;
     let mut cols = vec![];
-    for c in Col::PRIORITY {
+    for c in Col::PRIORITY.into_iter().filter(|c| !empty.contains(c)) {
         let need = c.width(narrow) + 1;
         if used + need <= inner_w {
             used += need;
@@ -173,7 +174,7 @@ fn cell_text(c: Col, r: &FileRow, narrow: bool) -> String {
             }
         }),
         Col::Duration => r.duration_ms.map_or(String::new(), fmt::clock),
-        Col::Format => r.format.clone().unwrap_or_default(),
+        Col::Format => r.format.as_deref().unwrap_or_default().to_uppercase(),
         Col::Dimensions => match (r.width, r.height) {
             (Some(w), Some(h)) => format!("{w}×{h}"),
             _ => String::new(),
@@ -193,15 +194,22 @@ fn cell_text(c: Col, r: &FileRow, narrow: bool) -> String {
     }
 }
 
-fn row_cells<'a>(r: &FileRow, cols: &[Col], name_w: u16, narrow: bool) -> Vec<Cell<'a>> {
+fn row_cells<'a>(
+    r: &FileRow,
+    cols: &[Col],
+    name_w: u16,
+    narrow: bool,
+    chosen: bool,
+) -> Vec<Cell<'a>> {
     let badge = if r.live { " LIVE" } else { "" };
-    let name = fmt::truncate(&r.name, (name_w as usize).saturating_sub(badge.len()));
+    let mark = if chosen { "▶ " } else { "  " };
+    let name = fmt::truncate(&r.name, (name_w as usize).saturating_sub(badge.len() + 2));
     let name_style = if r.cloud_only {
         theme::dim()
     } else {
         Style::new()
     };
-    let mut name_line = vec![Span::styled(name, name_style)];
+    let mut name_line = vec![Span::raw(mark), Span::styled(name, name_style)];
     if r.live {
         name_line.push(Span::styled(badge, theme::live_badge()));
     }
@@ -223,9 +231,13 @@ fn render_table(app: &App, f: &mut Frame, area: Rect) {
     let focused = b.focus == Focus::Table;
     let arrow = if b.query.descending { '▼' } else { '▲' };
     let total = b.total.map_or("…".to_string(), fmt::thousands);
+    let kinds = match b.query.kind {
+        yojaka_core::browse::KindFilter::All => "photos and videos",
+        yojaka_core::browse::KindFilter::Photos => "photos only",
+        yojaka_core::browse::KindFilter::Videos => "videos only",
+    };
     let mut title = format!(
-        "Files · {} · {total} · by {} {arrow}",
-        b.query.kind.label(),
+        "{total} files · {kinds} · sorted by {} {arrow}",
         b.query.sort.label()
     );
     if b.editing_filter || !b.query.text.is_empty() {
@@ -250,12 +262,21 @@ fn render_table(app: &App, f: &mut Frame, area: Rect) {
     }
 
     let narrow = inner.width < 100;
-    let (cols, name_w) = pick_columns(inner.width);
+    let mut empty = vec![];
+    if let Some(st) = app.dashboard.stats.as_deref() {
+        if st.videos.count == 0 && st.photos.count > 0 {
+            empty.extend([Col::Duration, Col::Kind]);
+        }
+        if st.location.with_place == 0 && st.location.with_gps == 0 {
+            empty.push(Col::Place);
+        }
+    }
+    let (cols, name_w) = pick_columns(inner.width, &empty);
 
     let mut head = vec![Cell::from(if b.query.sort == SortKey::Name {
-        format!("Name {arrow}")
+        format!("  Name {arrow}")
     } else {
-        "Name".to_string()
+        "  Name".to_string()
     })];
     for &c in &cols {
         let mark = if c.sort_key() == Some(b.query.sort) {
@@ -273,7 +294,7 @@ fn render_table(app: &App, f: &mut Frame, area: Rect) {
         .take_while(|&p| b.total.is_none_or(|t| p < t))
         .map(|pos| {
             let row = match b.row_at(pos) {
-                Some(r) => Row::new(row_cells(r, &cols, name_w, narrow)),
+                Some(r) => Row::new(row_cells(r, &cols, name_w, narrow, pos == b.cursor)),
                 None => Row::new(vec![Cell::from("…")]).style(theme::dim()),
             };
             if pos == b.cursor {
@@ -328,7 +349,7 @@ fn detail_lines(row: &FileRow, d: Option<&FileDetail>, width: usize) -> Vec<Line
             MediaKind::Image => "photo".to_string(),
             MediaKind::Video => "video".to_string(),
         },
-        row.format.clone().unwrap_or_default(),
+        row.format.as_deref().unwrap_or_default().to_uppercase(),
         match (row.width, row.height) {
             (Some(w), Some(h)) => format!("{w}×{h}"),
             _ => String::new(),
@@ -340,8 +361,12 @@ fn detail_lines(row: &FileRow, d: Option<&FileDetail>, width: usize) -> Vec<Line
         facts.push(format!("{fr} frames"));
     }
 
-    let taken = row.taken_at.map_or("no date".to_string(), |t| {
-        let src = d.and_then(|d| d.taken_at_src.clone()).unwrap_or_default();
+    let taken = row.taken_at.map_or("no date taken".to_string(), |t| {
+        let src = match d.and_then(|d| d.taken_at_src.as_deref()) {
+            Some("exif") => "from camera",
+            Some("quicktime" | "container") => "from the video",
+            _ => "",
+        };
         if src.is_empty() {
             format_local(t)
         } else {
@@ -387,10 +412,7 @@ fn detail_lines(row: &FileRow, d: Option<&FileDetail>, width: usize) -> Vec<Line
             out.push(Line::from(tech));
         }
     }
-    let folder = row
-        .path
-        .parent()
-        .map_or(String::new(), |p| p.display().to_string());
+    let folder = row.path.parent().map_or(String::new(), fmt::home);
     out.push(Line::styled(
         fmt::truncate_start(&folder, width),
         theme::dim(),
@@ -426,7 +448,7 @@ mod tests {
 
     #[test]
     fn narrow_tables_drop_the_least_useful_columns_first() {
-        let (cols, name) = pick_columns(54);
+        let (cols, name) = pick_columns(54, &[]);
         assert_eq!(cols[0], Col::Size);
         assert!(cols.contains(&Col::Taken));
         assert!(!cols.contains(&Col::Place));
@@ -437,15 +459,22 @@ mod tests {
 
     #[test]
     fn wide_tables_show_everything() {
-        let (cols, _) = pick_columns(126);
+        let (cols, _) = pick_columns(126, &[]);
         assert_eq!(cols.len(), Col::PRIORITY.len());
+    }
+
+    #[test]
+    fn empty_columns_are_left_out() {
+        let (cols, _) = pick_columns(126, &[Col::Duration, Col::Place]);
+        assert!(!cols.contains(&Col::Duration) && !cols.contains(&Col::Place));
+        assert!(cols.contains(&Col::Camera));
     }
 
     #[test]
     fn the_name_column_takes_what_is_left() {
         for w in [40u16, 54, 80, 126, 200] {
             let narrow = w < 100;
-            let (cols, name) = pick_columns(w);
+            let (cols, name) = pick_columns(w, &[]);
             let used: u16 = name + cols.iter().map(|c| c.width(narrow) + 1).sum::<u16>();
             assert!(used <= w.max(MIN_NAME), "w={w} used={used}");
         }

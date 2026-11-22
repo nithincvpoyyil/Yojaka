@@ -1,0 +1,28 @@
+---
+source: crates/yojaka-tui/src/snapshots_tests.rs
+expression: out
+---
+"Yojaka · [READ-ONLY]                                               12,871 files "
+" ╭───╮╭───╮╭───╮╭───╮╭────────────╮╭───╮                                        "
+" │ 1 ││ 2 ││ 3 ││ 4 ││ 5 Organize ││ 6 │                                        "
+"─┴───┴┴───┴┴───┴┴───┴┘            └┴───┴────────────────────────────────────────"
+"┌Organize──────────────────────────────────────────────────────────────────────┐"
+"│▶ Layout       ‹ By year and month ›                                          │"
+"│  Pattern       {year}/{month_name}/{name}                                    │"
+"│  Destination   /Yojaka Organized                                             │"
+"│  Action       ‹ Copy ›  the originals stay where they are                    │"
+"│  Without GPS  ‹ No Location folder ›  not used by this layout                │"
+"│                                                                              │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+"┌Preview───────────────────────────────────────────────────────────────────────┐"
+"│14 files (14.0 MB) will be copied · 2 dated by file date · 3 identical left ou│"
+"│needs 14.0 MB · 120.0 GB free on that disk                                    │"
+"│Folders                                                                       │"
+"│  2025                11 files (11.0 MB)                                      │"
+"│    April               2 files (2.0 MB)                                      │"
+"│    July                4 files (4.0 MB)                                      │"
+"│    September           5 files (5.0 MB)                                      │"
+"│  2026/January          3 files (3.0 MB)                                      │"
+"│                                                                              │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+" a review & run   ↑↓ choose  Enter ← → change           1-6 tabs  ? help  q quit"

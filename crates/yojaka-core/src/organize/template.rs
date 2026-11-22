@@ -15,7 +15,7 @@ pub const UNDATED_DIR: &str = "_undated";
 /// Longest folder or file name Yojaka will produce (bytes; APFS allows 255).
 const MAX_NAME_BYTES: usize = 200;
 
-/// Ready-made templates: (label, template). Months are named (`Jan`), not numbered. The first
+/// Ready-made templates: (label, template). Months are named (`January`), not numbered. The first
 /// four keep their places (saved settings and older tests refer to them); the last four came with
 /// the Actions tab (2026-11-17).
 pub const PRESETS: [(&str, &str); 8] = [
@@ -37,10 +37,35 @@ pub fn preset(label: &str) -> Option<&'static str> {
     PRESETS.iter().find(|(l, _)| *l == label).map(|(_, t)| *t)
 }
 
-/// What `{month_name}` gives, January first.
+/// What `{month_name}` gives, January first: the whole English name (the user's choice,
+/// 2026-11-22), knowing Finder sorts these folders by name, not by month.
 const MONTH_NAMES: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
+
+/// The month (1-12) a folder is named after: `April`, `Apr` or `april`. For putting folders in
+/// calendar order.
+pub fn month_number(name: &str) -> Option<u8> {
+    let lower = name.to_lowercase();
+    MONTH_NAMES
+        .iter()
+        .position(|m| {
+            let m = m.to_lowercase();
+            lower == m || (lower.len() == 3 && m.starts_with(&lower))
+        })
+        .map(|i| i as u8 + 1)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
@@ -486,10 +511,13 @@ mod tests {
     }
 
     #[test]
-    fn month_names_are_short_english_names() {
+    fn month_names_are_whole_english_names() {
         let mut f = facts("a.jpg");
-        assert_eq!(render("{year}/{month_name}/{name}", &f), "2023/Aug/a.jpg");
-        for (month, name) in [(1, "Jan"), (12, "Dec")] {
+        assert_eq!(
+            render("{year}/{month_name}/{name}", &f),
+            "2023/August/a.jpg"
+        );
+        for (month, name) in [(1, "January"), (12, "December")] {
             f.date = Some(Ymd {
                 year: 2023,
                 month,

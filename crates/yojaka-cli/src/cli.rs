@@ -229,7 +229,7 @@ pub enum Cmd {
         dest: PathBuf,
         /// Folder pattern, e.g. `{year}/{month_name}/{name}` (default from the config file).
         /// Placeholders: year month month_name day camera make model format ext name stem parent
-        /// kind country country_code state district city. `{month_name}` is Jan to Dec;
+        /// kind country country_code state district city. `{month_name}` is January to December;
         /// `{month:02}` is 01 to 12
         #[arg(long, conflicts_with = "preset")]
         template: Option<String>,

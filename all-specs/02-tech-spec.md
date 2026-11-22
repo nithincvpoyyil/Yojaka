@@ -322,7 +322,7 @@ Keep rules form a `Vec<KeepRule>` applied in order. Each rule narrows the candid
 - **Template mini-language:**
   - Placeholders: `{year} {month:02} {month_name} {day:02} {camera} {make} {model} {format} {ext} {name} {stem} {parent} {kind}` (`{kind}` renders as `Photos` or `Videos`; the labels can be configured).
   - Location placeholders: `{country} {country_code} {state} {district} {city}` (see §6.2b). If a placeholder resolves to empty, its path segment is dropped, so there are no `//` or empty folders. A file with no location at all goes to `No Location/`.
-  - Default template: `{year}/{month_name}/{name}` for both kinds (`2023/Aug/IMG_1.jpg`; changed from `{month:02}` on 2026-11-12). A Live Photo's two halves always land in the same folder.
+  - Default template: `{year}/{month_name}/{name}` for both kinds (`2023/August/IMG_1.jpg`; changed from `{month:02}` on 2026-11-12; whole month names since 2026-11-22). A Live Photo's two halves always land in the same folder.
   - Literal text is kept as written.
   - Values are sanitized for the filesystem (`/` and `:` become `_`, length is trimmed).
   - A template is parsed once into tokens and rendered for each file.

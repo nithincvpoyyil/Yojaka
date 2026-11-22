@@ -14,6 +14,7 @@ A terminal app (Rust + ratatui) for indexing, de-duplicating and organizing phot
 - `all-specs/07-scan-speed-plan.md`: I9 scan speed work (scheduled last) (measure, cheap fixes, pipeline overlap, rescans), with goals.
 - `all-specs/08-homebrew-tap-plan.md`: I9 Homebrew tap, release tarball and the unsigned-binary notes.
 - `all-specs/10-actions-plan.md`: I9 Phase 1A, the Actions tab (ready-made jobs, start screen, identical files copied once). Built 2026-11-18 (ADR-0010), waiting for sign-off.
+- `all-specs/11-ux-review.md`: UX review of the TUI (2026-11-22): recommendations U1–U44 on usability, contrast and wording; decisions and what was built in §10. Built 2026-11-22, waiting for sign-off.
 - `docs/STATUS.md`: where the work stands, keys, decisions and open items. Read it when resuming.
 
 ## Rules

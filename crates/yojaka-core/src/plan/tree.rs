@@ -61,8 +61,9 @@ impl DirTree {
         self.root.bytes
     }
 
-    /// At most `max_lines` lines. Each folder shows its `k` biggest children (by bytes); the rest
-    /// are summed into one "… N more folders" line. Single-child chains share a line.
+    /// At most `max_lines` lines. Each folder shows its `k` biggest children (by bytes), in
+    /// calendar order (see [`calendar_key`]); the rest are summed into one "… N more folders"
+    /// line. Single-child chains share a line.
     pub fn glimpse(&self, max_lines: usize, k: usize) -> Vec<GlimpseLine> {
         let mut out = Vec::new();
         render(&self.root, 0, max_lines, k, &mut out);
@@ -74,6 +75,9 @@ fn render(node: &Node, depth: usize, max: usize, k: usize, out: &mut Vec<Glimpse
     let mut kids: Vec<(&String, &Node)> = node.children.iter().collect();
     kids.sort_by(|a, b| b.1.bytes.cmp(&a.1.bytes).then(a.0.cmp(b.0)));
     let hidden = kids.split_off(k.min(kids.len()));
+    // The biggest are shown, in the order a person reads dates: 2022 before 2023, January
+    // before April, then named folders A-Z.
+    kids.sort_by_cached_key(|(name, _)| calendar_key(name));
     for (name, child) in kids {
         if out.len() >= max {
             return;
@@ -109,10 +113,73 @@ fn render(node: &Node, depth: usize, max: usize, k: usize, out: &mut Vec<Glimpse
     }
 }
 
+/// Sort key that puts date folders in calendar order: numbers first (`2022`, `2023-April`,
+/// `04`), by value and then month; then month names (`January` … `December`); then every other
+/// name A-Z, ignoring case; `_undated` and other names starting with `_` last.
+pub fn calendar_key(name: &str) -> (u8, u64, String) {
+    let digits: String = name.chars().take_while(char::is_ascii_digit).collect();
+    let rest = name[digits.len()..].trim_start_matches(['-', ' ', '_']);
+    let month = |s: &str| crate::organize::month_number(s).map_or(0, u64::from);
+    if let Ok(n) = digits.parse::<u64>() {
+        return (0, n.saturating_mul(100) + month(rest), rest.to_lowercase());
+    }
+    if let Some(m) = crate::organize::month_number(name) {
+        return (1, u64::from(m), String::new());
+    }
+    (
+        if name.starts_with('_') { 3 } else { 2 },
+        0,
+        name.to_lowercase(),
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shown_folders_are_in_calendar_order() {
+        let mut t = DirTree::new();
+        // Bigger months first by size, so a sort by size would give September, July, April.
+        for (m, n) in [("September", 5), ("July", 4), ("April", 3)] {
+            for i in 0..n {
+                t.add(Path::new(&format!("2025/{m}/{i}.jpg")), 10);
+            }
+        }
+        t.add(Path::new("2026/January/a.jpg"), 10);
+        t.add(Path::new("No Location/b.jpg"), 1000);
+        let labels: Vec<String> = t.glimpse(40, 8).into_iter().map(|l| l.label).collect();
+        assert_eq!(
+            labels,
+            [
+                "2025",
+                "April",
+                "July",
+                "September",
+                "2026/January",
+                "No Location"
+            ]
+        );
+        let mut years = vec![
+            "2023-April",
+            "2023-January",
+            "2022-May",
+            "_undated",
+            "Paris",
+        ];
+        years.sort_by_key(|n| calendar_key(n));
+        assert_eq!(
+            years,
+            [
+                "2022-May",
+                "2023-January",
+                "2023-April",
+                "Paris",
+                "_undated"
+            ]
+        );
+    }
 
     #[test]
     fn chains_collapse_and_the_rest_is_summed() {
