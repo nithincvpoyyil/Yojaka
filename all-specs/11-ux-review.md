@@ -3,7 +3,7 @@
 Written 2026-11-22 from seven screenshots of the app on a real folder (1,317 photos on the Desktop, read-only
 mode, a true-colour terminal) and a read of `theme.rs`, the footer in `view.rs` and the help text in `keymap.rs`.
 
-**Status: decided and built 2026-11-22, waiting for the user's sign-off.** The user's answers to §9 and what
+**Status: decided and built 2026-11-22 (`bf21070`), signed off by the user 2026-11-22.** The user's answers to §9 and what
 was done for each item are in §10. Each item has an ID (U1, U2, …).
 
 **Severity:** 🔴 can lead to a wrong decision about the user's files, or is a real bug · 🟡 confusing or slows

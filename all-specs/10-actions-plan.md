@@ -182,7 +182,8 @@ No schema change: the skip reason and counters live in the plan file, not in the
    Also: hard links count as identical (found by the tests).
 3. CLI: §6 with its tests. **Done 2026-11-18.**
 4. TUI: §5, snapshots, key tests; drive it in a pty on a fixture tree. **Done 2026-11-18.**
-5. The user tries it and signs it off. Then Phase 1B, the detailed dashboard.
+5. The user tries it and signs it off (done 2026-11-22). Phase 1B, the detailed dashboard, was moved by the user
+   the same day to the end of Iteration 11, so I9 goes on with Phase 2.
 
 Size: **M**, about 4-5 days.
 
@@ -401,4 +402,4 @@ Code: `screens/actions.rs` (`title_line`, `stage_boxes`, `stage_chain`, `step_ra
 (`pipeline_busy` redraws the clock). Tests: `the_stage_boxes_become_one_line_then_go_when_room_is_short`,
 `the_job_clock_stops_when_it_ends_or_fails_and_goes_on_after_back`, and checks in the 80×24 / 160×48
 snapshot test. Driven in a pty on a fixture tree (copy, write mode asked at Confirm): **done 2026-11-18**,
-443 tests green. Waiting for the user's sign-off.
+443 tests green. Signed off by the user 2026-11-22.

@@ -8,7 +8,8 @@ Do one phase at a time. Every phase ends with the full check.
 
 **Acceptance:**
 - The Actions tab (Phase 1A, plan `10-actions-plan.md`) is built and signed off by the user.
-- The detailed dashboard is built and signed off by the user.
+- (The detailed dashboard was moved by the user on 2026-11-22 to the end of Iteration 11, the last iteration. It is no longer
+  part of v1.0.)
 - Real-world runs R1-R5 are recorded in `docs/real-world-tests.md`.
 - Every performance target in tech spec §10 is met or explained in `docs/perf.md`.
 - `docs/fr-checklist.md` still holds, and the fault-injection suite still passes.
@@ -24,7 +25,8 @@ Do one phase at a time. Every phase ends with the full check.
 - **The user runs real libraries (Phase 2).** Claude runs them only with the user's go-ahead for that folder,
   and read-only. Write operations on real data run only on a copy or a scratch folder.
 - Before v1.0 the schema can still change by editing the original migrations. **From v1.0 on, any schema change
-  needs a real migration.** So every schema change (dashboard queries, Phase 4) must be done before the tag.
+  needs a real migration.** So every schema change (Phase 4) must be done before the tag. The detailed dashboard now comes after
+  v1.0 (end of I11), so any schema change it needs will be a real migration.
 - Commit only when the user asks. If the code does not match what this plan says, stop and tell the user.
 - The decisions D1-D9 in `06-i8-hardening-release-plan.md` §1 still apply:
   - no tags before `v1.0.0-rc.1`
@@ -41,10 +43,12 @@ destination → review). It changes the start screen, and its summary overlaps t
 **Everything is in `10-actions-plan.md`** (decisions A1-A12, mockups, core / CLI / TUI changes, tests). No
 schema change.
 
-## Phase 1B: Detailed dashboard (feature; size once specified)
+## Phase 1B: Detailed dashboard: moved to the end of Iteration 11
 
-**Waiting for the user's description.** What exists today and what could be added is listed below, so the user
-can say what to keep, add or drop.
+**Moved out of I9 by the user on 2026-11-22** ("skip detailed dashboard, put at last of the last iteration").
+It is now the last item of Iteration 11 (`03-iteration-plan.md`). The list below is kept for then: what exists
+today and what could be added, so the user can say what to keep, add or drop. It still waits for the user's
+description.
 
 - **Shown today:**
   - Scan panel
@@ -187,8 +191,7 @@ Add a 10k-file scan timed in CI with a generous limit, so a large regression fai
 
 ## Phase 5: Acceptance and sign-off
 
-- [ ] The Actions tab is signed off by the user.
-- [ ] The detailed dashboard is signed off by the user.
+- [x] The Actions tab is signed off by the user (2026-11-22).
 - [ ] `docs/fr-checklist.md`: every FR is done or changed by a recorded decision (FR-52 spec text: the user's,
       D2).
 - [ ] `docs/perf.md`: every §10 target is met or explained, with numbers from the v1.0 build; scan speed goals
@@ -203,18 +206,20 @@ Add a 10k-file scan timed in CI with a generous limit, so a large regression fai
 
 ## Order and size
 
-Phase 1A (Actions) → 1B (dashboard) → 2 (real libraries) → 3 (release engineering) → **4 (performance: 07 first)** → 5
+Phase 1A (Actions, done) → 2 (real libraries) → 3 (release engineering) → **4 (performance: 07 first)** → 5
 (`v1.0.0-rc.1`, sign-off, `v1.0.0`).
 
 Phase 2 needs the user and can start any time. Its findings may add work to Phase 4, or new fault tests.
 
-Rough size: 2½-3 weeks plus Actions (4-5 days) and the dashboard, so **L**.
+Rough size: 2½-3 weeks plus Actions (4-5 days), so **L**. (1B, the dashboard, moved to the end of I11 on
+2026-11-22.)
 
 ## Not in I9
 
 These stay open after v1.0 unless the user moves them in (all are in `TODO.md`):
+- the detailed dashboard (moved to the end of Iteration 11 on 2026-11-22)
 - inline thumbnails on the Duplicates screen
 - more themes
 - mouse support
 - similar videos
-- the place → browser filter, unless the dashboard covers it
+- the place → browser filter, unless the dashboard (end of I11) covers it

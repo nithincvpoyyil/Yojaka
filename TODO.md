@@ -22,8 +22,8 @@ Items that are not part of the current iteration.
 
 ## Open
 
-See "Open items" in `docs/STATUS.md`. Next iteration: Iteration 9, features (detailed dashboard first) and release v1.0.
+See "Open items" in `docs/STATUS.md`. Now: Iteration 9 (Actions signed off 2026-11-22; next real libraries, release engineering, performance, v1.0).
 - [ ] Optional inline thumbnails on the Duplicates screen (`ratatui-image`).
-- [ ] Detailed dashboard (the user will describe it).
+- [ ] Detailed dashboard (the user will describe it). Moved to the end of Iteration 11 (2026-11-22).
 - [ ] Select a place on the dashboard to filter the file browser.
 - [ ] Another theme (last iteration).

@@ -7,6 +7,17 @@ A terminal app for indexing, de-duplicating and organizing photo and video files
 ## Safety promise
 Yojaka never writes to your files outside Plan → Dry-run → Confirm → Execute (journaled). Delete means move to the Trash. Files are never overwritten. Location lookup is offline; coordinates never leave your machine.
 
+## Usage
+Every command and option, with examples: **[docs/USAGE.md](docs/USAGE.md)**.
+
+```sh
+yojaka ~/Pictures                                   # open the app
+yojaka dupes ~/Pictures --plan-out dupes.json       # find identical copies (changes nothing)
+yojaka --write apply dupes.json                     # move the extra copies to the Trash (asks first)
+yojaka organize ~/Pictures ~/Sorted --preset date --plan-out sort.json
+yojaka --write apply sort.json                      # copy into year/month folders
+```
+
 ## Build from source
 ```sh
 rustup toolchain install   # picks up rust-toolchain.toml

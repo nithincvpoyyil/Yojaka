@@ -22,9 +22,9 @@ Committed. Iterations 5, 6 and 7 followed (below).
 | 6 | Organize (templates, planner, copy/move, screen, CLI) | Done (`bb1e12e`), signed off 2026-11-11 (ADR-0007) |
 | 7 | More duplicate tiers (likely, name, similar) | Done (`99db741`), signed off 2026-11-11 (ADR-0008) |
 | 8 | Hardening: FR audit, saved preferences, fault injection (`06`) | Done 2026-11-11 (`b93a80b`, `0104cbe`, `eb16c83`, Phase 3 commit) |
-| 9 | Features and release v1.0: Actions tab, detailed dashboard, real libraries, release, performance last (`09`) | **Phase 1A Actions committed (`37513ce`); stage strip on top added 2026-11-18, committed 2026-11-22; waiting for the user's sign-off**; then the dashboard (waiting for the user's description) |
+| 9 | Features and release v1.0: Actions tab, real libraries, release, performance last (`09`) | **Phase 1A Actions (`37513ce`, `799fdf5`) and the UX review pass (`bf21070`) signed off by the user 2026-11-22**; the detailed dashboard (1B) moved to the end of I11; next Phase 2 (real libraries) or 3 (release engineering) |
 | 10 | LLM assist | Not started |
-| 11 | GUI | Not started |
+| 11 | GUI, then the detailed dashboard last (moved from I9 on 2026-11-22) | Not started |
 
 The old Iteration 8 was split on 2026-11-12: hardening stayed in 8, the rest became 9; LLM and GUI moved to 10 and 11.
 
@@ -39,8 +39,8 @@ New insta snapshots: run with `INSTA_UPDATE=always`, then read the `.snap`. The 
 
 The user asked for a UX review of seven screenshots, then "execute UX review". Decisions (asked first): drop
 `W` from the footers (the review asks for write mode, on Duplicates too); Duplicates gets fixes only, not the
-form rework (U29); month folders use whole names (`2026/April`); photo preview after v1.0. **Built, not
-committed, waiting for the user's sign-off.** Full check green (457 tests, 6 skipped); driven in a pty on a
+form rework (U29); month folders use whole names (`2026/April`); photo preview after v1.0. **Built,
+committed (`bf21070`) and signed off by the user 2026-11-22.** Full check green (457 tests, 6 skipped); driven in a pty on a
 fixture tree at 80×24 and 120×36.
 
 - One footer on every screen (`view::footer_hints`): this screen's keys left, the main one as a black-on-yellow
@@ -81,7 +81,7 @@ folder, a status badge (`Running` / `Waiting for you` / `Done` / `Failed`) with 
 coloured by state, the percentage on the lower edge of a step at work. Shorter names (`Find`, `Keep`) at 80 columns,
 one line of icons when narrower; on short screens the rule, then the second result lines, then the boxes give way, but
 Confirm's folder list shrinks first. The job list shows each job's stages (`Scan → Summary → …`). 443 tests green,
-driven in a pty. Committed 2026-11-22; waiting for the user's sign-off.
+driven in a pty. Committed 2026-11-22 (`799fdf5`); **Phase 1A signed off by the user 2026-11-22** (ADR-0010).
 
 - New first tab **Actions**: one page with "What's here", six ready-made actions with descriptions, destination,
   copy / move, "Review and run" (the existing Review box and executor). Keys become `1` Actions … `6` History.
@@ -265,7 +265,7 @@ The first write-capable release. Off by default: no `--write` means a preview on
   3-row folder-style tab strip, then the screen, then a hint line (keys yellow, actions muted).
 - The scan loader (spinner, status, progress bar) shows in the header on every screen.
 - Dashboard: scan panel, library totals, Formats, By year, Top cameras, Top places (cities with counts and a
-  "N countries · N without place" line). A more detailed dashboard is planned by the user.
+  "N countries · N without place" line). A more detailed dashboard is planned by the user, at the end of Iteration 11 (moved from I9 on 2026-11-22).
 
 ## Decisions (made with the user)
 
@@ -316,7 +316,8 @@ gitignored. Re-check before the first public release.
 - Slow at 1M rows: statistics about 4 s (own thread), text filter with few matches about 1.5 s. No mouse support.
 - A rescan with nothing changed shows the last scan's error count (files with bad metadata are retried only
   after `R` / `--force`).
-- Detailed dashboard (user will specify), a country bar list, and selecting a place to filter the file browser.
+- Detailed dashboard (user will specify), a country bar list, and selecting a place to filter the file browser:
+  moved by the user to the end of Iteration 11 (2026-11-22), after v1.0.
 - `--force` must come before a subcommand (`yojaka --force PATH`); `yojaka scan --force` is the older,
   non-interactive command and wipes without asking.
 - At 80 columns the Top places summary line is cut with an ellipsis; the narrow-width tab strip needs 44

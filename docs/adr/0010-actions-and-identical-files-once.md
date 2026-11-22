@@ -1,7 +1,7 @@
 # ADR-0010: Actions tab, and identical files once in organize
 
 Status: accepted (Iteration 9, Phase 1A; built 2026-11-18; the screen redone as a pipeline the same day, see
-"Amended" below; waiting for the user's sign-off)
+"Amended" below; signed off by the user 2026-11-22)
 
 ## Context
 The user wanted ready-made jobs for people who just want their photos tidied: scan, see what is in the
